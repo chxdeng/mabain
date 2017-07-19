@@ -23,7 +23,9 @@ Multi-Thread/Multi-Process Concurrency
     locking on concurrent insertion and lookup in the reader/writer scenario.
 
 Build and Install Mabain Library  
-    You should be able to build mabain on any modern linux machines.   
+    You should be able to build mabain on any modern linux machines. Please setup the mabain
+    install directory variable (MABAIN_INSTALL_DIR) first. Otherwise, mabain will be installed
+    in /usr/local.   
     To build and install run following commands in mabain home  
     make build  
     make install  
