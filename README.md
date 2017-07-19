@@ -22,8 +22,11 @@ Multi-Thread/Multi-Process Concurrency
     supported internally. Programs using the library DO NOT need to perform any
     locking on concurrent insertion and lookup in the reader/writer scenario.
 
-Build Mabain  
-    Run "make build" in mabain home directory.
+Build and Install Mabain Library  
+    You should be able to build mabain on any modern linux machines.   
+    To build and install, in mabain home run following commands:  
+    make build  
+    make install  
 
 Mabain Command-Line Client  
     The command-line client is in ./binaries directory.
@@ -35,8 +38,8 @@ Mabain Command-Line Client
 	-w running in writer mode
 
 Examples  
-    Please follow these steps to run the examples.  
-    1. Compile libmabain.a by running make in mabain home   
+    Please follow these steps to run the examples  
+    1. Build and install mabain library
     2. cd ./examples from mabain home  
     3. Run make in the examples directory  
     4. Create the database directory "mkdir ./tmp_db_dir"  
