@@ -23,9 +23,7 @@
 
 namespace mabain {
 
-// multiple threads reader/writer lock using POSIX pthread_rwlock_t
-// This lock works in multi-threaded application. For multi-process
-// application, please use MBShmLock.
+// multiple-thread/process reader/writer lock
 
 class MBLock
 {
