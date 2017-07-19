@@ -34,15 +34,15 @@ Mabain Command-Line Client
 	-dm data memcap
 	-w running in writer mode
 
-Examples
-    Please follow these steps to run the examples.
+Examples  
+    Please follow these steps to run the examples.  
     1. Compile libmabain.a by running make in mabain home   
     2. cd ./examples from mabain home  
     3. Run make in the examples directory  
     4. Create the database directory "mkdir ./tmp_db_dir"  
     5. ./mb_insert_test  
 
-Caveats
+Caveats  
     1. Only one writer is allowed. However, multiple readers can be running concurrently.  
     2. The longest key supported is 256 bytes.  
     3. The value/data size can not be bigger than 32767 bytes.  
