@@ -27,11 +27,11 @@
 #include <readline/readline.h>
 #include <readline/history.h>
 
-#include "../db.h"
-#include "../mb_data.h"
-#include "../error.h"
-#include "../util/mb_lsq.h"
-#include "../version.h"
+#include "db.h"
+#include "mb_data.h"
+#include "error.h"
+#include "util/mb_lsq.h"
+#include "version.h"
 
 using namespace mabain;
 
