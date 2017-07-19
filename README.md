@@ -24,14 +24,14 @@ Multi-Thread/Multi-Process Concurrency
 
 Build and Install Mabain Library  
     You should be able to build mabain on any modern linux machines.   
-    To build and install, in mabain home run following commands:  
+    To build and install run following commands in mabain home  
     make build  
     make install  
 
 Mabain Command-Line Client  
     The command-line client is in ./binaries directory.
 
-    Usage: ./mbc -d mabain-directory [-im index-memcap] [-dm data-memcap] [-w]
+    Usage: mbc -d mabain-directory [-im index-memcap] [-dm data-memcap] [-w]
 	-d mabain databse directory
 	-im index memcap
 	-dm data memcap
