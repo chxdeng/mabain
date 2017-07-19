@@ -19,7 +19,7 @@ Multi-Thread/Multi-Process Concurrency
     Full multi-thread/multi-process concurrency is supported. Mabain database
     handler is also thread-safe. This means the the database handle can be used
     in multiple reader threads once initialized. Concurrent insertion and queries are
-    supported internally. Progrmas using the library DO NOT need to perform any
+    supported internally. Programs using the library DO NOT need to perform any
     locking on concurrent insertion and lookup in the reader/writer scenario.
 
 Build Mabain  
