@@ -10,22 +10,22 @@ It supports multi-thread and multi-process concurrency. Mabain can be
 used for exact and common prefix key match.  Please see the examples in
 examples directory.
 
-Shared Memory and Memcap
+Shared Memory and Memcap  
     Mabain stores all data on disk. However, user can specify how much data can be
     mapped to shared memory using memcap option. Memcap can be specified for key/index
     and value separately.
 
-Multi-Thread/Multi-Process Concurrency
+Multi-Thread/Multi-Process Concurrency  
     Full multi-thread/multi-process concurrency is supported. Mabain database
     handler is also thread-safe. This means the the database handle can be used
     in multiple reader threads once initialized. Concurrent insertion and queries are
     supported internally. Progrmas using the library DO NOT need to perform any
     locking on concurrent insertion and lookup in the reader/writer scenario.
 
-Build Mabain
+Build Mabain  
     Run "make build" in mabain home directory.
 
-Mabain Command-Line Client
+Mabain Command-Line Client  
     The command-line client is in ./binaries directory.
 
     Usage: ./mbc -d mabain-directory [-im index-memcap] [-dm data-memcap] [-w]
