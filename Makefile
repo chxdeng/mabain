@@ -25,5 +25,6 @@ uninstall:
 	rm $(MABAIN_INSTALL_DIR)/bin/mbc
 
 clean:
-	make -C src clean
-	make -C binaries clean
+	make -C src clean; \
+	make -C binaries clean; \
+	make -C examples clean
