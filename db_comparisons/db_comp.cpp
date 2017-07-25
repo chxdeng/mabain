@@ -1,6 +1,7 @@
 #include <iostream>
 #include <string>
 #include <cstring>
+#include <fstream>
 #include <sys/time.h>
 #include <assert.h>
 #include <unistd.h>
@@ -56,6 +57,42 @@ static void get_sha1_str(int key, char *sha1_str)
         sprintf(sha1_str + (i * 2), "%02x", hash[i]);
     }
     sha1_str[32] = 0;
+}
+
+static void print_cpu_info()
+{
+    std::ifstream cpu_info("/proc/cpuinfo", std::fstream::in);
+    if(!cpu_info.is_open()) {
+        return;
+    }
+
+    std::string line;
+    std::string model_name;
+    std::string vendor_id;
+    std::string cpu_freq;
+    int n_processor = 0;
+    while (std::getline(cpu_info, line))
+    {
+        if(line.find("model name") != std::string::npos)
+        {
+            model_name = line;
+            n_processor++;
+        }
+        else if(line.find("vendor_id") != std::string::npos)
+        {
+            vendor_id = line;
+        }
+        else if(line.find("cpu MHz") != std::string::npos)
+        {
+            cpu_freq = line;
+        }
+    }
+    cpu_info.close();
+
+    std::cout << "number of CPUs\t: " << n_processor << "\n";
+    std::cout << vendor_id << "\n";
+    std::cout << model_name << "\n";
+    std::cout << cpu_freq << "\n";
 }
 
 static void InitDB()
@@ -404,6 +441,8 @@ int main(int argc, char *argv[])
             std::cerr << "invalid argument: " << argv[i] << "\n";
         }
     }
+
+    print_cpu_info();
 
     InitDB();
     Add(num_kv);
