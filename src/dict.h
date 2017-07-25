@@ -26,6 +26,9 @@
 #include "rollable_file.h"
 #include "mb_data.h"
 
+#define DATA_BUFFER_ALIGNMENT       8
+#define DATA_SIZE_BYTE              2
+
 namespace mabain {
 
 // dictionary class

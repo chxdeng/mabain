@@ -27,6 +27,12 @@
 #include "integer_4b_5b.h"
 #include "version.h"
 
+#define OFFSET_SIZE_P1             7
+
+#define MIN_INDEX_MEM_SIZE         32*1024
+#define MAX_BUFFER_RESERVE_SIZE    8192
+#define NUM_BUFFER_RESERVE         MAX_BUFFER_RESERVE_SIZE/BUFFER_ALIGNMENT
+
 namespace mabain {
 
 /////////////////////////////////////////////////////////////////////////////////////

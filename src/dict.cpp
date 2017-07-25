@@ -27,6 +27,9 @@
 #include "error.h"
 #include "integer_4b_5b.h"
 
+#define MAX_DATA_BUFFER_RESERVE_SIZE    MAX_DATA_SIZE
+#define NUM_DATA_BUFFER_RESERVE         MAX_DATA_BUFFER_RESERVE_SIZE/DATA_BUFFER_ALIGNMENT
+
 #define READER_LOCK_FREE_START               \
     LockFreeData snapshot;                   \
     int lf_ret;                              \

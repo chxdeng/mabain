@@ -26,6 +26,18 @@
 #include "error.h"
 #include "lock.h"
 
+#define DB_ITER_STATE_INIT         0x00
+#define DB_ITER_STATE_MORE         0x01
+#define DB_ITER_STATE_DONE         0x02
+#define DATA_BLOCK_SIZE            128LLU*1024*1024
+#define INDEX_BLOCK_SIZE           128LLU*1024*1024
+#define BUFFER_TYPE_NONE           0
+#define BUFFER_TYPE_EDGE_STR       1
+#define BUFFER_TYPE_NODE           2
+#define MATCH_NONE                 0
+#define MATCH_EDGE                 1
+#define MATCH_NODE                 2
+
 namespace mabain {
 
 class Dict;

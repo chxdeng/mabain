@@ -25,6 +25,7 @@
 #include <pthread.h>
 #include <assert.h>
 
+#include "db.h"
 #include "mabain_consts.h"
 #include "mb_data.h"
 #include "rollable_file.h"
@@ -32,6 +33,19 @@
 #include "free_list.h"
 #include "lock_free.h"
 #include "error.h"
+
+#define HEADER_PADDING_SIZE        32
+#define OFFSET_SIZE                6
+#define EDGE_SIZE                  13
+#define EDGE_LEN_POS               5
+#define EDGE_FLAG_POS              6
+#define EDGE_FLAG_DATA_OFF         0x01
+#define FLAG_NODE_MATCH            0x01
+#define FLAG_NODE_NONE             0x0
+#define BUFFER_ALIGNMENT           4
+#define LOCAL_EDGE_LEN             6
+#define LOCAL_EDGE_LEN_M1          5
+#define EDGE_NODE_LEADING_POS      7
 
 namespace mabain {
 

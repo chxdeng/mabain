@@ -24,6 +24,9 @@
 
 #include "mabain_consts.h"
 
+#define NUM_ALPHABET               256
+#define NODE_EDGE_KEY_FIRST        8
+
 namespace mabain {
 
 typedef struct _EdgePtrs
