@@ -145,7 +145,7 @@ static void Writer(int id)
     //std::cout << "Start time: " << time(NULL) << "\n";
     std::cout << "I am writer " << id << " with pid " << getpid() << "\n";
 
-    DB db(mb_dir, memcap_index, memcap_data, ACCESS_MODE_WRITER);
+    DB db(mb_dir, memcap_index, memcap_data, CONSTS::ACCESS_MODE_WRITER);
     if(!db.is_open()) {
         std::cerr << "writer " << id << " failed to open mabain db: "
                   << db.StatusStr() << "\n";
@@ -218,7 +218,7 @@ static void Reader(int id)
 {
     //std::cout << "I am reader " << id << " with pid " << getpid() << "\n";
 
-    DB db(mb_dir, memcap_index, memcap_data, ACCESS_MODE_READER);
+    DB db(mb_dir, memcap_index, memcap_data, CONSTS::ACCESS_MODE_READER);
     if(!db.is_open()) {
         std::cerr << "reader " << id << " failed to open mabain db: "
                   << db.StatusStr() << "\n";
@@ -349,7 +349,7 @@ int main(int argc, char *argv[])
     }
 
     // Delete all keys from last run.
-    DB db(mb_dir, memcap_index, memcap_data, ACCESS_MODE_WRITER);
+    DB db(mb_dir, memcap_index, memcap_data, CONSTS::ACCESS_MODE_WRITER);
     if(!db.is_open()) {
         std::cerr << " failed to open mabain db: "
                   << db.StatusStr() << "\n";
