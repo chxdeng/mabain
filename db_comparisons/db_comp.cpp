@@ -60,23 +60,43 @@ static void get_sha1_str(int key, char *sha1_str)
 
 static void InitDB()
 {
+    std::string cmd;
+    cmd = std::string("mkdir -p ") + db_dir;
+    if(system(cmd.c_str()) != 0) {
+    }
+
+#ifdef LEVEL_DB
+    std::string db_dir_tmp = std::string(db_dir) + "/leveldb/";
+#elif KYOTO_CABINET
+    std::string db_dir_tmp = std::string(db_dir) + "/kyotocabinet/";
+#else
+    std::string db_dir_tmp = std::string(db_dir) + "/mabain/";
+#endif
+
+    cmd = std::string("mkdir -p ") + db_dir_tmp;
+    if(system(cmd.c_str()) != 0) {
+    }
+    cmd = std::string("rm -rf ") + db_dir_tmp + "*";
+    if(system(cmd.c_str()) != 0) {
+    }
+
 #ifdef LEVEL_DB
     std::cout << "===== using leveldb for testing\n";
     leveldb::Options options;
     options.create_if_missing = true;
-    leveldb::Status status = leveldb::DB::Open(options, db_dir, &db);
+    leveldb::Status status = leveldb::DB::Open(options, db_dir_tmp, &db);
     assert(status.ok());
 #elif KYOTO_CABINET
     std::cout << "===== using kyotocabinet for testing\n";
     db = new kyotocabinet::PolyDB();
-    std::string db_path = std::string(db_dir) + "casket.kch";
+    std::string db_path = db_dir_tmp + "casket.kch";
     if (!db->open(db_path.c_str(), kyotocabinet::PolyDB::OWRITER | kyotocabinet::PolyDB::OCREATE)) {
         std::cerr << "failed to open kyotocabinet db\n";
         abort();
     }
 #else
     std::cout << "===== using mabain for testing\n";
-    db = new mabain::DB(db_dir, 64*1024*1024LL, 0*1024*1024LL, mabain::CONSTS::ACCESS_MODE_WRITER);
+    db = new mabain::DB(db_dir_tmp, 64*1024*1024LL, 0*1024*1024LL, mabain::CONSTS::ACCESS_MODE_WRITER);
     assert(db->is_open());
 #endif
 }
@@ -164,6 +184,47 @@ static void Lookup(int n)
     std::cout << "===== " << timediff*1.0/n << " micro seconds per lookup\n";
 }
 
+static void Delete(int n)
+{
+    timeval start, stop;
+    int nfound = 0;
+    char kv[65];
+
+    gettimeofday(&start,NULL);
+    for(int i = 0; i < n; i++) {
+        std::string key;
+        if(key_type == 0) {
+            key = "db-comparison-key" + std::to_string(i);
+        } else {
+            if(key_type == 1) {
+                get_sha1_str(i, kv);
+            } else {
+                get_sha256_str(i, kv);
+            }
+            key = kv;
+        }
+#ifdef LEVEL_DB
+        leveldb::Status s = db->Delete(leveldb::WriteOptions(), key);
+        if(s.ok()) nfound++;
+#elif KYOTO_CABINET
+        std::string value;
+        if(db->remove(key)) nfound++;
+#else
+        int rval = db->Remove(key.c_str(), key.length());
+        if(rval == 0) nfound++;
+#endif
+
+        if((i+1)%1000000 == 0) {
+            std::cout << "deleted: " << (i+1) << " keys\n";
+        }
+    }
+    gettimeofday(&stop,NULL);
+
+    std::cout << "deleted " << nfound << " key-value pairs\n";
+    uint64_t timediff = (stop.tv_sec - start.tv_sec)*1000000 + (stop.tv_usec - start.tv_usec);
+    std::cout << "===== " << timediff*1.0/n << " micro seconds per deletion\n";
+}
+
 static void *Writer(void *arg)
 {
     int num = *((int *) arg);
@@ -211,11 +272,12 @@ static void *Reader(void *arg)
         std::string key;
         if(key_type == 0) {
             key = "db-comparison-key" + std::to_string(i);
-        } else if(key_type == 1) {
-            get_sha1_str(i, kv);
-            key = kv;
         } else {
-            get_sha256_str(i, kv);
+            if(key_type == 1) {
+                get_sha1_str(i, kv);
+            } else {
+                get_sha256_str(i, kv);
+            }
             key = kv;
         }
 
@@ -346,12 +408,9 @@ int main(int argc, char *argv[])
     InitDB();
     Add(num_kv);
     Lookup(num_kv);
+    Delete(num_kv);
     DestroyDB();
 
-    std::string cmd;
-    cmd = std::string("rm ") + db_dir + "/*";
-    if(system(cmd.c_str())==0) {
-    }
 
     InitDB();
     ConcurrencyTest(num_kv, n_reader);

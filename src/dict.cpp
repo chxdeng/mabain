@@ -883,7 +883,13 @@ int Dict::Remove(const uint8_t *key, int len, MBData &data)
     }
 
     if(rval == MBError::SUCCESS)
+    {
         header->count--;
+        if(header->count == 0)
+        {
+            RemoveAll();
+        }
+    }
     return rval;
 }
 
