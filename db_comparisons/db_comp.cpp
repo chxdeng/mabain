@@ -76,7 +76,7 @@ static void InitDB()
     }
 #else
     std::cout << "===== using mabain for testing\n";
-    db = new mabain::DB(db_dir, 64*1024*1024LL, 0*1024*1024LL, ACCESS_MODE_WRITER);
+    db = new mabain::DB(db_dir, 64*1024*1024LL, 0*1024*1024LL, mabain::CONSTS::ACCESS_MODE_WRITER);
     assert(db->is_open());
 #endif
 }
@@ -92,12 +92,12 @@ static void Add(int n)
         if(key_type == 0) {
             key = "db-comparison-key" + std::to_string(i);
             val = "db-comparison-value" + std::to_string(i);
-        } else if(key_type == 1) {
-            get_sha1_str(i, kv);
-            key = kv;
-            val = kv;
         } else {
-            get_sha256_str(i, kv);
+            if(key_type == 1) {
+                get_sha1_str(i, kv);
+            } else {
+                get_sha256_str(i, kv);
+            }
             key = kv;
             val = kv;
         }
@@ -131,11 +131,12 @@ static void Lookup(int n)
         std::string key;
         if(key_type == 0) {
             key = "db-comparison-key" + std::to_string(i);
-        } else if(key_type == 1) {
-            get_sha1_str(i, kv);
-            key = kv;
         } else {
-            get_sha256_str(i, kv);
+            if(key_type == 1) {
+                get_sha1_str(i, kv);
+            } else {
+                get_sha256_str(i, kv);
+            }
             key = kv;
         }
 
@@ -174,12 +175,12 @@ static void *Writer(void *arg)
         if(key_type == 0) {
             key = "db-comparison-key" + std::to_string(i);
             val = "db-comparison-value" + std::to_string(i);
-        } else if(key_type == 1) {
-            get_sha1_str(i, kv);
-            key = kv;
-            val = kv;
         } else {
-            get_sha256_str(i, kv);
+            if(key_type == 1) {
+                get_sha1_str(i, kv);
+            } else {
+                get_sha256_str(i, kv);
+            }
             key = kv;
             val = kv;
         }
