@@ -341,7 +341,7 @@ size_t RollableFile::RandomWrite(const void *data, size_t size, off_t offset)
     return files[order]->RandomWrite(data, size, index);
 }
 
-size_t RollableFile::RandomRead(void *buff, size_t size, off_t offset)
+size_t RollableFile::RandomRead(void *buff, size_t size, off_t offset, bool use_sliding_mmap)
 {
     int order = offset / block_size;
     int rval = CheckAndOpenFile(order);
@@ -349,7 +349,7 @@ size_t RollableFile::RandomRead(void *buff, size_t size, off_t offset)
         return 0;
 
     // Check sliding map
-    if(sliding_mmap && sliding_addr != NULL)
+    if(use_sliding_mmap && sliding_mmap && sliding_addr != NULL)
     {
         if(offset >= sliding_start && offset+size <= sliding_start+sliding_size)
         {

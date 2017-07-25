@@ -103,7 +103,7 @@ public:
                   uint8_t *tmp_buff, bool update_parent_info=false) const;
     int  RemoveEdgeByIndex(const EdgePtrs &edge_ptrs, MBData &data);
     void InitRootNode();
-    inline int ReadData(uint8_t *buff, int len, size_t offset) const;
+    inline int ReadData(uint8_t *buff, int len, size_t offset, bool use_sliding_mmap=false) const;
     inline void WriteEdge(const EdgePtrs &edge_ptrs) const;
     inline void WriteData(const uint8_t *buff, unsigned len, size_t offset) const;
     inline int  Reserve(size_t &offset, int size, uint8_t* &ptr);
@@ -141,11 +141,11 @@ private:
     static uint8_t empty_edge[EDGE_SIZE];
 };
 
-inline int DictMem::ReadData(uint8_t *buff, int len, size_t offset) const
+inline int DictMem::ReadData(uint8_t *buff, int len, size_t offset, bool use_sliding_mmap) const
 {
     //if(offset + len > header->m_index_offset)
     //    return -1;
-    return mem_file->RandomRead(buff, len, offset);
+    return mem_file->RandomRead(buff, len, offset, use_sliding_mmap);
 }
 
 inline void DictMem::WriteEdge(const EdgePtrs &edge_ptrs) const

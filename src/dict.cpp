@@ -202,7 +202,7 @@ int Dict::Add(const uint8_t *key, int len, MBData &data, bool overwrite)
     int edge_len = edge_ptrs.len_ptr[0];
     if(edge_len > LOCAL_EDGE_LEN)
     {
-        if(mm.ReadData(tmp_key_buff, edge_len-1, Get5BInteger(edge_ptrs.ptr))
+        if(mm.ReadData(tmp_key_buff, edge_len-1, Get5BInteger(edge_ptrs.ptr), true)
                       != edge_len-1)
             return MBError::READ_ERROR;
         key_buff = tmp_key_buff;
@@ -346,7 +346,7 @@ int Dict::DeleteDataFromEdge(MBData &data, EdgePtrs &edge_ptrs)
     if(edge_ptrs.flag_ptr[0] & EDGE_FLAG_DATA_OFF)
     {
         data_off = Get6BInteger(edge_ptrs.offset_ptr);
-        if(ReadData(reinterpret_cast<uint8_t*>(&data_len), DATA_SIZE_BYTE, data_off)
+        if(ReadData(reinterpret_cast<uint8_t*>(&data_len), DATA_SIZE_BYTE, data_off, true)
                    != DATA_SIZE_BYTE)
             return MBError::READ_ERROR;
 
@@ -362,7 +362,7 @@ int Dict::DeleteDataFromEdge(MBData &data, EdgePtrs &edge_ptrs)
         size_t node_off = Get6BInteger(edge_ptrs.offset_ptr);
 
         // Read node header
-        if(mm.ReadData(node_buff, NODE_EDGE_KEY_FIRST, node_off) != NODE_EDGE_KEY_FIRST)
+        if(mm.ReadData(node_buff, NODE_EDGE_KEY_FIRST, node_off, true) != NODE_EDGE_KEY_FIRST)
             return MBError::READ_ERROR;
 
         if(node_buff[0] & FLAG_NODE_MATCH)
@@ -373,7 +373,7 @@ int Dict::DeleteDataFromEdge(MBData &data, EdgePtrs &edge_ptrs)
 
             // Release data buffer
             data_off = Get6BInteger(node_buff+2);
-            if(ReadData(reinterpret_cast<uint8_t*>(&data_len), DATA_SIZE_BYTE, data_off)
+            if(ReadData(reinterpret_cast<uint8_t*>(&data_len), DATA_SIZE_BYTE, data_off, true)
                        != DATA_SIZE_BYTE)
                 return MBError::READ_ERROR;
 
@@ -994,7 +994,7 @@ int Dict::ReleaseBuffer(size_t offset)
 {
     uint16_t data_size;
 
-    if(ReadData(reinterpret_cast<uint8_t*>(&data_size), DATA_SIZE_BYTE, offset)
+    if(ReadData(reinterpret_cast<uint8_t*>(&data_size), DATA_SIZE_BYTE, offset, true)
                != DATA_SIZE_BYTE)
         return MBError::READ_ERROR;
 
@@ -1027,7 +1027,7 @@ int Dict::UpdateDataBuffer(EdgePtrs &edge_ptrs, bool overwrite, const uint8_t *b
         uint8_t node_buff[NODE_EDGE_KEY_FIRST];
         size_t node_off = Get6BInteger(edge_ptrs.offset_ptr);
 
-        if(mm.ReadData(node_buff, EDGE_NODE_LEADING_POS, node_off) != EDGE_NODE_LEADING_POS)
+        if(mm.ReadData(node_buff, EDGE_NODE_LEADING_POS, node_off, true) != EDGE_NODE_LEADING_POS)
             return MBError::READ_ERROR;
 
         if(node_buff[0] & FLAG_NODE_MATCH)

@@ -39,7 +39,7 @@ public:
     ~RollableFile();
 
     size_t   RandomWrite(const void *data, size_t size, off_t offset);
-    size_t   RandomRead(void *buff, size_t size, off_t offset);
+    size_t   RandomRead(void *buff, size_t size, off_t offset, bool use_sliding_mmap);
     int      Reserve(size_t &offset, int size, uint8_t* &ptr, bool map_new_sliding=true);
     void     PrintStats(std::ostream &out_stream = std::cout) const;
     void     Close();
