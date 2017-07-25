@@ -41,7 +41,7 @@ FreeList::FreeList(const std::string &file_path, int buff_alignment,
 {
     // rel_parent_off in MBShrink is defined as 2-byte signed integer. The maximal buffer
     // size cannot be greather than 32767.
-    assert(GetBufferSizeByIndex(max_n_buff-1) < 32768);
+    assert(GetBufferSizeByIndex(max_n_buff-1) <= 65535);
 
     Logger::Log(LOG_LEVEL_INFO, "%s maximum number of buffers: %d", file_path.c_str(),
                 max_num_buffer);

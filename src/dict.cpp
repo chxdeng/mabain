@@ -27,7 +27,7 @@
 #include "error.h"
 #include "integer_4b_5b.h"
 
-#define MAX_DATA_BUFFER_RESERVE_SIZE    MAX_DATA_SIZE
+#define MAX_DATA_BUFFER_RESERVE_SIZE    0xFFFF
 #define NUM_DATA_BUFFER_RESERVE         MAX_DATA_BUFFER_RESERVE_SIZE/DATA_BUFFER_ALIGNMENT
 
 #define READER_LOCK_FREE_START               \
@@ -79,7 +79,7 @@ Dict::Dict(const std::string &mbdir, bool init_header, int datasize,
     }
     else
     {
-        if(options & ACCESS_MODE_WRITER)
+        if(options & CONSTS::ACCESS_MODE_WRITER)
         {
             free_lists = new FreeList(mbdir+"_dbfl", DATA_BUFFER_ALIGNMENT,
                                       NUM_DATA_BUFFER_RESERVE);
@@ -110,7 +110,7 @@ Dict::~Dict()
 // This function only needs to be called by writer.
 int Dict::Init(uint32_t id)
 {
-    if(!(options & ACCESS_MODE_WRITER))
+    if(!(options & CONSTS::ACCESS_MODE_WRITER))
     {
         Logger::Log(LOG_LEVEL_ERROR, "dict initialization not allowed for non-writer");
         return MBError::NOT_ALLOWED;
@@ -132,7 +132,7 @@ int Dict::Init(uint32_t id)
     Logger::Log(LOG_LEVEL_INFO, "connector %u initializing DictMem", id);
     mm.InitRootNode();
 
-    if(header->data_size > MAX_DATA_SIZE)
+    if(header->data_size > CONSTS::MAX_DATA_SIZE)
     {
         Logger::Log(LOG_LEVEL_ERROR, "data size %d is too large", header->data_size);
         return MBError::INVALID_SIZE;
@@ -177,9 +177,9 @@ int Dict::GetDBOptions() const
 // be overwritten. Otherwise, IN_DICT will be returned.
 int Dict::Add(const uint8_t *key, int len, MBData &data, bool overwrite)
 {
-    if(!(options & ACCESS_MODE_WRITER))
+    if(!(options & CONSTS::ACCESS_MODE_WRITER))
         return MBError::NOT_ALLOWED;
-    if(len > MAX_KEY_LENGHTH || data.data_len > MAX_DATA_SIZE)
+    if(len > CONSTS::MAX_KEY_LENGHTH || data.data_len > CONSTS::MAX_DATA_SIZE)
         return MBError::OUT_OF_BOUND;
 
     EdgePtrs edge_ptrs;
@@ -498,7 +498,7 @@ int Dict::FindPrefix(const uint8_t *key, int len, MBData &data) const
                 if(node_buff[0] & FLAG_NODE_MATCH)
                 {
                     data.match_len = p - key;
-                    if(data.options & OPTION_ALL_PREFIX)
+                    if(data.options & CONSTS::OPTION_ALL_PREFIX)
                     {
                         rval = ReadDataFromNode(data, node_buff);
                         data.next = true;
@@ -634,7 +634,7 @@ int Dict::Find(const uint8_t *key, int len, MBData &data) const
 #endif
         while(true)
         {
-            rval = mm.NextEdge(p, edge_ptrs, node_buff, data.options & OPTION_FIND_AND_DELETE);
+            rval = mm.NextEdge(p, edge_ptrs, node_buff, data.options & CONSTS::OPTION_FIND_AND_DELETE);
             if(rval != MBError::SUCCESS)
                 break;
 
@@ -669,7 +669,7 @@ int Dict::Find(const uint8_t *key, int len, MBData &data) const
             if(len <= 0)
             {
                 // If this is for remove operation, return IN_DICT to caller.
-                if(data.options & OPTION_FIND_AND_DELETE)
+                if(data.options & CONSTS::OPTION_FIND_AND_DELETE)
                     return MBError::IN_DICT;
 
                 rval =  ReadDataFromEdge(data, edge_ptrs);
@@ -699,7 +699,7 @@ int Dict::Find(const uint8_t *key, int len, MBData &data) const
         else
         {
             // If this is for remove operation, return IN_DICT to caller.
-            if(data.options & OPTION_FIND_AND_DELETE)
+            if(data.options & CONSTS::OPTION_FIND_AND_DELETE)
             {
                 data.edge_ptrs.curr_node_offset = mm.GetRootOffset();
                 data.edge_ptrs.curr_nt = 1;
@@ -850,17 +850,17 @@ int Dict::ReadRootNode(uint8_t *node_buff, EdgePtrs &edge_ptrs, int &match,
 
 int Dict::Remove(const uint8_t *key, int len)
 {
-    MBData data(0, OPTION_FIND_AND_DELETE);
+    MBData data(0, CONSTS::OPTION_FIND_AND_DELETE);
     return Remove(key, len, data);
 }
 
 int Dict::Remove(const uint8_t *key, int len, MBData &data)
 {
-    if(!(options & ACCESS_MODE_WRITER))
+    if(!(options & CONSTS::ACCESS_MODE_WRITER))
         return MBError::NOT_ALLOWED;
 
     // The DELETE flag must be set
-    if(!(data.options & OPTION_FIND_AND_DELETE))
+    if(!(data.options & CONSTS::OPTION_FIND_AND_DELETE))
         return MBError::INVALID_ARG;
 
     int rval;
@@ -949,7 +949,7 @@ int Dict::InitShmMutex()
 // Reserve buffer and write to it
 void Dict::ReserveData(const uint8_t* buff, int size, size_t &offset)
 {
-    assert(size <= MAX_DATA_SIZE);
+    assert(size <= CONSTS::MAX_DATA_SIZE);
 
     int buf_size  = free_lists->GetAlignmentSize(size + DATA_SIZE_BYTE);
     int buf_index = free_lists->GetBufferIndex(buf_size);

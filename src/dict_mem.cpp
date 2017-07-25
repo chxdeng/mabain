@@ -104,7 +104,7 @@ DictMem::DictMem(const std::string &mbdir, bool init_header, size_t memsize,
 
     LockFree::LockFreeInit(&header->lock_free, mode);
 
-    if(!(mode & ACCESS_MODE_WRITER))
+    if(!(mode & CONSTS::ACCESS_MODE_WRITER))
     {
         node_size = NULL;
         is_valid = true;

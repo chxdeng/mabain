@@ -21,14 +21,16 @@
 
 namespace mabain {
 
-#define ACCESS_MODE_READER         0x00
-#define ACCESS_MODE_WRITER         0x01
-
-#define OPTION_ALL_PREFIX          0x01
-#define OPTION_FIND_AND_DELETE     0x02
-#define MAX_KEY_LENGHTH            256
-
-#define MAX_DATA_SIZE              0x7FFF
+class CONSTS
+{
+public:
+    static const int ACCESS_MODE_READER;
+    static const int ACCESS_MODE_WRITER;
+    static const int OPTION_ALL_PREFIX;
+    static const int OPTION_FIND_AND_DELETE;
+    static const int MAX_KEY_LENGHTH;
+    static const int MAX_DATA_SIZE;
+};
 
 }
 

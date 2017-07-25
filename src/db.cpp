@@ -50,7 +50,7 @@ int DB::Close(bool shutdown_global)
         if(shutdown_global)
         {
             int db_opts = dict->GetDBOptions();
-            if(db_opts & ACCESS_MODE_WRITER)
+            if(db_opts & CONSTS::ACCESS_MODE_WRITER)
                 dict->PrintStats(Logger::GetLogStream());
             UpdateNumHandlers(db_opts, -1);
         }
@@ -75,7 +75,7 @@ int DB::UpdateNumHandlers(int mode, int delta)
 
     WrLock();
 
-    if(mode & ACCESS_MODE_WRITER)
+    if(mode & CONSTS::ACCESS_MODE_WRITER)
         rval = dict->UpdateNumWriter(delta);
     else
         dict->UpdateNumReader(delta);
@@ -113,7 +113,7 @@ DB::DB(const std::string &db_path, size_t memcap_index, size_t memcap_data,
     else
         db_path_tmp = db_path;
 
-    if((db_options & ACCESS_MODE_WRITER) && init_global)
+    if((db_options & CONSTS::ACCESS_MODE_WRITER) && init_global)
         Logger::InitLogFile(db_path_tmp + "mabain.log");
     else
         Logger::SetLogLevel(LOG_LEVEL_WARN);
@@ -127,7 +127,7 @@ DB::DB(const std::string &db_path, size_t memcap_index, size_t memcap_data,
     std::string index_file_0 = db_path_tmp + "_mabain_i0";
     if(access(index_file_0.c_str(), R_OK))
     {
-        if(db_options & ACCESS_MODE_WRITER)
+        if(db_options & CONSTS::ACCESS_MODE_WRITER)
         {
             init_header = true;
         }
@@ -140,12 +140,12 @@ DB::DB(const std::string &db_path, size_t memcap_index, size_t memcap_data,
     }
 
     bool sliding_mmap = false;
-    if(db_options & ACCESS_MODE_WRITER)
+    if(db_options & CONSTS::ACCESS_MODE_WRITER)
         sliding_mmap = true;
     dict = new Dict(db_path_tmp, init_header, data_size, db_options, memcap_index,
                     memcap_data, sliding_mmap, false);
 
-    if((db_options & ACCESS_MODE_WRITER) && init_header)
+    if((db_options & CONSTS::ACCESS_MODE_WRITER) && init_header)
     {
         Logger::Log(LOG_LEVEL_INFO, "open a new db %s", db_path_tmp.c_str());
         dict->Init(identifier);
@@ -178,7 +178,7 @@ DB::DB(const std::string &db_path, size_t memcap_index, size_t memcap_data,
 
     Logger::Log(LOG_LEVEL_INFO, "connector %u successfully opened DB %s for %s",
                 identifier, db_path.c_str(),
-                (db_options & ACCESS_MODE_WRITER) ? "writing":"reading");
+                (db_options & CONSTS::ACCESS_MODE_WRITER) ? "writing":"reading");
     status = MBError::SUCCESS;
 }
 
@@ -292,7 +292,7 @@ int DB::Remove(const char *key, int len, MBData &data)
     if(status != MBError::SUCCESS)
         return MBError::NOT_INITIALIZED;
 
-    data.options |= OPTION_FIND_AND_DELETE;
+    data.options |= CONSTS::OPTION_FIND_AND_DELETE;
 
     int rval;
     rval = dict->Remove(reinterpret_cast<const uint8_t*>(key), len, data);
@@ -424,7 +424,7 @@ void DB::iterator::iter_obj_init()
         node_stack = new MBlsq(free);
     }
 
-    if(!(db_ref.dict->GetDBOptions() & ACCESS_MODE_WRITER))
+    if(!(db_ref.dict->GetDBOptions() & CONSTS::ACCESS_MODE_WRITER))
     {
         // Only writer can iterate the DB since we don't enforce the lock.
         Logger::Log(LOG_LEVEL_WARN, "connector %u no permission for db iteration",
