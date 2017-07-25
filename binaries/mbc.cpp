@@ -334,9 +334,9 @@ static void mbclient(const char *db_dir, int64_t memcap_i, int64_t memcap_d, int
                     std::cout << MBError::get_error_str(rval) << "\n";
                 break;
             case COMMAND_DELETE:
-                if(mode & ACCESS_MODE_WRITER)
+                if(mode & CONSTS::ACCESS_MODE_WRITER)
                 {
-                    mbd.options |= OPTION_FIND_AND_DELETE;
+                    mbd.options |= CONSTS::OPTION_FIND_AND_DELETE;
                     rval = db->Remove(key.c_str(), key.length(), mbd);
                     std::cout << MBError::get_error_str(rval) << "\n";
                 }
@@ -346,7 +346,7 @@ static void mbclient(const char *db_dir, int64_t memcap_i, int64_t memcap_d, int
             case COMMAND_REPLACE:
                 overwrite = true;
             case COMMAND_INSERT:
-                if(mode & ACCESS_MODE_WRITER)
+                if(mode & CONSTS::ACCESS_MODE_WRITER)
                 {
                     rval = db->Add(key.c_str(), key.length(), mbd, overwrite);
                     std::cout << MBError::get_error_str(rval) << "\n";
@@ -361,7 +361,7 @@ static void mbclient(const char *db_dir, int64_t memcap_i, int64_t memcap_d, int
                 show_help();
                 break;
             case COMMAND_DELETE_ALL:
-                if(mode & ACCESS_MODE_WRITER)
+                if(mode & CONSTS::ACCESS_MODE_WRITER)
                 {
                     rval = db->RemoveAll();
                     std::cout << MBError::get_error_str(rval) << "\n";
@@ -370,16 +370,16 @@ static void mbclient(const char *db_dir, int64_t memcap_i, int64_t memcap_d, int
                     std::cout << "permission not allowed\n";
                 break;
             case COMMAND_FIND_ALL:
-                if(mode & ACCESS_MODE_WRITER)
+                if(mode & CONSTS::ACCESS_MODE_WRITER)
                     display_all_kvs();
                 else
                     std::cout << "permission not allowed\n";
                 break;
             case COMMAND_RESET_N_WRITER:
-                db->UpdateNumHandlers(ACCESS_MODE_WRITER, -1);
+                db->UpdateNumHandlers(CONSTS::ACCESS_MODE_WRITER, -1);
                 break;
             case COMMAND_RESET_N_READER:
-                db->UpdateNumHandlers(ACCESS_MODE_READER, -1);
+                db->UpdateNumHandlers(CONSTS::ACCESS_MODE_READER, -1);
                 break;
             case COMMAND_UNKNOWN:
             default:
@@ -449,7 +449,7 @@ int main(int argc, char *argv[])
         }
         else if(strcmp(argv[i], "-w") == 0)
         {
-            mode |= ACCESS_MODE_WRITER;
+            mode |= CONSTS::ACCESS_MODE_WRITER;
         }
         else
             usage(argv[0]);

@@ -58,7 +58,7 @@ RollableFile::RollableFile(const std::string &fpath, size_t blocksize,
     {
         // disk usage will be virtuall unlimited.
         max_num_block = LONG_MAX;
-        if(mode & ACCESS_MODE_WRITER)
+        if(mode & CONSTS::ACCESS_MODE_WRITER)
         {
             Logger::Log(LOG_LEVEL_INFO, "maximal block number for %s is %d",
                     fpath.c_str(), max_num_block);
@@ -66,7 +66,7 @@ RollableFile::RollableFile(const std::string &fpath, size_t blocksize,
     }
 
     Logger::Log(LOG_LEVEL_INFO, "Opening rollable file %s for %s, mmap size: %d",
-            path.c_str(), (mode&ACCESS_MODE_WRITER)?"writing":"reading", mmap_mem);
+            path.c_str(), (mode & CONSTS::ACCESS_MODE_WRITER)?"writing":"reading", mmap_mem);
     if(!sliding_mmap)
     {
         Logger::Log(LOG_LEVEL_INFO, "Sliding mmap is turned off for " + fpath);
@@ -127,7 +127,7 @@ int RollableFile::OpenAndMapBlockFile(int block_order)
     assert(files[block_order] == NULL);
 #endif
 
-    if(mode & ACCESS_MODE_WRITER)
+    if(mode & CONSTS::ACCESS_MODE_WRITER)
     {
         files[block_order] = new MmapFileIO(path+ss.str(),
                                  O_RDWR | O_CREAT, block_size, sync_on_write);

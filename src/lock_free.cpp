@@ -41,7 +41,7 @@ LockFree::~LockFree()
 void LockFree::LockFreeInit(LockFreeShmData *lock_free_ptr, int mode)
 {
     shm_data_ptr = lock_free_ptr;
-    if(mode & ACCESS_MODE_WRITER)
+    if(mode & CONSTS::ACCESS_MODE_WRITER)
     {
         // Clear the lock free data
         shm_data_ptr->counter.store(0, MEMORY_ORDER_WRITER);

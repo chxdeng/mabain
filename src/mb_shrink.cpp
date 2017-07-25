@@ -42,7 +42,7 @@ MBShrink::MBShrink(DB &db) : db_ref(db), db_link(NULL)
     if(dict == NULL)
         return;
 
-    if(!(dict->GetDBOptions() & ACCESS_MODE_WRITER))
+    if(!(dict->GetDBOptions() & CONSTS::ACCESS_MODE_WRITER))
     {
         Logger::Log(LOG_LEVEL_ERROR, "readers are not allowed to perform db shrink");
         dict = NULL;
@@ -724,7 +724,7 @@ int MBShrink::OpenLinkDB()
             return MBError::OPEN_FAILURE;
         }
     }
-    db_link = new DB(db_link_dir, LINK_SHM_SIZE, LINK_SHM_SIZE, ACCESS_MODE_WRITER,
+    db_link = new DB(db_link_dir, LINK_SHM_SIZE, LINK_SHM_SIZE, CONSTS::ACCESS_MODE_WRITER,
                      sizeof(IndexNode), 0, false);
     if(!db_link->is_open())
     {
