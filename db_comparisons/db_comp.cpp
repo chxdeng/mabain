@@ -66,10 +66,13 @@ static void InitDB()
     }
 
 #ifdef LEVEL_DB
+    std::cout << "===== using leveldb for testing\n";
     std::string db_dir_tmp = std::string(db_dir) + "/leveldb/";
 #elif KYOTO_CABINET
+    std::cout << "===== using kyotocabinet for testing\n";
     std::string db_dir_tmp = std::string(db_dir) + "/kyotocabinet/";
 #else
+    std::cout << "===== using mabain for testing\n";
     std::string db_dir_tmp = std::string(db_dir) + "/mabain/";
 #endif
 
@@ -81,13 +84,11 @@ static void InitDB()
     }
 
 #ifdef LEVEL_DB
-    std::cout << "===== using leveldb for testing\n";
     leveldb::Options options;
     options.create_if_missing = true;
     leveldb::Status status = leveldb::DB::Open(options, db_dir_tmp, &db);
     assert(status.ok());
 #elif KYOTO_CABINET
-    std::cout << "===== using kyotocabinet for testing\n";
     db = new kyotocabinet::PolyDB();
     std::string db_path = db_dir_tmp + "casket.kch";
     if (!db->open(db_path.c_str(), kyotocabinet::PolyDB::OWRITER | kyotocabinet::PolyDB::OCREATE)) {
@@ -95,7 +96,6 @@ static void InitDB()
         abort();
     }
 #else
-    std::cout << "===== using mabain for testing\n";
     db = new mabain::DB(db_dir_tmp, 64*1024*1024LL, 0*1024*1024LL, mabain::CONSTS::ACCESS_MODE_WRITER);
     assert(db->is_open());
 #endif
@@ -410,7 +410,6 @@ int main(int argc, char *argv[])
     Lookup(num_kv);
     Delete(num_kv);
     DestroyDB();
-
 
     InitDB();
     ConcurrencyTest(num_kv, n_reader);
