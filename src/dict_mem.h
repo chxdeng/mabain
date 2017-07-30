@@ -42,7 +42,7 @@
 #define EDGE_FLAG_DATA_OFF         0x01
 #define FLAG_NODE_MATCH            0x01
 #define FLAG_NODE_NONE             0x0
-#define BUFFER_ALIGNMENT           4
+#define BUFFER_ALIGNMENT           1
 #define LOCAL_EDGE_LEN             6
 #define LOCAL_EDGE_LEN_M1          5
 #define EDGE_NODE_LEADING_POS      7

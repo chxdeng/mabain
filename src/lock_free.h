@@ -44,7 +44,7 @@ typedef struct _LockFreeShmData
     std::atomic<size_t>   offset;
     std::atomic<size_t>   offset_cache[MAX_OFFSET_CACHE];
     size_t                edge_offset_cache[MAX_OFFSET_CACHE];
-    size_t                node_offset_cache[MAX_OFFSET_CACHE];
+    std::atomic<size_t>   node_offset_cache[MAX_OFFSET_CACHE];
 } LockFreeShmData;
 
 class LockFree
@@ -60,6 +60,8 @@ public:
     static int  ReaderLockFreeStop(const LockFreeData &snapshot, size_t reader_offset);
     static void PushOffsets(size_t edge_off, size_t node_off);
     static bool ReleasedOffsetInUse(size_t offset);
+    static bool ReaderValidateNodeOffset(uint32_t counter_prev, size_t node_off, uint32_t &counter_curr);
+    static uint32_t LoadCounter();
 
 private:
     LockFree();

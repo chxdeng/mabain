@@ -43,6 +43,9 @@ const char* MBError::error_str[] = {
     "disk capacity exceeded",
     "database closed",
     "buffer discarded", // buffer will be reclaimed by shrink
+    "failed to create thread",
+    "edge offset modified",
+    "node offset modified",
 
     ///////////////////////////////////
     "DB not exist",

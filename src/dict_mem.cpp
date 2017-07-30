@@ -545,6 +545,7 @@ int DictMem::UpdateNode(EdgePtrs &edge_ptrs, const uint8_t *key, int key_len,
         WriteData(node, node_size[nt], node_ptrs.offset);
 
 #ifdef __LOCK_FREE__
+    LockFree::WriterLockFreeStart(edge_ptrs.offset);
     if(release_node_index >= 0)
     {
         LockFree::PushOffsets(0, old_node_off);
@@ -554,7 +555,6 @@ int DictMem::UpdateNode(EdgePtrs &edge_ptrs, const uint8_t *key, int key_len,
     {
         LockFree::PushOffsets(0, 0);
     }
-    LockFree::WriterLockFreeStart(edge_ptrs.offset);
 #else
     if(release_node_index >= 0)
         ReleaseNode(old_node_off, release_node_index);
