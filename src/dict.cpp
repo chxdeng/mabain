@@ -29,6 +29,7 @@
 
 #define MAX_DATA_BUFFER_RESERVE_SIZE    0xFFFF
 #define NUM_DATA_BUFFER_RESERVE         MAX_DATA_BUFFER_RESERVE_SIZE/DATA_BUFFER_ALIGNMENT
+#define DATA_HEADER_SIZE                32
 
 #define READER_LOCK_FREE_START               \
     LockFreeData snapshot;                   \
@@ -634,7 +635,7 @@ int Dict::Find(const uint8_t *key, int len, MBData &data) const
 #endif
         while(true)
         {
-            rval = mm.NextEdge(p, edge_ptrs, node_buff, data.options & CONSTS::OPTION_FIND_AND_DELETE);
+            rval = mm.NextEdge(p, edge_ptrs, node_buff, data.options & CONSTS::OPTION_FIND_AND_STORE_PARENT);
             if(rval != MBError::SUCCESS)
                 break;
 
@@ -669,10 +670,10 @@ int Dict::Find(const uint8_t *key, int len, MBData &data) const
             if(len <= 0)
             {
                 // If this is for remove operation, return IN_DICT to caller.
-                if(data.options & CONSTS::OPTION_FIND_AND_DELETE)
-                    return MBError::IN_DICT;
-
-                rval =  ReadDataFromEdge(data, edge_ptrs);
+                if(data.options & CONSTS::OPTION_FIND_AND_STORE_PARENT)
+                    rval = MBError::IN_DICT;
+                else
+                    rval = ReadDataFromEdge(data, edge_ptrs);
                 break;
             }
             else
@@ -699,15 +700,18 @@ int Dict::Find(const uint8_t *key, int len, MBData &data) const
         else
         {
             // If this is for remove operation, return IN_DICT to caller.
-            if(data.options & CONSTS::OPTION_FIND_AND_DELETE)
+            if(data.options & CONSTS::OPTION_FIND_AND_STORE_PARENT)
             {
                 data.edge_ptrs.curr_node_offset = mm.GetRootOffset();
                 data.edge_ptrs.curr_nt = 1;
                 data.edge_ptrs.curr_edge_index = 0;
                 data.edge_ptrs.parent_offset = data.edge_ptrs.offset;
-                return MBError::IN_DICT;
+                rval = MBError::IN_DICT;
             }
-            rval = ReadDataFromEdge(data, edge_ptrs);
+            else
+            {
+                rval = ReadDataFromEdge(data, edge_ptrs);
+            }
         }
     }
 
@@ -770,6 +774,7 @@ int Dict::ReadNextEdge(const uint8_t *node_buff, EdgePtrs &edge_ptrs,
         return MBError::READ_ERROR;
 
     node_off = 0;
+    match_str = "";
 
     int rval = MBError::SUCCESS;
     InitTempEdgePtrs(edge_ptrs);
@@ -784,21 +789,25 @@ int Dict::ReadNextEdge(const uint8_t *node_buff, EdgePtrs &edge_ptrs,
     else
     {
         match = MATCH_NONE;
-        node_off = Get6BInteger(edge_ptrs.offset_ptr);
+        if(edge_ptrs.len_ptr[0] > 0)
+            node_off = Get6BInteger(edge_ptrs.offset_ptr);
     }
-    edge_ptrs.parent_offset = edge_ptrs.offset;
 
-    int edge_len_m1 = edge_ptrs.len_ptr[0] - 1;
-    match_str = std::string(1, (const char)node_buff[NODE_EDGE_KEY_FIRST+edge_ptrs.curr_nt]);
-    if(edge_len_m1 > LOCAL_EDGE_LEN_M1)
+    edge_ptrs.parent_offset = edge_ptrs.offset;
+    if(edge_ptrs.len_ptr[0] > 0)
     {
-        if(mm.ReadData(data.node_buff, edge_len_m1, Get5BInteger(edge_ptrs.ptr)) != edge_len_m1)
-            return MBError::READ_ERROR;
-        match_str += std::string(reinterpret_cast<char*>(data.node_buff), edge_len_m1);
-    }
-    else if(edge_len_m1 > 0)
-    {
-        match_str += std::string(reinterpret_cast<char*>(edge_ptrs.ptr), edge_len_m1);
+        int edge_len_m1 = edge_ptrs.len_ptr[0] - 1;
+        match_str = std::string(1, (const char)node_buff[NODE_EDGE_KEY_FIRST+edge_ptrs.curr_nt]);
+        if(edge_len_m1 > LOCAL_EDGE_LEN_M1)
+        {
+            if(mm.ReadData(data.node_buff, edge_len_m1, Get5BInteger(edge_ptrs.ptr)) != edge_len_m1)
+                return MBError::READ_ERROR;
+            match_str += std::string(reinterpret_cast<char*>(data.node_buff), edge_len_m1);
+        }
+        else if(edge_len_m1 > 0)
+        {
+            match_str += std::string(reinterpret_cast<char*>(edge_ptrs.ptr), edge_len_m1);
+        }
     }
 
     edge_ptrs.curr_nt++;
@@ -850,7 +859,7 @@ int Dict::ReadRootNode(uint8_t *node_buff, EdgePtrs &edge_ptrs, int &match,
 
 int Dict::Remove(const uint8_t *key, int len)
 {
-    MBData data(0, CONSTS::OPTION_FIND_AND_DELETE);
+    MBData data(0, CONSTS::OPTION_FIND_AND_STORE_PARENT);
     return Remove(key, len, data);
 }
 
@@ -860,7 +869,7 @@ int Dict::Remove(const uint8_t *key, int len, MBData &data)
         return MBError::NOT_ALLOWED;
 
     // The DELETE flag must be set
-    if(!(data.options & CONSTS::OPTION_FIND_AND_DELETE))
+    if(!(data.options & CONSTS::OPTION_FIND_AND_STORE_PARENT))
         return MBError::INVALID_ARG;
 
     int rval;
@@ -1115,7 +1124,7 @@ const std::string& Dict::GetDBDir() const
 
 size_t Dict::GetStartDataOffset() const
 {
-    return DATA_BUFFER_ALIGNMENT;
+    return DATA_HEADER_SIZE;
 }
 
 void Dict::ResetSlidingWindow() const

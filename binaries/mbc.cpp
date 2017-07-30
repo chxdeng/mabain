@@ -336,7 +336,7 @@ static void mbclient(const char *db_dir, int64_t memcap_i, int64_t memcap_d, int
             case COMMAND_DELETE:
                 if(mode & CONSTS::ACCESS_MODE_WRITER)
                 {
-                    mbd.options |= CONSTS::OPTION_FIND_AND_DELETE;
+                    mbd.options |= CONSTS::OPTION_FIND_AND_STORE_PARENT;
                     rval = db->Remove(key.c_str(), key.length(), mbd);
                     std::cout << MBError::get_error_str(rval) << "\n";
                 }
@@ -370,10 +370,7 @@ static void mbclient(const char *db_dir, int64_t memcap_i, int64_t memcap_d, int
                     std::cout << "permission not allowed\n";
                 break;
             case COMMAND_FIND_ALL:
-                if(mode & CONSTS::ACCESS_MODE_WRITER)
-                    display_all_kvs();
-                else
-                    std::cout << "permission not allowed\n";
+                display_all_kvs();
                 break;
             case COMMAND_RESET_N_WRITER:
                 db->UpdateNumHandlers(CONSTS::ACCESS_MODE_WRITER, -1);

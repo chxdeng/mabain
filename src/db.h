@@ -43,6 +43,7 @@ namespace mabain {
 class Dict;
 class MBlsq;
 class MBShrink;
+class AsyncWriter;
 struct _IndexNode;
 
 // Database handle class
@@ -76,12 +77,15 @@ public:
             size_t node_off;
             std::string key;
             size_t parent_edge_off;
-            iter_node(size_t offset, const std::string &ckey, size_t edge_off);
+            uint32_t node_counter;
+            iter_node(size_t offset, const std::string &ckey, size_t edge_off, uint32_t counter);
         };
 
         iterator* next();
         void iter_obj_init();
-        int next_index_buffer(size_t &parent_node_off, struct _IndexNode *inp);
+        int  next_index_buffer(size_t &parent_node_off, struct _IndexNode *inp);
+        int  node_offset_modified(const std::string &key, size_t node_off, MBData &mbd);
+        int  edge_offset_modified(const std::string &key, size_t edge_off, MBData &mbd);
 
         const DB &db_ref;
         int state;
@@ -92,6 +96,8 @@ public:
         MBlsq *node_stack;
         std::string curr_key;
         std::string match_str;
+        uint32_t curr_node_counter;
+        size_t curr_node_offset;
     };
 
     // db_path: database directory
@@ -162,6 +168,8 @@ private:
     int status;
     // DB connector ID
     uint32_t identifier;
+
+    AsyncWriter *async_writer;
 };
 
 }

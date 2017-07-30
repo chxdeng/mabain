@@ -133,7 +133,7 @@ static void InitDB()
         abort();
     }
 #else
-    db = new mabain::DB(db_dir_tmp, 64*1024*1024LL, 0*1024*1024LL, mabain::CONSTS::ACCESS_MODE_WRITER);
+    db = new mabain::DB(db_dir_tmp, 64*1024*1024LL, 0*1024*1024LL, mabain::CONSTS::WriterOptions());
     assert(db->is_open());
 #endif
 }
