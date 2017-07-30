@@ -29,7 +29,7 @@ int main(int argc, char *argv[])
         db_dir = argv[1];
     }
 
-    DB db(db_dir, 1048576LL, 1048576LL, CONSTS::ACCESS_MODE_READER);
+    DB db(db_dir, 1048576LL, 1048576LL, CONSTS::ReaderOptions());
     if(!db.is_open()) {
         std::cerr << "failed to open mabain db: " << db.StatusStr() << "\n";
         exit(1);

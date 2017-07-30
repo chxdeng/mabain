@@ -35,6 +35,7 @@
 #define REMOVE_ALL           2
 #define SHRINK_TEST          3
 #define LOOKUP_TEST          4
+#define ITERATOR_TEST        5
 #define KEY_TYPE_INT         0
 #define KEY_TYPE_SHA256      1
 
@@ -75,6 +76,7 @@ static void RemoveRandom(int rm_cnt, DB &db)
         if(cnt % 1000000 == 0)
             std::cout << "Removed " << cnt << "\n";
     }
+    std::cout << "Randomly removed " << rm_cnt << "\n";
 }
 
 static void PopulateDB(DB &db)
@@ -105,7 +107,7 @@ static void PopulateDB(DB &db)
         if(nkeys % 1000000 == 0)
             std::cout << "populate db:  " << " inserted " << nkeys << " keys\n";
     }
-    db.PrintStats();
+    //db.PrintStats();
 }
 
 static void RemoveHalf(DB &db)
@@ -136,16 +138,16 @@ static void RemoveHalf(DB &db)
             abort();
         }
     }
-    db.PrintStats();
+    //db.PrintStats();
 }
 
 //Writer process
 static void Writer(int id)
 {
     //std::cout << "Start time: " << time(NULL) << "\n";
-    std::cout << "I am writer " << id << " with pid " << getpid() << "\n";
+    //std::cout << "I am writer " << id << " with pid " << getpid() << "\n";
 
-    DB db(mb_dir, memcap_index, memcap_data, CONSTS::ACCESS_MODE_WRITER);
+    DB db(mb_dir, memcap_index, memcap_data, CONSTS::WriterOptions());
     if(!db.is_open()) {
         std::cerr << "writer " << id << " failed to open mabain db: "
                   << db.StatusStr() << "\n";
@@ -153,7 +155,7 @@ static void Writer(int id)
     }
 
     if(test_type == SHRINK_TEST) {
-        db.Shrink();
+        db.Shrink(0, 0);
 
         //if(id == 0) db.PrintStats();
         std::cout << "writer " << id << " exiting\n";
@@ -192,10 +194,11 @@ static void Writer(int id)
             }
         } else {
             rval = db.Add(kv.c_str(), kv.length(), kv.c_str(), kv.length());
-            if(rval != MBError::SUCCESS && rval != MBError::IN_DICT)
-                std::cout << "failed to add " << kv << " " << rval << "\n";
-            else if(rval == MBError::SUCCESS)
+            if(rval != MBError::SUCCESS && rval != MBError::IN_DICT) {
+                //std::cout << "failed to add " << kv << " " << rval << "\n";
+            } else if(rval == MBError::SUCCESS) {
                 count++;
+            }
         }
 
         if(nkeys % 1000000 == 0)
@@ -218,11 +221,24 @@ static void Reader(int id)
 {
     //std::cout << "I am reader " << id << " with pid " << getpid() << "\n";
 
-    DB db(mb_dir, memcap_index, memcap_data, CONSTS::ACCESS_MODE_READER);
+    DB db(mb_dir, memcap_index, memcap_data, CONSTS::ReaderOptions());
     if(!db.is_open()) {
         std::cerr << "reader " << id << " failed to open mabain db: "
                   << db.StatusStr() << "\n";
         exit(1);
+    }
+
+    if(test_type == ITERATOR_TEST) {
+        int count = 0;
+        for(DB::iterator iter = db.begin(); iter != db.end(); ++iter) {
+            count++;
+            if(iter.key != std::string((char*)iter.value.buff, iter.value.data_len)) {
+                std::cout << iter.key << ": " << std::string((char*)iter.value.buff, iter.value.data_len) << "\n";
+            }
+        }
+        db.Close();
+        std::cout << "Reader iterates " << count << " keys\n";
+        exit(0);
     }
 
     int ikey = 1;
@@ -336,6 +352,8 @@ int main(int argc, char *argv[])
             test_type = SHRINK_TEST;
         else if(strcmp(test_tp, "lookup") == 0)
             test_type = LOOKUP_TEST;
+        else if(strcmp(test_tp, "iterator") == 0)
+            test_type = ITERATOR_TEST;
         if(test_type < 0)
         {
             std::cerr << "Wrong test type " << test_tp << "\n";
@@ -349,18 +367,35 @@ int main(int argc, char *argv[])
     }
 
     // Delete all keys from last run.
-    DB db(mb_dir, memcap_index, memcap_data, CONSTS::ACCESS_MODE_WRITER);
+    DB db(mb_dir, memcap_index, memcap_data, CONSTS::WriterOptions());
     if(!db.is_open()) {
         std::cerr << " failed to open mabain db: "
                   << db.StatusStr() << "\n";
         exit(1);
     }
+
     db.RemoveAll();
     PopulateDB(db);
-    if(test_type == SHRINK_TEST)
+    switch(test_type) {
+    case ADD_TEST:
+        RemoveRandom(int(num_keys * 0.81), db);
+        break;
+    case LOOKUP_TEST:
+        break;
+    case SHRINK_TEST:
         RemoveHalf(db);
-    else if(test_type == ADD_TEST)
-        RemoveRandom(int(num_keys * 0.02), db);
+        break;
+    case REMOVE_ONE_BY_ONE:
+        break;
+    case REMOVE_ALL:
+        break;
+    case ITERATOR_TEST:
+        //RemoveRandom(int(num_keys * 0.11), db);
+        RemoveHalf(db);
+        break;
+    default:
+        abort();
+    }
  
     db.Close();
 
