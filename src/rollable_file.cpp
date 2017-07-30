@@ -288,7 +288,6 @@ uint8_t* RollableFile::NewSlidingMapAddr(int order, size_t offset, int size)
     int page_alignment = sliding_start % page_size;
     if(page_alignment != 0)
     {
-        //TODOO sliding_start = sliding_start - page_size - page_alignment;
         sliding_start -= page_alignment;
         if(sliding_start < 0)
             sliding_start = 0;

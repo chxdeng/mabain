@@ -26,10 +26,14 @@ class CONSTS
 public:
     static const int ACCESS_MODE_READER;
     static const int ACCESS_MODE_WRITER;
+    static const int ASYNC_WRITER_MODE;
     static const int OPTION_ALL_PREFIX;
-    static const int OPTION_FIND_AND_DELETE;
+    static const int OPTION_FIND_AND_STORE_PARENT;
     static const int MAX_KEY_LENGHTH;
     static const int MAX_DATA_SIZE;
+
+    static int WriterOptions();
+    static int ReaderOptions();
 };
 
 }
