@@ -53,3 +53,5 @@ Caveats
     3. The value/data size can not be bigger than 32767 bytes.  
     4. Using mabain on NFS currently is not supported or tested.  
     5. Please use -D__BIG__ENDIAN__ in compilation flag when using mabain on big endian machines.
+    
+[![License: GPL v2](https://img.shields.io/badge/License-GPL%20v2-blue.svg)](https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html)
