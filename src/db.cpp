@@ -94,8 +94,8 @@ int DB::UpdateNumHandlers(int mode, int delta)
 }
 
 // Constructor for initializing DB handle
-DB::DB(const std::string &db_path, size_t memcap_index, size_t memcap_data,
-       int db_options, int data_size, uint32_t id, bool init_global)
+DB::DB(const std::string &db_path, int db_options, size_t memcap_index, size_t memcap_data,
+       int data_size, uint32_t id, bool init_global)
 {
     status = MBError::NOT_INITIALIZED;
     dict = NULL;
@@ -152,7 +152,7 @@ DB::DB(const std::string &db_path, size_t memcap_index, size_t memcap_data,
     if(db_options & CONSTS::ACCESS_MODE_WRITER)
         sliding_mmap = true;
     dict = new Dict(db_path_tmp, init_header, data_size, db_options, memcap_index,
-                    memcap_data, sliding_mmap, false);
+                    memcap_data, sliding_mmap, db_options & CONSTS::SYNC_ON_WRITE);
 
     if((db_options & CONSTS::ACCESS_MODE_WRITER) && init_header)
     {
@@ -244,6 +244,11 @@ int DB::Find(const char* key, int len, MBData &mdata) const
     return rval;
 }
 
+int DB::Find(const std::string &key, MBData &mdata) const
+{
+    return Find(key.data(), key.size(), mdata);
+}
+
 // Find all possible prefix matches. The caller needs to call this function
 // repeatedly if data.next is true.
 int DB::FindPrefix(const char* key, int len, MBData &data) const
@@ -283,6 +288,11 @@ int DB::FindLongestPrefix(const char* key, int len, MBData &data) const
     return rval;
 }
 
+int DB::FindLongestPrefix(const std::string &key, MBData &data) const
+{
+    return FindLongestPrefix(key.data(), key.size(), data);
+}
+
 // Add a key-value pair
 int DB::Add(const char* key, int len, MBData &mbdata, bool overwrite)
 {
@@ -318,6 +328,11 @@ int DB::Add(const char* key, int len, const char* data, int data_len, bool overw
     return rval;
 }
 
+int DB::Add(const std::string &key, const std::string &value, bool overwrite)
+{
+    return Add(key.data(), key.size(), value.data(), value.size(), overwrite);
+}
+
 // Delete entry by key
 int DB::Remove(const char *key, int len, MBData &data)
 {
@@ -347,6 +362,11 @@ int DB::Remove(const char *key, int len)
     rval = dict->Remove(reinterpret_cast<const uint8_t*>(key), len);
 
     return rval;
+}
+
+int DB::Remove(const std::string &key)
+{
+    return Remove(key.data(), key.size());
 }
 
 int DB::RemoveAll()
@@ -631,6 +651,7 @@ DB::iterator* DB::iterator::next()
                 {
                     // prepare for the next edge with updated offset
                     edge_ptrs.offset = mbd.edge_ptrs.offset + EDGE_SIZE;
+                    edge_ptrs.curr_nt++;
                 }
                 else if(lf_ret == MBError::NOT_EXIST)
                 {

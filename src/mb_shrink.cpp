@@ -724,7 +724,7 @@ int MBShrink::OpenLinkDB()
             return MBError::OPEN_FAILURE;
         }
     }
-    db_link = new DB(db_link_dir, LINK_SHM_SIZE, LINK_SHM_SIZE, CONSTS::ACCESS_MODE_WRITER,
+    db_link = new DB(db_link_dir, CONSTS::ACCESS_MODE_WRITER, LINK_SHM_SIZE, LINK_SHM_SIZE,
                      sizeof(IndexNode), 0, false);
     if(!db_link->is_open())
     {

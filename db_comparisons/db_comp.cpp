@@ -133,7 +133,7 @@ static void InitDB()
         abort();
     }
 #else
-    db = new mabain::DB(db_dir_tmp, 64*1024*1024LL, 0*1024*1024LL, mabain::CONSTS::WriterOptions());
+    db = new mabain::DB(db_dir_tmp, mabain::CONSTS::WriterOptions(), 64*1024*1024LL, 0*1024*1024LL);
     assert(db->is_open());
 #endif
 }
@@ -164,7 +164,7 @@ static void Add(int n)
 #elif KYOTO_CABINET
         db->set(key.c_str(), val.c_str());
 #else
-        db->Add(key.c_str(), key.length(), val.c_str(), val.length());
+        db->Add(key, val);
 #endif
 
         if((i+1)%1000000 == 0) {
@@ -206,7 +206,7 @@ static void Lookup(int n)
         if(db->get(key, &value)) nfound++;
 #else
         mabain::MBData mbd;
-        int rval = db->Find(key.c_str(), key.length(), mbd);
+        int rval = db->Find(key, mbd);
         if(rval == 0) nfound++;
 #endif
 
@@ -247,7 +247,7 @@ static void Delete(int n)
         std::string value;
         if(db->remove(key)) nfound++;
 #else
-        int rval = db->Remove(key.c_str(), key.length());
+        int rval = db->Remove(key);
         if(rval == 0) nfound++;
 #endif
 
@@ -337,7 +337,7 @@ static void *Reader(void *arg)
 #elif KYOTO_CABINET
 #else
         mabain::MBData mbd;
-        int rval = db->Find(key.c_str(), key.length(), mbd);
+        int rval = db->Find(key, mbd);
         if(rval == 0) {
             std::string v;
             if(key_type == 0) {

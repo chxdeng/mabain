@@ -29,34 +29,27 @@ int main(int argc, char *argv[])
         db_dir = argv[1];
     }
 
-    DB db(db_dir, 1048576LL, 1048576LL, CONSTS::WriterOptions());
+    DB db(db_dir, CONSTS::WriterOptions());
     if(!db.is_open()) {
         std::cerr << "failed to open mabain db: " << db.StatusStr() << "\n";
         exit(1);
     }
 
-    std::string key, value;
+    std::string key[3], value[3];
     int rval;
 
-    key = "Apple";
-    value = "Red";
-    rval = db.Add(key.c_str(), key.length(), value.c_str(), value.length());
-    if(rval != MBError::SUCCESS) {
-        std::cout << key << ": " << MBError::get_error_str(rval) << std::endl;
-    }
+    key[0] = "Apple";
+    value[0] = "Red";
+    key[1] = "Orange";
+    value[1] = "Yellow";
+    key[2] = "Grape";
+    value[2] = "Purple";
 
-    key = "Orange";
-    value = "Yellow";
-    rval = db.Add(key.c_str(), key.length(), value.c_str(), value.length());
-    if(rval != MBError::SUCCESS) {
-        std::cout << key << ": " << MBError::get_error_str(rval) << std::endl;
-    }
-
-    key = "Grape";
-    value = "Purple";
-    rval = db.Add(key.c_str(), key.length(), value.c_str(), value.length());
-    if(rval != MBError::SUCCESS) {
-        std::cout << key << ": " << MBError::get_error_str(rval) << std::endl;
+    for(int i = 0; i < 3; i++) {
+        rval = db.Add(key[i], value[i]);
+        if(rval != MBError::SUCCESS) {
+            std::cout << key[i] << ": " << MBError::get_error_str(rval) << std::endl;
+        }
     }
 
     db.PrintStats(std::cout);

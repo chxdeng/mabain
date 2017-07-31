@@ -101,28 +101,33 @@ public:
     };
 
     // db_path: database directory
+    // db_options: db access option (read/write)
     // memcap_index: maximum memory size in bytes for key index
     // memcap_data: maximum memory size for data file mapping
-    // db_options: db access option (read/write)
     // data_size: the value size; if zero, the value size will be variable.
     // id: the connector id
-    DB(const std::string &db_path, size_t memcap_index, size_t memcap_data,
-       int db_options = 0, int data_size = 0, uint32_t  id = 0, bool init_global = true);
+    DB(const std::string &db_path, int db_options, size_t memcap_index=64*1024*1024LL,
+       size_t memcap_data=0, int data_size = 0, uint32_t  id = 0, bool init_global = true);
     ~DB();
 
     // Add a key-value pair
     int Add(const char* key, int len, const char* data, int data_len=0,
             bool overwrite=false);
     int Add(const char* key, int len, MBData &data, bool overwrite=false);
+    int Add(const std::string &key, const std::string &value, bool overwrite=false);
     // Find an entry by exact match using a key
     int Find(const char* key, int len, MBData &mdata) const;
+    int Find(const std::string &key, MBData &mdata) const;
     // Find all possible prefix matches using a key
+    // This is not fully implemented yet.
     int FindPrefix(const char* key, int len, MBData &data) const;
     // Find the longest prefix match using a key
     int FindLongestPrefix(const char* key, int len, MBData &data) const;
+    int FindLongestPrefix(const std::string &key, MBData &data) const;
     // Remove an entry using a key
     int Remove(const char *key, int len, MBData &data);
     int Remove(const char *key, int len);
+    int Remove(const std::string &key);
     int RemoveAll();
     // Close the DB handle
     int Close(bool shutdown_global = true);

@@ -29,46 +29,28 @@ int main(int argc, char *argv[])
         db_dir = argv[1];
     }
 
-    DB db(db_dir, 1048576LL, 1048576LL, CONSTS::ReaderOptions());
+    DB db(db_dir, CONSTS::ReaderOptions());
     if(!db.is_open()) {
         std::cerr << "failed to open mabain db: " << db.StatusStr() << "\n";
         exit(1);
     }
 
-    std::string key;
     MBData mbdata;
     int rval;
+    std::string key[4];
 
-    key = "Apple Pie";
-    rval = db.FindLongestPrefix(key.c_str(), key.length(), mbdata);
-    if(rval == MBError::SUCCESS) {
-        std::cout << key << ": " << std::string(reinterpret_cast<char*>(mbdata.buff), mbdata.data_len) << "\n";
-    } else {
-        std::cout << key << ": not found\n";
-    }
+    key[0] = "Apple Pie";
+    key[1] = "Grape Juice";
+    key[2] = "Orange Paper";
+    key[3] = "Kiwikiwi";
 
-    key = "Grape juice";
-    rval = db.FindLongestPrefix(key.c_str(), key.length(), mbdata);
-    if(rval == MBError::SUCCESS) {
-        std::cout << key << ": " << std::string(reinterpret_cast<char*>(mbdata.buff), mbdata.data_len) << "\n";
-    } else {
-        std::cout << key << ": not found\n";
-    }
-
-    key = "Orange paper";
-    rval = db.FindLongestPrefix(key.c_str(), key.length(), mbdata);
-    if(rval == MBError::SUCCESS) {
-        std::cout << key << ": " << std::string(reinterpret_cast<char*>(mbdata.buff), mbdata.data_len) << "\n";
-    } else {
-        std::cout << key << ": not found\n";
-    }
-
-    key = "Kiwikiwi";
-    rval = db.FindLongestPrefix(key.c_str(), key.length(), mbdata);
-    if(rval == MBError::SUCCESS) {
-        std::cout << key << ": " << std::string(reinterpret_cast<char*>(mbdata.buff), mbdata.data_len) << "\n";
-    } else {
-        std::cout << key << ": not found\n";
+    for(int i = 0; i < 4; i++) {
+        rval = db.FindLongestPrefix(key[i], mbdata);
+        if(rval == MBError::SUCCESS) {
+            std::cout << key[i] << ": " << std::string((char*) mbdata.buff, mbdata.data_len) << "\n";
+        } else {
+            std::cout << key[i] << ": not found\n";
+        }
     }
 
     db.Close();

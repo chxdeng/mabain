@@ -48,8 +48,8 @@ static int num_keys = 10000000;
 static int test_type = 0;
 static int64_t memcap_index = 256*1024*1024LL;
 static int64_t memcap_data  = 0*1024*1024LL;
-//static int key_type = KEY_TYPE_SHA256;
-static int key_type = KEY_TYPE_INT;
+static int key_type = KEY_TYPE_SHA256;
+//static int key_type = KEY_TYPE_INT;
 
 static const char* get_sha256_str(int key);
 
@@ -72,7 +72,7 @@ static void RemoveRandom(int rm_cnt, DB &db)
                 break;
         }
 
-        db.Remove(kv.c_str(), kv.length());
+        db.Remove(kv);
         if(cnt % 1000000 == 0)
             std::cout << "Removed " << cnt << "\n";
     }
@@ -97,7 +97,7 @@ static void PopulateDB(DB &db)
                 break;
         }
 
-        rval = db.Add(kv.c_str(), kv.length(), kv.c_str(), kv.length());
+        rval = db.Add(kv, kv);
         if(rval != MBError::SUCCESS)
         {
             std::cout << "failed to add " << kv << " " << rval << "\n";
@@ -147,7 +147,7 @@ static void Writer(int id)
     //std::cout << "Start time: " << time(NULL) << "\n";
     //std::cout << "I am writer " << id << " with pid " << getpid() << "\n";
 
-    DB db(mb_dir, memcap_index, memcap_data, CONSTS::WriterOptions());
+    DB db(mb_dir, CONSTS::WriterOptions(), memcap_index, memcap_data);
     if(!db.is_open()) {
         std::cerr << "writer " << id << " failed to open mabain db: "
                   << db.StatusStr() << "\n";
@@ -193,7 +193,7 @@ static void Writer(int id)
                 db.RemoveAll();
             }
         } else {
-            rval = db.Add(kv.c_str(), kv.length(), kv.c_str(), kv.length());
+            rval = db.Add(kv, kv);
             if(rval != MBError::SUCCESS && rval != MBError::IN_DICT) {
                 //std::cout << "failed to add " << kv << " " << rval << "\n";
             } else if(rval == MBError::SUCCESS) {
@@ -221,7 +221,7 @@ static void Reader(int id)
 {
     //std::cout << "I am reader " << id << " with pid " << getpid() << "\n";
 
-    DB db(mb_dir, memcap_index, memcap_data, CONSTS::ReaderOptions());
+    DB db(mb_dir, CONSTS::ReaderOptions(), memcap_index, memcap_data);
     if(!db.is_open()) {
         std::cerr << "reader " << id << " failed to open mabain db: "
                   << db.StatusStr() << "\n";
@@ -258,9 +258,9 @@ static void Reader(int id)
         }
         //SHRINK_TEST should only use Find()
         if(test_type == SHRINK_TEST) {
-            rval = db.Find(key.c_str(), key.length(), mb_data);
+            rval = db.Find(key, mb_data);
         } else {
-            rval = db.Find(key.c_str(), key.length(), mb_data);
+            rval = db.Find(key, mb_data);
             //rval = db.FindLongestPrefix(key.c_str(), key.length(), mb_data);
         }
 
@@ -279,7 +279,7 @@ static void Reader(int id)
 
             if(test_type == SHRINK_TEST) {
                 if(ikey % 2 != 0) {
-                    std::cout << "READER " << id << " KEY SHOULD NOT EXIST: " << key << "\n";
+                    //std::cout << "READER " << id << " KEY SHOULD NOT EXIST: " << key << "\n";
                 }
             } 
             ikey++;
@@ -290,7 +290,7 @@ static void Reader(int id)
                 ikey++;
             else if(test_type == SHRINK_TEST) {
                 if(ikey % 2 == 0) {
-                    std::cout << "READER " << id << " KEY " << ikey << " SHOULD EXIST: " << key << "\n";
+                    //std::cout << "READER " << id << " KEY " << ikey << " SHOULD EXIST: " << key << "\n";
                 }
                 ikey++;
             }
@@ -367,7 +367,7 @@ int main(int argc, char *argv[])
     }
 
     // Delete all keys from last run.
-    DB db(mb_dir, memcap_index, memcap_data, CONSTS::WriterOptions());
+    DB db(mb_dir, CONSTS::WriterOptions(), memcap_index, memcap_data);
     if(!db.is_open()) {
         std::cerr << " failed to open mabain db: "
                   << db.StatusStr() << "\n";
@@ -383,7 +383,8 @@ int main(int argc, char *argv[])
     case LOOKUP_TEST:
         break;
     case SHRINK_TEST:
-        RemoveHalf(db);
+        //RemoveHalf(db);
+        RemoveRandom(int(num_keys * 0.11), db);
         break;
     case REMOVE_ONE_BY_ONE:
         break;

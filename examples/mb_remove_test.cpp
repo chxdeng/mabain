@@ -29,73 +29,43 @@ int main(int argc, char *argv[])
         db_dir = argv[1];
     }
 
-    DB db(db_dir, 1048576LL, 1048576LL, CONSTS::WriterOptions());
+    DB db(db_dir, CONSTS::WriterOptions());
     if(!db.is_open()) {
         std::cerr << "failed to open mabain db: " << db.StatusStr() << "\n";
         exit(1);
     }
 
-    std::string key, value;
+    std::string key[3], value[3];
     int rval;
 
+    key[0] = "Apple";
+    key[1] = "Orange";
+    key[2] = "Grape";
+    value[0] = "Red";
+    value[1] = "Yellow";
+    value[2] = "Purple";
+
     // Add
-
-    key = "Apple";
-    value = "Red";
-    db.Add(key.c_str(), key.length(), value.c_str(), value.length());
-    std::cout << "Added " << key << ": " << value << "\n";
-
-    key = "Orange";
-    value = "Yellow";
-    db.Add(key.c_str(), key.length(), value.c_str(), value.length());
-    std::cout << "Added " << key << ": " << value << "\n";
-
-    key = "Grape";
-    value = "Purple";
-    db.Add(key.c_str(), key.length(), value.c_str(), value.length());
-    std::cout << "Added " << key << ": " << value << "\n";
+    for(int i = 0; i < 3; i++) {
+        db.Add(key[i], value[i]);
+    }
 
     // Remove
-
-    key = "Apple";
-    rval = db.Remove(key.c_str(), key.length());
-    if(rval != MBError::SUCCESS)
-        std::cerr << "failed to remove key " << key << "\n";
-    else
-        std::cout << "Removed " << key << ": " << value << "\n";
-
-    key = "Orange";
-    rval = db.Remove(key.c_str(), key.length());
-    if(rval != MBError::SUCCESS)
-        std::cerr << "failed to remove key " << key << "\n";
-    else
-        std::cout << "Removed " << key << ": " << value << "\n";
-
-    key = "Grape";
-    rval = db.Remove(key.c_str(), key.length());
-    if(rval != MBError::SUCCESS)
-        std::cerr << "failed to remove key " << key << "\n";
-    else
-        std::cout << "Removed " << key << ": " << value << "\n";
+    for(int i = 0; i < 3; i++) {
+        rval = db.Remove(key[i]);
+        if(rval != MBError::SUCCESS)
+            std::cerr << "failed to remove key " << key[i] << "\n";
+        else
+            std::cout << "Removed " << key[i] << ": " << value[i] << "\n";
+    }
 
     // Query
-
     MBData mb_data;
-
-    key = "Apple";
-    rval = db.Find(key.c_str(), key.length(), mb_data);
-    if(rval != MBError::SUCCESS)
-        std::cout << "key " << key << " not found\n";
-
-    key = "Orange";
-    rval = db.Find(key.c_str(), key.length(), mb_data);
-    if(rval != MBError::SUCCESS)
-        std::cout << "key " << key << " not found\n";
-
-    key = "Grape";
-    rval = db.Find(key.c_str(), key.length(), mb_data);
-    if(rval != MBError::SUCCESS)
-        std::cout << "key " << key << " not found\n";
+    for(int i = 0; i < 3; i++) {
+        rval = db.Find(key[i], mb_data);
+        if(rval != MBError::SUCCESS)
+            std::cout << "key " << key[i] << " not found\n";
+    }
 
     db.PrintStats(std::cout);
     db.Close();

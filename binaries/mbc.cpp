@@ -91,7 +91,7 @@ static void usage(const char *prog)
 static void show_help()
 {
     std::cout << "\tfind(\"key\")\t\tsearch entry by key\n";
-    std::cout << "\tfindPrefix(\"key\")\t\tsearch entry by key using longest prefix match\n";
+    std::cout << "\tfindPrefix(\"key\")\tsearch entry by key using longest prefix match\n";
     std::cout << "\tfindAll\t\t\tlist all entries\n";
     std::cout << "\tinsert(\"key\":\"value\")\tinsert a key-value pair\n";
     std::cout << "\treplace(\"key\":\"value\")\treplace a key-value pair\n";
@@ -285,7 +285,7 @@ static void mbclient(const char *db_dir, int64_t memcap_i, int64_t memcap_d, int
     bool overwrite;
     MBlsq history(free);
 
-    db = new DB(db_dir, memcap_i, memcap_d, mode);
+    db = new DB(db_dir, mode, memcap_i, memcap_d);
     if(!db->is_open())
     {
         std::cout << db->StatusStr() << "\n";

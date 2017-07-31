@@ -23,6 +23,7 @@ namespace mabain {
 const int CONSTS::ACCESS_MODE_READER           = 0x0;
 const int CONSTS::ACCESS_MODE_WRITER           = 0x1;
 const int CONSTS::ASYNC_WRITER_MODE            = 0x2;
+const int CONSTS::SYNC_ON_WRITE                = 0x4;
 
 const int CONSTS::OPTION_ALL_PREFIX            = 0x1;
 const int CONSTS::OPTION_FIND_AND_STORE_PARENT = 0x2;
