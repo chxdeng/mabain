@@ -1,0 +1,30 @@
+sudo: required
+
+# Placeholder installs
+before_install:
+  - sudo apt-get install libao-dev
+  - sudo apt-get install libcurl4-openssl-dev
+
+# Enable C++ support
+language: cpp
+
+# Compiler selection
+compiler:
+  - gcc
+
+# Placeholder install scripts
+install:
+  - DEPS_DIR="${TRAVIS_BUILD_DIR}/deps"
+  - mkdir ${DEPS_DIR} && cd ${DEPS_DIR}
+
+# Build steps
+script:
+  - mkdir build
+  - make clean install
+
+# Run examples
+after_install:
+  - cd ./examples
+  - make
+  - mkdir ./tmp_db_dir
+  - ./mb_insert_test
