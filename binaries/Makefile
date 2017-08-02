@@ -10,4 +10,4 @@ mbc: mbc.cpp
 	$(CPP) mbc.o -o mbc $(LDFLAGS)
 
 clean:
-	rm *.o mbc
+	-rm -f *.o mbc

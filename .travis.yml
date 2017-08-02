@@ -12,12 +12,13 @@ language: cpp
 compiler:
   - gcc
 
+# Placeholder install scripts
+install:
+  - pass
+
 # Build steps
 script:
   - make clean build
-
-# Placeholder install scripts
-install:
   - sudo make install
 
 # Run examples
