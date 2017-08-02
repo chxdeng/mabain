@@ -18,9 +18,9 @@ $(TARGET):$(OBJECTS) $(HEADERS)
 	$(CPP) $(CFLAGS) $< -o $@
 
 uninstall:
-	rm -rf $(INSTALLDIR)/include/mabain
-	rm $(INSTALLDIR)/lib/$(TARGET)
-	rm $(INSTALLDIR)/bin/mbc
+	-rm -rf $(INSTALLDIR)/include/mabain
+	-rm -f $(INSTALLDIR)/lib/$(TARGET)
+	-rm -f $(INSTALLDIR)/bin/mbc
 
 clean:
-	rm *.o util/*.o $(TARGET)
+	-rm *.o util/*.o $(TARGET)

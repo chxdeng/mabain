@@ -12,19 +12,22 @@ language: cpp
 compiler:
   - gcc
 
-# Placeholder install scripts
-install:
-  - DEPS_DIR="${TRAVIS_BUILD_DIR}/deps"
-  - mkdir ${DEPS_DIR} && cd ${DEPS_DIR}
-
 # Build steps
 script:
-  - mkdir build
-  - make clean install
+  - make clean build
+
+# Placeholder install scripts
+install:
+  - sudo make install
 
 # Run examples
 after_install:
   - cd ./examples
   - make
-  - mkdir ./tmp_db_dir
+  - export LD_LIBRARY_PATH=/usr/local/lib/
   - ./mb_insert_test
+  - ./mb_iterator_test
+  - ./mb_longest_prefix_test
+  - ./mb_lookup_test
+  - ./mb_multi_proc_test
+  - ./mb_remove_test

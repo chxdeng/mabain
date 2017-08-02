@@ -6,10 +6,10 @@ CPP=g++
 
 all: mb_insert_test mb_lookup_test mb_longest_prefix_test \
 	mb_remove_test mb_iterator_test mb_multi_proc_test
+	mkdir ./tmp_dir
 
 CFLAGS  = -I. -I$(MABAIN_INSTALL_DIR)/include -I../io -Wall -Werror -g -O2 -c -std=c++11
 LDFLAGS = -lpthread -lcrypto -L$(MABAIN_INSTALL_DIR)/lib -lmabain
-
 
 mb_insert_test: mb_insert_test.cpp
 	$(CPP) $(CFLAGS) mb_insert_test.cpp
@@ -31,4 +31,5 @@ mb_multi_proc_test: mb_multi_proc_test.cpp
 	$(CPP) mb_multi_proc_test.o -o mb_multi_proc_test $(LDFLAGS)
 
 clean:
-	rm ./*.o ./mb_*_test
+	-rm -f ./*.o ./mb_*_test
+	-rm -rf ./tmp_dir
