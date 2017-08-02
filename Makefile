@@ -25,8 +25,8 @@ install: build
 
 uninstall:
 	rm -rf $(MABAIN_INSTALL_DIR)/include/mabain
-	rm $(MABAIN_INSTALL_DIR)/lib/libmabain.so
-	rm $(MABAIN_INSTALL_DIR)/bin/mbc
+	rm -f $(MABAIN_INSTALL_DIR)/lib/libmabain.so
+	rm -f $(MABAIN_INSTALL_DIR)/bin/mbc
 
 clean:
 	make -C src clean; \

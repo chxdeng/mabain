@@ -12,16 +12,16 @@ language: cpp
 compiler:
   - gcc
 
+# Skip install phase
+install: true
+
 # Build steps
 script:
   - make clean build
-
-# Placeholder install scripts
-install:
   - sudo make install
 
 # Run examples
-after_install:
+after_success:
   - cd ./examples
   - make
   - export LD_LIBRARY_PATH=/usr/local/lib/
