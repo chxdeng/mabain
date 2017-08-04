@@ -23,4 +23,4 @@ uninstall:
 	-rm -f $(INSTALLDIR)/bin/mbc
 
 clean:
-	-rm *.o util/*.o $(TARGET)
+	-rm -f *.o util/*.o $(TARGET)
