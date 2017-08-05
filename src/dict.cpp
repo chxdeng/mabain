@@ -921,9 +921,9 @@ int Dict::RemoveAll()
     return rval;
 }
 
-void Dict::SetShmLockPtrs() const
+pthread_rwlock_t* Dict::GetShmLockPtrs() const
 {
-    MBLock::Init(&header->mb_rw_lock);
+    return &header->mb_rw_lock;
 }
 
 int Dict::InitShmMutex()

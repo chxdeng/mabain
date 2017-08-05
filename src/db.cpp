@@ -172,7 +172,7 @@ DB::DB(const std::string &db_path, int db_options, size_t memcap_index, size_t m
 
     if(!(db_options & CONSTS::NO_GLOBAL_INIT))
     {
-        dict->SetShmLockPtrs();
+        lock.Init(dict->GetShmLockPtrs());
         status = UpdateNumHandlers(db_options, 1);
         if(status != MBError::SUCCESS)
         {
@@ -410,24 +410,24 @@ void DB::PrintStats(std::ostream &out_stream) const
     dict->PrintStats(out_stream);
 }
 
-int DB::WrLock() const
+int DB::WrLock()
 {
-    return MBLock::WrLock();
+    return lock.WrLock();
 }
 
-int DB::RdLock() const
+int DB::RdLock()
 {
-    return MBLock::RdLock();
+    return lock.RdLock();
 }
 
-int DB::UnLock() const
+int DB::UnLock()
 {
-    return MBLock::UnLock();
+    return lock.UnLock();
 }
 
-int DB::TryWrLock() const
+int DB::TryWrLock()
 {
-    return MBLock::TryWrLock();
+    return lock.TryWrLock();
 }
 
 int DB::ClearLock() const

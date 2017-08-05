@@ -137,10 +137,10 @@ public:
                size_t min_data_shk_size  = DATA_BLOCK_SIZE/2);
 
     // multi-thread or multi-process concurrency/locking
-    int WrLock() const;
-    int RdLock() const;
-    int UnLock() const;
-    int TryWrLock() const;
+    int WrLock();
+    int RdLock();
+    int UnLock();
+    int TryWrLock();
     int ClearLock() const;
 
     int UpdateNumHandlers(int mode, int delta);
@@ -173,6 +173,9 @@ private:
     int status;
     // DB connector ID
     uint32_t identifier;
+
+    // db lock
+    MBLock lock;
 
     AsyncWriter *async_writer;
 };

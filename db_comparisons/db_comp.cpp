@@ -383,7 +383,7 @@ static void *Reader(void *arg)
 #ifdef LEVEL_DB
 #elif KYOTO_CABINET
 #else
-    //db_r->Close(false);
+    db_r->Close();
     delete db_r;
 #endif
     return NULL;

@@ -87,7 +87,7 @@ public:
 
     // Shared memory mutex
     int InitShmMutex();
-    void SetShmLockPtrs() const;
+    pthread_rwlock_t* GetShmLockPtrs() const;
 
     void UpdateNumReader(int delta) const;
     int  UpdateNumWriter(int delta) const;
