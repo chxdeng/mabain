@@ -24,6 +24,8 @@ const int CONSTS::ACCESS_MODE_READER           = 0x0;
 const int CONSTS::ACCESS_MODE_WRITER           = 0x1;
 const int CONSTS::ASYNC_WRITER_MODE            = 0x2;
 const int CONSTS::SYNC_ON_WRITE                = 0x4;
+const int CONSTS::USE_SLIDING_WINDOW           = 0x8;
+const int CONSTS::NO_GLOBAL_INIT               = 0x10;
 
 const int CONSTS::OPTION_ALL_PREFIX            = 0x1;
 const int CONSTS::OPTION_FIND_AND_STORE_PARENT = 0x2;
@@ -33,12 +35,17 @@ const int CONSTS::MAX_DATA_SIZE                = 0x7FFF;
 
 int CONSTS::WriterOptions()
 {
-    return ACCESS_MODE_WRITER;
+    int options = ACCESS_MODE_WRITER;
+    options |= USE_SLIDING_WINDOW;
+    //options |= ASYNC_WRITER_MODE;
+    return options;
 }
 
 int CONSTS::ReaderOptions()
 {
-    return ACCESS_MODE_READER;
+    int options = ACCESS_MODE_READER;
+    options |= USE_SLIDING_WINDOW;
+    return options;
 }
 
 }

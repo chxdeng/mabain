@@ -81,13 +81,13 @@ public:
                  int &match, MBData &data) const;
     int ReadRootNode(uint8_t *node_buff, EdgePtrs &edge_ptrs, int &match,
                  MBData &data) const;
-    inline int ReadData(uint8_t *buff, int len, size_t offset, bool use_sliding_mmap=false) const;
+    inline int ReadData(uint8_t *buff, int len, size_t offset, bool reader_mode=true) const;
     inline int Reserve(size_t &offset, int size, uint8_t* &ptr);
     void ReserveData(const uint8_t* buff, int size, size_t &offset);
 
     // Shared memory mutex
     int InitShmMutex();
-    void SetShmLockPtrs() const;
+    pthread_rwlock_t* GetShmLockPtrs() const;
 
     void UpdateNumReader(int delta) const;
     int  UpdateNumWriter(int delta) const;
@@ -119,12 +119,12 @@ private:
     IndexHeader *header;
 };
 
-inline int Dict::ReadData(uint8_t *buff, int len, size_t offset, bool use_sliding_mmap) const
+inline int Dict::ReadData(uint8_t *buff, int len, size_t offset, bool reader_mode) const
 {
     //if(offset + len > header->m_data_offset)
     //    return -1;
 
-    return db_file->RandomRead(buff, len, offset, use_sliding_mmap);
+    return db_file->RandomRead(buff, len, offset, reader_mode);
 }
 
 inline void Dict::WriteData(const uint8_t *buff, unsigned len, size_t offset) const

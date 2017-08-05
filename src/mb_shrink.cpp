@@ -98,7 +98,7 @@ MBShrink::~MBShrink()
             Logger::Log(LOG_LEVEL_WARN, "failed to open dir %s", link_dir.c_str());
         }
 
-        db_link->Close(false);
+        db_link->Close();
         delete db_link;
     }
 
@@ -191,7 +191,7 @@ int MBShrink::MoveIndexBuffer(size_t src, const std::string &key, int size, size
 
     ReallocBuffer(size);
 
-    int rval = dmm->ReadData(buffer, size, src);
+    int rval = dmm->ReadData(buffer, size, src, false);
     if(rval != size)
         return MBError::READ_ERROR;
 
@@ -515,7 +515,7 @@ int MBShrink::MoveDataBuffer(size_t src, int size, size_t parent, size_t edge_of
 
     ReallocBuffer(size);
 
-    int rval = dict->ReadData(buffer, size, src);
+    int rval = dict->ReadData(buffer, size, src, false);
     if(rval != size)
         return MBError::READ_ERROR;
 
@@ -724,8 +724,8 @@ int MBShrink::OpenLinkDB()
             return MBError::OPEN_FAILURE;
         }
     }
-    db_link = new DB(db_link_dir, CONSTS::ACCESS_MODE_WRITER, LINK_SHM_SIZE, LINK_SHM_SIZE,
-                     sizeof(IndexNode), 0, false);
+    db_link = new DB(db_link_dir, CONSTS::ACCESS_MODE_WRITER | CONSTS::NO_GLOBAL_INIT,
+                     LINK_SHM_SIZE, LINK_SHM_SIZE, sizeof(IndexNode), 0);
     if(!db_link->is_open())
     {
         Logger::Log(LOG_LEVEL_ERROR, " failed to open link db: %s", db_link->StatusStr());

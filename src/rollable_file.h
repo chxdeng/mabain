@@ -24,6 +24,7 @@
 #include <stdint.h>
 #include <sys/mman.h>
 #include <assert.h>
+#include <atomic>
 
 #include "mmap_file.h"
 #include "logger.h"
@@ -39,7 +40,8 @@ public:
     ~RollableFile();
 
     size_t   RandomWrite(const void *data, size_t size, off_t offset);
-    size_t   RandomRead(void *buff, size_t size, off_t offset, bool use_sliding_mmap);
+    size_t   RandomRead(void *buff, size_t size, off_t offset, bool reader_mode);
+    void     InitShmSlidingAddr(std::atomic<size_t> *shm_sliding_addr);
     int      Reserve(size_t &offset, int size, uint8_t* &ptr, bool map_new_sliding=true);
     void     PrintStats(std::ostream &out_stream = std::cout) const;
     void     Close();
@@ -50,6 +52,7 @@ private:
     int      CheckAndOpenFile(int block_order);
     size_t   CheckAlignment(size_t offset, int size);
     uint8_t* NewSlidingMapAddr(int order, size_t offset, int size);
+    void*    NewReaderSlidingMap(int order);
 
     std::string path;
     size_t block_size;
@@ -57,6 +60,12 @@ private:
     bool sliding_mmap;
     int mode;
     size_t sliding_mem_size;
+    // shared memory sliding start offset for reader
+    // Note writer does not flush sliding mmap during writing.
+    // Readers have to mmap the same region so that they won't
+    // read unflushed data from disk.
+    std::atomic<size_t> *shm_sliding_start_ptr;
+
     bool sync_on_write;
     long max_num_block;
 

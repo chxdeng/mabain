@@ -44,12 +44,12 @@ const char* mb_dir = "/var/tmp/mabain_test";
 using namespace mabain;
 
 static int stop_processing = 0;
-static int num_keys = 10000000;
+static int num_keys = 1000000;
 static int test_type = 0;
 static int64_t memcap_index = 256*1024*1024LL;
 static int64_t memcap_data  = 0*1024*1024LL;
-static int key_type = KEY_TYPE_SHA256;
-//static int key_type = KEY_TYPE_INT;
+//static int key_type = KEY_TYPE_SHA256;
+static int key_type = KEY_TYPE_INT;
 
 static const char* get_sha256_str(int key);
 
@@ -337,7 +337,7 @@ static const char* get_sha256_str(int key)
 int main(int argc, char *argv[])
 {
     int num_writer = 1; // There can be one writer at most.
-    int num_reader = 7;
+    int num_reader = 2;
     test_type = -1;
 
     if(argc >= 4) {
@@ -354,11 +354,6 @@ int main(int argc, char *argv[])
             test_type = LOOKUP_TEST;
         else if(strcmp(test_tp, "iterator") == 0)
             test_type = ITERATOR_TEST;
-        if(test_type < 0)
-        {
-            std::cerr << "Wrong test type " << test_tp << "\n";
-            abort();
-        }
         num_keys = atoi(argv[2]);
         num_reader = atoi(argv[3]);
     }
@@ -366,6 +361,9 @@ int main(int argc, char *argv[])
         mb_dir = argv[4];
     }
 
+    if(test_type < 0) {
+        test_type = ADD_TEST;
+    }
     // Delete all keys from last run.
     DB db(mb_dir, CONSTS::WriterOptions(), memcap_index, memcap_data);
     if(!db.is_open()) {
@@ -378,7 +376,7 @@ int main(int argc, char *argv[])
     PopulateDB(db);
     switch(test_type) {
     case ADD_TEST:
-        RemoveRandom(int(num_keys * 0.81), db);
+        RemoveRandom(int(num_keys * 0.11), db);
         break;
     case LOOKUP_TEST:
         break;
@@ -453,8 +451,8 @@ int main(int argc, char *argv[])
                         struct timeval stop_tm;
                         gettimeofday(&stop_tm,NULL);
                         std::cout << "All children have exited!\n";
-                        std::cout << "time: " << (stop_tm.tv_sec-start_tm.tv_sec)*1.0 +
-                                    (stop_tm.tv_usec-start_tm.tv_usec)/1000000. << "\n";
+                        std::cout << "time: " << ((stop_tm.tv_sec-start_tm.tv_sec)*1000000.0 +
+                                    (stop_tm.tv_usec-start_tm.tv_usec))/num_keys << "\n";
                     }
                 }
             }

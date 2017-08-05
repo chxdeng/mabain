@@ -87,7 +87,8 @@ uint8_t* MmapFileIO::MapFile(size_t size, off_t offset, bool sliding)
     addr = static_cast<unsigned char *>(FileIO::MapFile(size, mode, MAP_SHARED, offset));
     if(addr == MAP_FAILED)
     {
-        Logger::Log(LOG_LEVEL_WARN, "mmap (%s) failed errno=%d", path.c_str(), errno);
+        Logger::Log(LOG_LEVEL_WARN, "mmap (%s) failed errno=%d offset=%llu size=%llu",
+                    path.c_str(), errno, offset, size);
         return NULL;
     }
     if(!sliding)
@@ -98,7 +99,7 @@ uint8_t* MmapFileIO::MapFile(size_t size, off_t offset, bool sliding)
         mmap_end = offset + size;
     }
 
-    if(mode | O_CREAT)
+    if(mode | PROT_WRITE)
     {
         Logger::Log(LOG_LEVEL_INFO, "mmap file %s, sliding=%d, size=%d, offset=%d",
                 path.c_str(), sliding, size, offset);

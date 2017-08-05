@@ -28,27 +28,25 @@ namespace mabain {
 class MBLock
 {
 public:
+    MBLock();
     ~MBLock();
 
     // Writer lock
-    static inline int WrLock();
+    inline int WrLock();
     // Reader lock
-    static inline int RdLock();
+    inline int RdLock();
     // Writer/reader unlock
-    static inline int UnLock();
+    inline int UnLock();
 
-    static inline int TryWrLock();
+    inline int TryWrLock();
 
-    static void Init(pthread_rwlock_t *rw_lock);
+    void Init(pthread_rwlock_t *rw_lock);
 
 private:
-    MBLock();
-
-#ifndef __SHM_LOCK__
     // a global lock variable
     static pthread_rwlock_t mb_rw_lock;
-#endif
-    static pthread_rwlock_t *mb_rw_lock_ptr;
+
+    pthread_rwlock_t *mb_rw_lock_ptr;
 };
 
 inline int MBLock::WrLock()

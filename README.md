@@ -5,10 +5,9 @@
 ## mabain: a key-value store library
 
 Mabain is a light-weighted C++ library that can be used for generic
-key-value store under GNU general public license, version 2.
-It supports multi-thread and multi-process concurrency. Mabain can be
-used for exact and common prefix key match.  Please see the examples in
-examples directory.
+key-value store based on radix tree. It supports multi-thread and multi-process concurrency.
+Mabain can be used for exact and common prefix key match. Please see the examples in
+examples directory. Wildcard support is currently under development.
 
 #### Shared Memory and Memcap
 
@@ -18,11 +17,10 @@ and value separately.
 
 #### Multi-Thread/Multi-Process Concurrency
 
-Full multi-thread/multi-process concurrency is supported. Mabain database
-handler is also thread-safe. This means the the database handle can be used
-in multiple reader threads once initialized. Concurrent insertion and queries are
-supported internally. Programs using the library DO NOT need to perform any
-locking on concurrent insertion and lookup in the reader/writer scenario.
+Full multi-thread/multi-process concurrency is supported.  
+Concurrent insertion and queries are supported internally using a lock-free mechanism.
+Programs using the library DO NOT need to perform any locking on concurrent insertion
+and lookup in the multi-thread or multi-process reader/writer scenario.
 
 ## Build and Install Mabain Library
 
@@ -58,16 +56,17 @@ Please follow these steps to run the examples
 	
     3. Create the temporary database directory for examples
 	
-	mkdir ./tmp_db_dir  
+	mkdir ./tmp_dir  
 	./mb_insert_test  
 
 ## Caveats
 
     1. Only one writer is allowed. However, multiple readers can be running concurrently.  
-    2. The longest key supported is 256 bytes.  
-    3. The value/data size can not be bigger than 32767 bytes.  
-    4. Using mabain on NFS currently is not supported or tested.  
-    5. Please use -D__BIG__ENDIAN__ in compilation flag when using mabain on big endian machines.
+    2. Mabain DB handle is not thread-safe. Each thread must have open its own DB instance when using in multi-thread context.
+    3. The longest key supported is 256 bytes.  
+    4. The value/data size can not be bigger than 32767 bytes.  
+    5. Using mabain on NFS currently is not supported or tested.  
+    6. Please use -D__BIG__ENDIAN__ in compilation flag when using mabain on big endian machines.
 
 ## License
 

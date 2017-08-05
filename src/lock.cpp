@@ -20,22 +20,24 @@
 
 namespace mabain {
 
-#ifdef __SHM_LOCK__
-pthread_rwlock_t*  MBLock::mb_rw_lock_ptr = NULL;
-#else
+// rwlock within a process
 pthread_rwlock_t MBLock::mb_rw_lock = PTHREAD_RWLOCK_INITIALIZER;
-pthread_rwlock_t*  MBLock::mb_rw_lock_ptr = &MBLock::mb_rw_lock;
-#endif
 
 void MBLock::Init(pthread_rwlock_t *rw_lock)
 {
 #ifdef __SHM_LOCK__
+    // using process lock for initializing shared memory lock
+    pthread_rwlock_wrlock(&mb_rw_lock);
     mb_rw_lock_ptr = rw_lock;
+    pthread_rwlock_unlock(&mb_rw_lock);
 #endif
 }
 
 MBLock::MBLock()
 {
+#ifndef __SHM_LOCK__
+    mb_rw_lock_ptr = &MBLock::mb_rw_lock;
+#endif
 }
 
 MBLock::~MBLock()
