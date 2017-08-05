@@ -53,6 +53,7 @@ RollableFile::RollableFile(const std::string &fpath, size_t blocksize,
     sliding_size = 0;
     sliding_start = 0;
     sliding_map_off = 0;
+    shm_sliding_start_ptr = NULL;
 
     if(max_num_block == 0)
     {
@@ -91,6 +92,12 @@ RollableFile::RollableFile(const std::string &fpath, size_t blocksize,
     OpenAndMapBlockFile(0);
     if(sync)
         Logger::Log(LOG_LEVEL_INFO, "Sync is turned on for " + fpath);
+}
+
+void RollableFile::InitShmSlidingAddr(std::atomic<size_t> *shm_sliding_addr)
+{
+    shm_sliding_start_ptr = shm_sliding_addr;
+    assert(shm_sliding_start_ptr != NULL);
 }
 
 void RollableFile::Close()
@@ -259,6 +266,12 @@ int RollableFile::Reserve(size_t &offset, int size, uint8_t* &ptr, bool map_new_
         else if(map_new_sliding && offset >= sliding_start + sliding_size)
         {
             ptr = NewSlidingMapAddr(order, offset, size);
+            if(ptr != NULL)
+            {
+                // Load the mmap starting offset to shared memory so that readers
+                // can map the same region when reading it.
+                shm_sliding_start_ptr->store(sliding_start, std::memory_order_relaxed);
+            }
         }
     }
 
@@ -340,17 +353,40 @@ size_t RollableFile::RandomWrite(const void *data, size_t size, off_t offset)
     return files[order]->RandomWrite(data, size, index);
 }
 
-size_t RollableFile::RandomRead(void *buff, size_t size, off_t offset, bool use_sliding_mmap)
+void* RollableFile::NewReaderSlidingMap(int order)
+{
+    off_t start_off = shm_sliding_start_ptr->load(std::memory_order_relaxed);
+    if(start_off == 0 || start_off == sliding_start || start_off/block_size != (unsigned)order)
+        return NULL;
+
+    if(sliding_addr != NULL)
+        munmap(sliding_addr, sliding_size);
+    sliding_start = start_off;
+    sliding_map_off = sliding_start % block_size;
+    if(sliding_map_off + SLIDING_MEM_SIZE > block_size)
+        sliding_size = block_size - sliding_map_off;
+    else
+        sliding_size = SLIDING_MEM_SIZE;
+
+    sliding_addr = files[order]->MapFile(sliding_size, sliding_map_off, true);
+    return sliding_addr;
+}
+
+size_t RollableFile::RandomRead(void *buff, size_t size, off_t offset, bool reader_mode)
 {
     int order = offset / block_size;
     int rval = CheckAndOpenFile(order);
     if(rval != MBError::SUCCESS && rval != MBError::MMAP_FAILED)
         return 0;
 
-    // Check sliding map
-    if(use_sliding_mmap && sliding_mmap && sliding_addr != NULL)
+    if(sliding_mmap)
     {
-        if(offset >= sliding_start && offset+size <= sliding_start+sliding_size)
+        if(reader_mode)
+            NewReaderSlidingMap(order);
+
+        // Check sliding map
+        if(sliding_addr != NULL && offset >= sliding_start &&
+           offset+size <= sliding_start+sliding_size)
         {
             memcpy(buff, sliding_addr+(offset%block_size)-sliding_map_off, size);
             return size;

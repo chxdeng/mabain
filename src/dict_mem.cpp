@@ -102,6 +102,7 @@ DictMem::DictMem(const std::string &mbdir, bool init_header, size_t memsize,
         return;
     }
 
+    mem_file->InitShmSlidingAddr(&header->shm_index_sliding_start);
     LockFree::LockFreeInit(&header->lock_free, mode);
 
     if(!(mode & CONSTS::ACCESS_MODE_WRITER))
@@ -247,7 +248,7 @@ void DictMem::UpdateTailEdge(EdgePtrs &edge_ptrs, int match_len, MBData &data,
         // Load the string with length edge_len.
         size_t new_key_off;
         size_t edge_str_off = Get5BInteger(edge_ptrs.ptr);
-        if(ReadData(data.node_buff, edge_len, edge_str_off + match_len - 1, true)
+        if(ReadData(data.node_buff, edge_len, edge_str_off + match_len - 1, false)
                    != edge_len)
             throw (int) MBError::READ_ERROR;          
         new_key_first = data.node_buff[0];
@@ -261,7 +262,7 @@ void DictMem::UpdateTailEdge(EdgePtrs &edge_ptrs, int match_len, MBData &data,
     {
         if(edge_ptrs.len_ptr[0] > LOCAL_EDGE_LEN)
         {
-            if(ReadData(data.node_buff, edge_len, Get5BInteger(edge_ptrs.ptr)+match_len-1, true)
+            if(ReadData(data.node_buff, edge_len, Get5BInteger(edge_ptrs.ptr)+match_len-1, false)
                        != edge_len)
                 throw (int) MBError::READ_ERROR;
             new_key_first = data.node_buff[0];
@@ -296,7 +297,7 @@ void DictMem::UpdateHeadEdge(EdgePtrs &edge_ptrs, int match_len,
             // Old key is remote but new key is local. Need to read the old key.
             if(match_len_m1 > 0)
             {
-                if(ReadData(edge_ptrs.ptr, match_len_m1, edge_str_off, true) != match_len_m1)
+                if(ReadData(edge_ptrs.ptr, match_len_m1, edge_str_off, false) != match_len_m1)
                     throw (int) MBError::READ_ERROR;
             }
         }
@@ -305,7 +306,7 @@ void DictMem::UpdateHeadEdge(EdgePtrs &edge_ptrs, int match_len,
             edge_str_off = Get5BInteger(edge_ptrs.ptr);
             release_buffer_size = edge_ptrs.len_ptr[0] - 1;
             // Load the string with length edge_len - 1
-            if(ReadData(data.node_buff, match_len_m1, edge_str_off, true) != match_len_m1)
+            if(ReadData(data.node_buff, match_len_m1, edge_str_off, false) != match_len_m1)
                 throw (int) MBError::READ_ERROR;
             // Reserve the key buffer
             size_t new_key_off;
@@ -504,9 +505,9 @@ int DictMem::UpdateNode(EdgePtrs &edge_ptrs, const uint8_t *key, int key_len,
 
         // Copy old node
         int copy_size = NODE_EDGE_KEY_FIRST + nt;
-        if(ReadData(node_ptrs.ptr, copy_size, old_node_off, true) != copy_size)
+        if(ReadData(node_ptrs.ptr, copy_size, old_node_off, false) != copy_size)
             return MBError::READ_ERROR;
-        if(ReadData(node_ptrs.ptr+copy_size+1, EDGE_SIZE*nt, old_node_off+copy_size, true) !=
+        if(ReadData(node_ptrs.ptr+copy_size+1, EDGE_SIZE*nt, old_node_off+copy_size, false) !=
                     EDGE_SIZE*nt)
             return MBError::READ_ERROR;
 
@@ -581,14 +582,14 @@ bool DictMem::FindNext(const unsigned char *key, int keylen, int &match_len,
 #ifdef __DEBUG__
     assert(node_off != 0);
 #endif
-    if(ReadData(key_tmp, 1, node_off+1, true) != 1)
+    if(ReadData(key_tmp, 1, node_off+1, false) != 1)
         return false;
     int nt = key_tmp[0];
     edge_ptr.curr_nt = nt;
     nt++;
     // Load edge key first
     node_off += NODE_EDGE_KEY_FIRST;
-    if(ReadData(key_tmp, nt, node_off, true) != nt)
+    if(ReadData(key_tmp, nt, node_off, false) != nt)
         return false;
     int i;
     for(i = 0; i < nt; i++)
@@ -604,14 +605,14 @@ bool DictMem::FindNext(const unsigned char *key, int keylen, int &match_len,
 
     // Load the new edge
     edge_ptr.offset = node_off + nt + i*EDGE_SIZE;
-    if(ReadData(edge_ptr.edge_buff, EDGE_SIZE, edge_ptr.offset, true) != EDGE_SIZE)
+    if(ReadData(edge_ptr.edge_buff, EDGE_SIZE, edge_ptr.offset, false) != EDGE_SIZE)
         return false;
     InitTempEdgePtrs(edge_ptr);
     uint8_t *key_string_ptr;
     int len = edge_ptr.len_ptr[0] - 1;
     if(len > LOCAL_EDGE_LEN_M1)
     {
-        if(ReadData(key_tmp, len, Get5BInteger(edge_ptr.ptr), true) != len)
+        if(ReadData(key_tmp, len, Get5BInteger(edge_ptr.ptr), false) != len)
             return false;
         key_string_ptr = key_tmp;
     }
@@ -874,7 +875,7 @@ int DictMem::RemoveEdgeByIndex(const EdgePtrs &edge_ptrs, MBData &data)
     int nt = edge_ptrs.curr_nt;
     uint8_t *old_node_buffer = data.node_buff;
     // load the current node
-    if(ReadData(old_node_buffer, NODE_EDGE_KEY_FIRST + nt, edge_ptrs.curr_node_offset, true)
+    if(ReadData(old_node_buffer, NODE_EDGE_KEY_FIRST + nt, edge_ptrs.curr_node_offset, false)
                != NODE_EDGE_KEY_FIRST + nt)
         return MBError::READ_ERROR;
 
@@ -901,7 +902,7 @@ int DictMem::RemoveEdgeByIndex(const EdgePtrs &edge_ptrs, MBData &data)
         for(int i = 0; i < nt; i++)
         {
             // load the edge
-            if(ReadData(old_edge_buff, EDGE_SIZE, old_edge_offset, true) != EDGE_SIZE)
+            if(ReadData(old_edge_buff, EDGE_SIZE, old_edge_offset, false) != EDGE_SIZE)
                 return MBError::READ_ERROR;
 
             if(i == edge_ptrs.curr_edge_index)
@@ -964,7 +965,7 @@ int DictMem::RemoveEdgeByIndex(const EdgePtrs &edge_ptrs, MBData &data)
 
         uint8_t old_edge_buff[16];
         size_t old_edge_offset = node_offset + NODE_EDGE_KEY_FIRST + nt;
-        if(ReadData(old_edge_buff, EDGE_SIZE, old_edge_offset, true) != EDGE_SIZE)
+        if(ReadData(old_edge_buff, EDGE_SIZE, old_edge_offset, false) != EDGE_SIZE)
             return MBError::READ_ERROR;
         if(old_edge_buff[EDGE_LEN_POS] > LOCAL_EDGE_LEN)
         {

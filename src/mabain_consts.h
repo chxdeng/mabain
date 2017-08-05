@@ -28,8 +28,12 @@ public:
     static const int ACCESS_MODE_WRITER;
     static const int ASYNC_WRITER_MODE;
     static const int SYNC_ON_WRITE;
+    static const int USE_SLIDING_WINDOW;
     static const int OPTION_ALL_PREFIX;
     static const int OPTION_FIND_AND_STORE_PARENT;
+    // not init shared memory ptr, not update db counter
+    // This will be used by MBShrink class.
+    static const int NO_GLOBAL_INIT;
     static const int MAX_KEY_LENGHTH;
     static const int MAX_DATA_SIZE;
 

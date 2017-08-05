@@ -283,7 +283,6 @@ static void mbclient(const char *db_dir, int64_t memcap_i, int64_t memcap_d, int
     MBData mbd;
     bool quit_mbc = false;
     bool overwrite;
-    MBlsq history(free);
 
     db = new DB(db_dir, mode, memcap_i, memcap_d);
     if(!db->is_open())

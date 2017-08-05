@@ -107,7 +107,7 @@ public:
     // data_size: the value size; if zero, the value size will be variable.
     // id: the connector id
     DB(const std::string &db_path, int db_options, size_t memcap_index=64*1024*1024LL,
-       size_t memcap_data=0, int data_size = 0, uint32_t  id = 0, bool init_global = true);
+       size_t memcap_data=0, int data_size = 0, uint32_t  id = 0);
     ~DB();
 
     // Add a key-value pair
@@ -130,7 +130,7 @@ public:
     int Remove(const std::string &key);
     int RemoveAll();
     // Close the DB handle
-    int Close(bool shutdown_global = true);
+    int Close();
 
     // DB shrink
     int Shrink(size_t min_index_shk_size = INDEX_BLOCK_SIZE/2,

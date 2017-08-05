@@ -95,9 +95,10 @@ static void print_cpu_info()
     std::cout << cpu_freq << "\n";
 }
 
-static void InitDB()
+static void InitTestDir()
 {
     std::string cmd;
+
     cmd = std::string("mkdir -p ") + db_dir;
     if(system(cmd.c_str()) != 0) {
     }
@@ -112,13 +113,24 @@ static void InitDB()
     std::cout << "===== using mabain for testing\n";
     std::string db_dir_tmp = std::string(db_dir) + "/mabain/";
 #endif
-
     cmd = std::string("mkdir -p ") + db_dir_tmp;
     if(system(cmd.c_str()) != 0) {
     }
     cmd = std::string("rm -rf ") + db_dir_tmp + "*";
     if(system(cmd.c_str()) != 0) {
     }
+
+}
+
+static void InitDB()
+{
+#ifdef LEVEL_DB
+    std::string db_dir_tmp = std::string(db_dir) + "/leveldb/";
+#elif KYOTO_CABINET
+    std::string db_dir_tmp = std::string(db_dir) + "/kyotocabinet/";
+#else
+    std::string db_dir_tmp = std::string(db_dir) + "/mabain/";
+#endif
 
 #ifdef LEVEL_DB
     leveldb::Options options;
@@ -304,6 +316,15 @@ static void *Reader(void *arg)
     int tid = static_cast<int>(syscall(SYS_gettid));
     char kv[65];
 
+#ifdef LEVEL_DB
+#elif KYOTO_CABINET
+#else
+    std::string db_dir_tmp = std::string(db_dir) + "/mabain/";
+    mabain::DB *db_r = new mabain::DB(db_dir_tmp, mabain::CONSTS::ReaderOptions(),
+                                      64*1024*1024LL, 0*1024*1024LL);
+    assert(db_r->is_open());
+#endif
+
     std::cout << "reader " << tid << " started " << "\n";
     while(i < num) {
         std::string key;
@@ -337,7 +358,7 @@ static void *Reader(void *arg)
 #elif KYOTO_CABINET
 #else
         mabain::MBData mbd;
-        int rval = db->Find(key, mbd);
+        int rval = db_r->Find(key, mbd);
         if(rval == 0) {
             std::string v;
             if(key_type == 0) {
@@ -359,6 +380,12 @@ static void *Reader(void *arg)
         }
     }
 
+#ifdef LEVEL_DB
+#elif KYOTO_CABINET
+#else
+    //db_r->Close(false);
+    delete db_r;
+#endif
     return NULL;
 }
 static void ConcurrencyTest(int num, int n_r)
@@ -389,10 +416,10 @@ static void ConcurrencyTest(int num, int n_r)
         }    
     }
 
-    pthread_join(wid, NULL);
     for(int i = 0; i < n_r; i++) {
         pthread_join(rid[i], NULL);
     }
+    pthread_join(wid, NULL);
 
     gettimeofday(&stop,NULL);
 
@@ -443,10 +470,17 @@ int main(int argc, char *argv[])
     }
 
     print_cpu_info();
+    InitTestDir();
 
     InitDB();
     Add(num_kv);
+    DestroyDB();
+
+    InitDB();
     Lookup(num_kv);
+    DestroyDB();
+
+    InitDB();
     Delete(num_kv);
     DestroyDB();
 

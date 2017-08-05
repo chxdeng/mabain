@@ -41,12 +41,12 @@ DB::~DB()
 {
     if(async_writer != NULL)
         delete async_writer;
-    Logger::Close();
 }
 
-int DB::Close(bool shutdown_global)
+int DB::Close()
 {
     int rval = MBError::SUCCESS;
+    int db_opts = dict->GetDBOptions();
 
     if(async_writer != NULL)
     {
@@ -55,9 +55,8 @@ int DB::Close(bool shutdown_global)
 
     if(dict != NULL)
     {
-        if(shutdown_global)
+        if(!(db_opts & CONSTS::NO_GLOBAL_INIT))
         {
-            int db_opts = dict->GetDBOptions();
             if(db_opts & CONSTS::ACCESS_MODE_WRITER)
                 dict->PrintStats(Logger::GetLogStream());
             UpdateNumHandlers(db_opts, -1);
@@ -74,6 +73,8 @@ int DB::Close(bool shutdown_global)
 
     status = MBError::DB_CLOSED;
     Logger::Log(LOG_LEVEL_INFO, "connector %u disconnected from DB", identifier);
+    if((db_opts & CONSTS::ACCESS_MODE_WRITER) && !(db_opts & CONSTS::NO_GLOBAL_INIT))
+        Logger::Close();
     return rval;
 }
 
@@ -95,7 +96,7 @@ int DB::UpdateNumHandlers(int mode, int delta)
 
 // Constructor for initializing DB handle
 DB::DB(const std::string &db_path, int db_options, size_t memcap_index, size_t memcap_data,
-       int data_size, uint32_t id, bool init_global)
+       int data_size, uint32_t id)
 {
     status = MBError::NOT_INITIALIZED;
     dict = NULL;
@@ -122,10 +123,11 @@ DB::DB(const std::string &db_path, int db_options, size_t memcap_index, size_t m
     else
         db_path_tmp = db_path;
 
-    if((db_options & CONSTS::ACCESS_MODE_WRITER) && init_global)
+    if((db_options & CONSTS::ACCESS_MODE_WRITER))
         Logger::InitLogFile(db_path_tmp + "mabain.log");
     else
         Logger::SetLogLevel(LOG_LEVEL_WARN);
+    Logger::Log(LOG_LEVEL_INFO, "connector %u DB options: %d", id, db_options);
 
     // Check if DB exist. This can be done by check existence of the first index file.
     // If this is the first time the DB is opened and it is in writer mode, then we
@@ -148,19 +150,16 @@ DB::DB(const std::string &db_path, int db_options, size_t memcap_index, size_t m
         }
     }
 
-    bool sliding_mmap = false;
-    if(db_options & CONSTS::ACCESS_MODE_WRITER)
-        sliding_mmap = true;
     dict = new Dict(db_path_tmp, init_header, data_size, db_options, memcap_index,
-                    memcap_data, sliding_mmap, db_options & CONSTS::SYNC_ON_WRITE);
+                    memcap_data, db_options & CONSTS::USE_SLIDING_WINDOW,
+                    db_options & CONSTS::SYNC_ON_WRITE);
 
     if((db_options & CONSTS::ACCESS_MODE_WRITER) && init_header)
     {
         Logger::Log(LOG_LEVEL_INFO, "open a new db %s", db_path_tmp.c_str());
         dict->Init(identifier);
 #ifdef __SHM_LOCK__
-        if(init_global)
-            dict->InitShmMutex();
+        dict->InitShmMutex();
 #endif
     }
 
@@ -171,10 +170,9 @@ DB::DB(const std::string &db_path, int db_options, size_t memcap_index, size_t m
         return;
     }
 
-    if(init_global)
+    if(!(db_options & CONSTS::NO_GLOBAL_INIT))
     {
         dict->SetShmLockPtrs();
-
         status = UpdateNumHandlers(db_options, 1);
         if(status != MBError::SUCCESS)
         {
@@ -183,7 +181,6 @@ DB::DB(const std::string &db_path, int db_options, size_t memcap_index, size_t m
             return;
         }
     }
-
 
     if(db_options & CONSTS::ACCESS_MODE_WRITER)
     {

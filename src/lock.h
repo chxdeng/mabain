@@ -44,10 +44,8 @@ public:
 private:
     MBLock();
 
-#ifndef __SHM_LOCK__
     // a global lock variable
     static pthread_rwlock_t mb_rw_lock;
-#endif
     static pthread_rwlock_t *mb_rw_lock_ptr;
 };
 
