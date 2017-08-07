@@ -50,23 +50,22 @@ typedef struct _LockFreeShmData
 class LockFree
 {
 public:
+    LockFree();
     ~LockFree();
 
-    static void LockFreeInit(LockFreeShmData *lock_free_ptr, int mode = 0);
-    static void WriterLockFreeStart(size_t offset);
-    static void WriterLockFreeStop();
-    static int  ReaderLockFreeStart(LockFreeData &snapshot);
+    void LockFreeInit(LockFreeShmData *lock_free_ptr, int mode = 0);
+    void WriterLockFreeStart(size_t offset);
+    void WriterLockFreeStop();
+    int  ReaderLockFreeStart(LockFreeData &snapshot);
     // If there was race condition, this function returns MBError::TRY_AGAIN.
-    static int  ReaderLockFreeStop(const LockFreeData &snapshot, size_t reader_offset);
-    static void PushOffsets(size_t edge_off, size_t node_off);
-    static bool ReleasedOffsetInUse(size_t offset);
-    static bool ReaderValidateNodeOffset(uint32_t counter_prev, size_t node_off, uint32_t &counter_curr);
-    static uint32_t LoadCounter();
+    int  ReaderLockFreeStop(const LockFreeData &snapshot, size_t reader_offset);
+    void PushOffsets(size_t edge_off, size_t node_off);
+    bool ReleasedOffsetInUse(size_t offset);
+    bool ReaderValidateNodeOffset(uint32_t counter_prev, size_t node_off, uint32_t &counter_curr);
+    uint32_t LoadCounter();
 
 private:
-    LockFree();
-
-    static LockFreeShmData *shm_data_ptr;
+    LockFreeShmData *shm_data_ptr;
 };
 
 }

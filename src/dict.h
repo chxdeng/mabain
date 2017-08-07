@@ -25,6 +25,7 @@
 #include "dict_mem.h"
 #include "rollable_file.h"
 #include "mb_data.h"
+#include "lock_free.h"
 
 #define DATA_BUFFER_ALIGNMENT       1
 #define DATA_SIZE_BYTE              2
@@ -47,9 +48,9 @@ public:
     // Add key-value pair
     int Add(const uint8_t *key, int len, MBData &data, bool overwrite=true);
     // Find value by key
-    int Find(const uint8_t *key, int len, MBData &data) const;
+    int Find(const uint8_t *key, int len, MBData &data);
     // Find value by key using prefix match
-    int FindPrefix(const uint8_t *key, int len, MBData &data) const;
+    int FindPrefix(const uint8_t *key, int len, MBData &data);
     // Delete entry by key
     int Remove(const uint8_t *key, int len);
     // Delete entry by key
@@ -73,6 +74,8 @@ public:
     DictMem *GetMM() const;
     IndexHeader *GetHeader() const;
     const std::string& GetDBDir() const;
+
+    LockFree* GetLockFreePtr();
 
     // Used for DB iterator
     int ReadNextEdge(const uint8_t *node_buff, EdgePtrs &edge_ptrs, int &match,
@@ -117,6 +120,8 @@ private:
     int status;
     // Header pointer
     IndexHeader *header;
+
+    LockFree lfree;
 };
 
 inline int Dict::ReadData(uint8_t *buff, int len, size_t offset, bool reader_mode) const

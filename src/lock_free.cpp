@@ -28,10 +28,9 @@ namespace mabain {
 #define MEMORY_ORDER_WRITER std::memory_order_release
 #define MEMORY_ORDER_READER std::memory_order_consume
 
-LockFreeShmData* LockFree::shm_data_ptr = NULL;
-
 LockFree::LockFree()
 {
+    shm_data_ptr = NULL;
 }
 
 LockFree::~LockFree()

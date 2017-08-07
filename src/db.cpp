@@ -483,6 +483,9 @@ DB::iterator::iter_node::iter_node(size_t offset, const std::string &ckey, size_
 void DB::iterator::iter_obj_init()
 {
     node_stack = NULL;
+#ifdef __LOCK_FREE__
+    lfree = db_ref.dict->GetLockFreePtr();
+#endif
 
     if(state == DB_ITER_STATE_INIT)
     {
@@ -515,7 +518,7 @@ void DB::iterator::init()
 {
 #ifdef __LOCK_FREE__
     curr_node_offset = 0;
-    curr_node_counter = LockFree::LoadCounter();
+    curr_node_counter = lfree->LoadCounter();
 #endif
 
     int rval = db_ref.dict->ReadRootNode(node_buff, edge_ptrs, match, value);
@@ -623,12 +626,12 @@ DB::iterator* DB::iterator::next()
 #ifdef __LOCK_FREE__
             edge_off_prev = edge_ptrs.offset;
             nt_prev = edge_ptrs.curr_nt;
-            LockFree::ReaderLockFreeStart(snapshot);
+            lfree->ReaderLockFreeStart(snapshot);
 #endif
             // Get the next edge in current node
             rval = db_ref.dict->ReadNextEdge(node_buff, edge_ptrs, match, value, match_str, node_off);
 #ifdef __LOCK_FREE__
-            lf_ret = LockFree::ReaderLockFreeStop(snapshot, edge_off_prev);
+            lf_ret = lfree->ReaderLockFreeStop(snapshot, edge_off_prev);
             if(lf_ret == MBError::TRY_AGAIN)
             {
                 edge_ptrs.offset = edge_off_prev;
@@ -641,7 +644,7 @@ DB::iterator* DB::iterator::next()
                 break;
 
 #ifdef __LOCK_FREE__
-            if(LockFree::ReaderValidateNodeOffset(curr_node_counter, curr_node_offset, node_counter))
+            if(lfree->ReaderValidateNodeOffset(curr_node_counter, curr_node_offset, node_counter))
             {
                 lf_ret = edge_offset_modified(curr_key+match_str, edge_off_prev, mbd);
                 if(lf_ret == MBError::EDGE_OFF_CHANGED)
@@ -687,7 +690,7 @@ DB::iterator* DB::iterator::next()
                 rval = db_ref.dict->ReadNode(inode->node_off, node_buff, edge_ptrs, match, value);
 
 #ifdef __LOCK_FREE__
-                if(LockFree::ReaderValidateNodeOffset(inode->node_counter, inode->node_off, node_counter))
+                if(lfree->ReaderValidateNodeOffset(inode->node_counter, inode->node_off, node_counter))
                 {
                     lf_ret = node_offset_modified(inode->key, inode->node_off, mbd);
                     // retrieve the next node

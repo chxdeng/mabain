@@ -43,6 +43,7 @@ namespace mabain {
 class Dict;
 class MBlsq;
 class MBShrink;
+class LockFree;
 class AsyncWriter;
 struct _IndexNode;
 
@@ -98,6 +99,7 @@ public:
         std::string match_str;
         uint32_t curr_node_counter;
         size_t curr_node_offset;
+        LockFree *lfree;
     };
 
     // db_path: database directory

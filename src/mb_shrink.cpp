@@ -67,7 +67,8 @@ MBShrink::MBShrink(DB &db) : db_ref(db), db_link(NULL)
     max_index_scan_off = header->m_index_offset;
     min_data_scan_off = dict->GetStartDataOffset();
     max_data_scan_off = header->m_data_offset;
-    
+
+    lfree = dict->GetLockFreePtr(); 
 }
 
 MBShrink::~MBShrink()
@@ -234,7 +235,7 @@ int MBShrink::MoveIndexBuffer(size_t src, const std::string &key, int size, size
             Write6BInteger(buff, index_start_off);
             byte_to_write = OFFSET_SIZE;
 #ifdef __LOCK_FREE__
-            LockFree::WriterLockFreeStart(write_offset - EDGE_NODE_LEADING_POS);
+            lfree->WriterLockFreeStart(write_offset - EDGE_NODE_LEADING_POS);
 #endif
         }
         else
@@ -242,7 +243,7 @@ int MBShrink::MoveIndexBuffer(size_t src, const std::string &key, int size, size
             Write5BInteger(buff, index_start_off);
             byte_to_write = EDGE_LEN_POS;
 #ifdef __LOCK_FREE__
-            LockFree::WriterLockFreeStart(write_offset);
+            lfree->WriterLockFreeStart(write_offset);
 #endif
         }
 
@@ -253,7 +254,7 @@ int MBShrink::MoveIndexBuffer(size_t src, const std::string &key, int size, size
         dmm->WriteData(buff, byte_to_write, write_offset);
 
 #ifdef __LOCK_FREE__
-        LockFree::WriterLockFreeStop();
+        lfree->WriterLockFreeStop();
 #endif
 
         UpdateOffset(key, index_start_off);
@@ -551,7 +552,7 @@ int MBShrink::MoveDataBuffer(size_t src, int size, size_t parent, size_t edge_of
 
         Write6BInteger(buff, data_start_off);
 #ifdef __LOCK_FREE__
-        LockFree::WriterLockFreeStart(edge_off);
+        lfree->WriterLockFreeStart(edge_off);
 #endif
         if(ptr_low != NULL)
             memcpy(ptr_low, buffer, size);
@@ -559,7 +560,7 @@ int MBShrink::MoveDataBuffer(size_t src, int size, size_t parent, size_t edge_of
             dict->WriteData(buffer, size, data_start_off);
         dmm->WriteData(buff, OFFSET_SIZE, parent);
 #ifdef __LOCK_FREE__
-        LockFree::WriterLockFreeStop();
+        lfree->WriterLockFreeStop();
 #endif
         data_start_off += size;
     }
