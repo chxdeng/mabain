@@ -92,6 +92,10 @@ bool LockFree::ReaderValidateNodeOffset(uint32_t counter_prev, size_t node_off, 
             return true;
     }
 
+    // Need to recheck the counter difference
+    count_diff = shm_data_ptr->counter.load(MEMORY_ORDER_READER) - counter_prev;
+    if(count_diff >= MAX_OFFSET_CACHE)
+        return true;
     return false;
 }
 
