@@ -1,0 +1,15 @@
+1..14
+ok 1 AddBufferByIndex_test 
+ok 2 RemoveBufferByIndex_test 
+ok 3 GetAlignmentSize_test 
+ok 4 GetBufferIndex_test 
+ok 5 GetBufferCountByIndex_test 
+ok 6 GetBufferSizeByIndex_test 
+ok 7 ReleaseBuffer_test 
+ok 8 AddBuffer_test 
+ok 9 RemoveBuffer_test 
+ok 10 GetTotSize_test 
+ok 11 StoreLoadEmpty_test 
+ok 12 StoreLoadSmallFilling_test 
+ok 13 StoreLoadFullFilling_test 
+ok 14 StoreLoadHalfFilling_test 
