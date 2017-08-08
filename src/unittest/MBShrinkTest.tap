@@ -1,8 +1,0 @@
-1..7
-ok 1 DataShrink_delete_odd_test 
-ok 2 IndexShrink_delete_odd_test 
-ok 3 IndexShrink_delete_random_test 
-ok 4 DataShrink_delete_random_test 
-ok 5 Shrink_delete_random_test 
-ok 6 Shrink_delete_range_test 
-ok 7 Shrink_sha256_delete_random_test 
