@@ -24,6 +24,7 @@
 
 #include "mb_lsq.h"
 #include "error.h"
+#include "lock_free.h"
 
 #define MAX_BUFFER_PER_LIST    256
 
@@ -44,7 +45,7 @@ public:
     // Release alignment buffer
     void ReleaseAlignmentBuffer(size_t old_offset, size_t alignment_offset);
 
-    bool GetBufferByIndex(int buf_index, size_t &offset);
+    bool GetBufferByIndex(int buf_index, size_t &offset, LockFree *lfree);
 
     void Empty();
 

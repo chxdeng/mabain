@@ -28,10 +28,9 @@ namespace mabain {
 #define MEMORY_ORDER_WRITER std::memory_order_release
 #define MEMORY_ORDER_READER std::memory_order_consume
 
-LockFreeShmData* LockFree::shm_data_ptr = NULL;
-
 LockFree::LockFree()
 {
+    shm_data_ptr = NULL;
 }
 
 LockFree::~LockFree()
@@ -93,6 +92,10 @@ bool LockFree::ReaderValidateNodeOffset(uint32_t counter_prev, size_t node_off, 
             return true;
     }
 
+    // Need to recheck the counter difference
+    count_diff = shm_data_ptr->counter.load(MEMORY_ORDER_READER) - counter_prev;
+    if(count_diff >= MAX_OFFSET_CACHE)
+        return true;
     return false;
 }
 

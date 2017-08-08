@@ -34,9 +34,9 @@
 #define READER_LOCK_FREE_START               \
     LockFreeData snapshot;                   \
     int lf_ret;                              \
-    LockFree::ReaderLockFreeStart(snapshot);
+    lfree.ReaderLockFreeStart(snapshot);
 #define READER_LOCK_FREE_STOP(edgeoff)                          \
-    lf_ret = LockFree::ReaderLockFreeStop(snapshot, (edgeoff)); \
+    lf_ret = lfree.ReaderLockFreeStop(snapshot, (edgeoff));     \
     if(lf_ret != MBError::SUCCESS)                              \
         return lf_ret;
 
@@ -60,6 +60,9 @@ Dict::Dict(const std::string &mbdir, bool init_header, int datasize,
         Logger::Log(LOG_LEVEL_ERROR, "header not mapped");
         return;
     }
+
+    lfree.LockFreeInit(&header->lock_free, db_options);
+    mm.InitLockFreePtr(&lfree);
 
     // Open data file
     db_file = new RollableFile(mbdir + "_mabain_d",
@@ -418,7 +421,7 @@ int Dict::ReadDataFromNode(MBData &data, const uint8_t *node_ptr) const
     return MBError::SUCCESS;
 }
 
-int Dict::FindPrefix(const uint8_t *key, int len, MBData &data) const
+int Dict::FindPrefix(const uint8_t *key, int len, MBData &data)
 {
     data.next = false;
     EdgePtrs &edge_ptrs = data.edge_ptrs;
@@ -576,7 +579,7 @@ int Dict::FindPrefix(const uint8_t *key, int len, MBData &data) const
     return rval;
 }
 
-int Dict::Find(const uint8_t *key, int len, MBData &data) const
+int Dict::Find(const uint8_t *key, int len, MBData &data)
 {
     EdgePtrs &edge_ptrs = data.edge_ptrs;
 #ifdef __LOCK_FREE__
@@ -1131,6 +1134,11 @@ size_t Dict::GetStartDataOffset() const
 void Dict::ResetSlidingWindow() const
 {
     db_file->ResetSlidingWindow();
+}
+
+LockFree* Dict::GetLockFreePtr()
+{
+    return &lfree;
 }
 
 }

@@ -37,7 +37,7 @@ int main(int argc, char *argv[])
 
     MBData mbdata;
     int rval;
-    std::string key[3];
+    std::string key[4];
 
     key[0] = "Apple";
     key[1] = "Grape";

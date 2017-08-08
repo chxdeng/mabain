@@ -24,6 +24,7 @@
 #include "db.h"
 #include "dict.h"
 #include "mabain_consts.h"
+#include "lock_free.h"
 
 namespace mabain {
 
@@ -76,6 +77,7 @@ private:
     FreeList *data_free_lists;
     const int *node_size;
     IndexHeader *header;
+    LockFree *lfree;
 
     // pointer owned by DiskFree
     DB *db_link;

@@ -260,7 +260,7 @@ void FreeList::Empty()
     tot_size = 0;
 }
 
-bool FreeList::GetBufferByIndex(int buf_index, size_t &offset)
+bool FreeList::GetBufferByIndex(int buf_index, size_t &offset, LockFree *lfree)
 {
 #ifdef __DEBUG__
     assert(buf_index < max_num_buffer);
@@ -271,7 +271,7 @@ bool FreeList::GetBufferByIndex(int buf_index, size_t &offset)
     while(list_cnt > 0)
     {
         offset = flist->RemoveIntFromHead();
-        if(!LockFree::ReleasedOffsetInUse(offset))
+        if(!lfree->ReleasedOffsetInUse(offset))
         {
             found = true;
             break;

@@ -130,6 +130,8 @@ public:
     const int* GetNodeSizePtr() const;
     void ResetSlidingWindow() const;
 
+    void InitLockFreePtr(LockFree *lf);
+
 private:
     bool     ReserveNode(int nt, size_t &offset, uint8_t* &ptr);
     void     ReleaseNode(size_t offset, int nt);
@@ -155,6 +157,9 @@ private:
 
     // empty edge, used for clearing edges
     static uint8_t empty_edge[EDGE_SIZE];
+
+    // lock free pointer
+    LockFree *lfree;
 };
 
 inline int DictMem::ReadData(uint8_t *buff, int len, size_t offset, bool reader_mode) const
