@@ -4,6 +4,17 @@ sudo: required
 before_install:
   - sudo apt-get install libao-dev
   - sudo apt-get install libcurl4-openssl-dev
+  - sudo apt-get install -y cmake libgtest-dev valgrind
+  - sudo wget https://github.com/google/googletest/archive/release-1.7.0.tar.gz
+  - sudo tar xf release-1.7.0.tar.gz
+  - cd googletest-release-1.7.0
+  - sudo cmake -DBUILD_SHARED_LIBS=ON .
+  - sudo make
+  - sudo cp -a include/gtest /usr/include
+  - sudo cp -a libgtest_main.so libgtest.so /usr/lib/
+  - sudo wget https://raw.githubusercontent.com/kinow/gtest-tap-listener/master/src/tap.h
+  - sudo cp tap.h /usr/lib/gtest
+  - which valgrind
 
 # Enable C++ support
 language: cpp
