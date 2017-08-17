@@ -47,16 +47,17 @@ public:
 
     virtual size_t RandomWrite(const void *data, size_t size, off_t offset);
     virtual size_t RandomRead(void *buff, size_t size, off_t offset);
+    virtual void   Flush();
 
 protected:
     std::string path;
     int options;
+    bool sync_on_write;
 
     void* MapFile(size_t size, int prot, int flags, off_t offset);
 
 private:
     int mode;
-    bool sync_on_write;
 
     int fd;
 };

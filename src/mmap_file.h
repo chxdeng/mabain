@@ -47,6 +47,7 @@ public:
     size_t   RandomRead(void *buff, size_t size, off_t offset);
     void     UnMapFile();
     uint8_t* GetMapAddr() const;
+    void     Flush();
 
 private:
     off_t file_size;

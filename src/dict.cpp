@@ -43,12 +43,10 @@
 namespace mabain {
 
 Dict::Dict(const std::string &mbdir, bool init_header, int datasize,
-           int db_options, size_t memsize_index, size_t memsize_data,
-           bool use_sliding_map, bool sync_on_write)
+           int db_options, size_t memsize_index, size_t memsize_data)
          : mb_dir(mbdir),
            options(db_options),
-           mm(mbdir, init_header, memsize_index, use_sliding_map,
-              db_options, sync_on_write),
+           mm(mbdir, init_header, memsize_index, db_options),
            free_lists(NULL),
            header(NULL)
 {
@@ -65,9 +63,8 @@ Dict::Dict(const std::string &mbdir, bool init_header, int datasize,
     mm.InitLockFreePtr(&lfree);
 
     // Open data file
-    db_file = new RollableFile(mbdir + "_mabain_d",
-              static_cast<size_t>(DATA_BLOCK_SIZE), memsize_data,
-              use_sliding_map, db_options, sync_on_write);
+    db_file = new RollableFile(mbdir + "_mabain_d", static_cast<size_t>(DATA_BLOCK_SIZE),
+                               memsize_data, db_options);
 
     db_file->InitShmSlidingAddr(&header->shm_data_sliding_start);
     // If init_header is false, we can set the dict status to SUCCESS.
@@ -917,10 +914,13 @@ int Dict::RemoveAll()
     }
 
     mm.ClearMem();
+    mm.ResetSlidingWindow();
+
     header->count = 0;
     header->m_data_offset = GetStartDataOffset();
     free_lists->Empty();
     header->pending_data_buff_size = 0;
+    ResetSlidingWindow();
     return rval;
 }
 
@@ -1042,7 +1042,13 @@ int Dict::UpdateDataBuffer(EdgePtrs &edge_ptrs, bool overwrite, const uint8_t *b
             Logger::Log(LOG_LEVEL_WARN, "failed to release data buffer");
         ReserveData(buff, len, data_off);
         Write6BInteger(edge_ptrs.offset_ptr, data_off);
+#ifdef __LOCK_FREE__
+        lfree.WriterLockFreeStart(edge_ptrs.offset);
+#endif
         mm.WriteData(edge_ptrs.offset_ptr, OFFSET_SIZE, edge_ptrs.offset+EDGE_NODE_LEADING_POS);
+#ifdef __LOCK_FREE__
+        lfree.WriterLockFreeStop();
+#endif
     }
     else
     {
@@ -1070,7 +1076,14 @@ int Dict::UpdateDataBuffer(EdgePtrs &edge_ptrs, bool overwrite, const uint8_t *b
 
         ReserveData(buff, len, data_off);
         Write6BInteger(node_buff+2, data_off);
+
+#ifdef __LOCK_FREE__
+        lfree.WriterLockFreeStart(edge_ptrs.offset);
+#endif
         mm.WriteData(node_buff, NODE_EDGE_KEY_FIRST, node_off);
+#ifdef __LOCK_FREE__
+        lfree.WriterLockFreeStop();
+#endif
     }
 
     return MBError::SUCCESS;
@@ -1134,11 +1147,22 @@ size_t Dict::GetStartDataOffset() const
 void Dict::ResetSlidingWindow() const
 {
     db_file->ResetSlidingWindow();
+    header->shm_data_sliding_start.store(0, std::memory_order_relaxed);
 }
 
 LockFree* Dict::GetLockFreePtr()
 {
     return &lfree;
+}
+
+void Dict::Flush() const
+{
+    if(!(options & CONSTS::ACCESS_MODE_WRITER))
+        return;
+
+    if(db_file != NULL)
+        db_file->Flush();
+    mm.Flush();
 }
 
 }

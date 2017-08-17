@@ -37,15 +37,20 @@ namespace mabain {
 
 #define SLIDING_MEM_SIZE 16LLU*1024*1024
 
+const long RollableFile::page_size = sysconf(_SC_PAGESIZE);
+int RollableFile::ShmSync(uint8_t *addr, int size)
+{
+    off_t page_offset = ((off_t) addr) % RollableFile::page_size;
+    return msync(addr-page_offset, size+page_offset, MS_SYNC);
+}
+
 RollableFile::RollableFile(const std::string &fpath, size_t blocksize,
-                           size_t memcap, bool smap, int access_mode,
-                           bool sync, long max_block)
+                           size_t memcap, int access_mode, long max_block)
           : path(fpath),
             block_size(blocksize),
             mmap_mem(memcap),
-            sliding_mmap(smap),
+            sliding_mmap(access_mode & CONSTS::USE_SLIDING_WINDOW),
             mode(access_mode),
-            sync_on_write(sync),
             max_num_block(max_block)
 {
     sliding_addr = NULL;
@@ -75,8 +80,7 @@ RollableFile::RollableFile(const std::string &fpath, size_t blocksize,
     else
     {
         // page_size is used to check page alignment when mapping file to memory.
-        page_size = sysconf(_SC_PAGESIZE);
-        if(page_size < 0)
+        if(RollableFile::page_size < 0)
         {
             Logger::Log(LOG_LEVEL_WARN, "failed to get page size, turning off sliding memory");
             sliding_mmap = false;
@@ -90,7 +94,7 @@ RollableFile::RollableFile(const std::string &fpath, size_t blocksize,
     files.assign(3, NULL);
     // Add the first file
     OpenAndMapBlockFile(0);
-    if(sync)
+    if(mode & CONSTS::SYNC_ON_WRITE)
         Logger::Log(LOG_LEVEL_INFO, "Sync is turned on for " + fpath);
 }
 
@@ -136,19 +140,13 @@ int RollableFile::OpenAndMapBlockFile(int block_order)
 
     if(mode & CONSTS::ACCESS_MODE_WRITER)
     {
-        files[block_order] = new MmapFileIO(path+ss.str(),
-                                 O_RDWR | O_CREAT, block_size, sync_on_write);
+        files[block_order] = new MmapFileIO(path+ss.str(), O_RDWR | O_CREAT, block_size,
+                                            mode & CONSTS::SYNC_ON_WRITE);
     }
     else
     {
         int rw_mode = O_RDONLY;
-#ifdef __SHM_LOCK__
-        // Both reader and writer need to have write access to the mutex in header.
-        // The header is in the first index file.
-        if(block_order == 0 && path.find("_mabain_i") != std::string::npos)
-            rw_mode = O_RDWR;
-#endif
-        files[block_order] = new MmapFileIO(path+ss.str(), rw_mode, 0, sync_on_write);
+        files[block_order] = new MmapFileIO(path+ss.str(), rw_mode, 0, mode & CONSTS::SYNC_ON_WRITE);
     }
 
     if(!files[block_order]->IsOpen())
@@ -298,7 +296,7 @@ uint8_t* RollableFile::NewSlidingMapAddr(int order, size_t offset, int size)
     }
 
     // Check page alignment
-    int page_alignment = sliding_start % page_size;
+    int page_alignment = sliding_start % RollableFile::page_size;
     if(page_alignment != 0)
     {
         sliding_start -= page_alignment;
@@ -344,7 +342,13 @@ size_t RollableFile::RandomWrite(const void *data, size_t size, off_t offset)
     {
         if(offset >= sliding_start && offset+size <= sliding_start+sliding_size)
         {
-            memcpy(sliding_addr+(offset%block_size)-sliding_map_off, data, size);
+            uint8_t *start_addr = sliding_addr + (offset % block_size) - sliding_map_off;
+            memcpy(start_addr, data, size);
+            if(mode & CONSTS::SYNC_ON_WRITE) {
+                off_t page_off = ((off_t) start_addr) % RollableFile::page_size;
+                if(msync(start_addr-page_off, size+page_off, MS_SYNC)==-1)
+                    std::cout<<"msync error\n";
+            }
             return size;
         }
     }
@@ -419,6 +423,18 @@ void RollableFile::ResetSlidingWindow()
     sliding_size = 0;
     sliding_start = 0;
     sliding_map_off = 0;
+}
+
+void RollableFile::Flush()
+{
+    for (std::vector<MmapFileIO*>::iterator it = files.begin();
+         it != files.end(); ++it)
+    {
+        if(*it != NULL)
+        {
+            (*it)->Flush();
+        }
+    }
 }
 
 }

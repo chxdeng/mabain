@@ -22,12 +22,12 @@
 #include <errno.h>
 #include <string.h>
 #include <assert.h>
-#include <errno.h>
 
 #include "file_io.h"
 #include "mmap_file.h"
 #include "error.h"
 #include "logger.h"
+#include "rollable_file.h"
 
 namespace mabain {
 
@@ -170,6 +170,8 @@ size_t MmapFileIO::RandomWrite(const void *data, size_t size, off_t offset)
             // partial overlap with mmap region
             memcpy(addr+mmap_start, ptr, size-written_left);
             bytes_written += size - written_left;
+            if(sync_on_write)
+                RollableFile::ShmSync(addr+mmap_start, size-written_left);
         }
         else
         {
@@ -182,6 +184,8 @@ size_t MmapFileIO::RandomWrite(const void *data, size_t size, off_t offset)
             bytes_written += mmap_size;
             written_left += mmap_size;
             ptr += mmap_size;
+            if(sync_on_write)
+                RollableFile::ShmSync(addr+mmap_start, mmap_size);
             // partial overlap with right region
             bytes_written += FileIO::RandomWrite(ptr, size-written_left, mmap_end);
         }
@@ -193,6 +197,8 @@ size_t MmapFileIO::RandomWrite(const void *data, size_t size, off_t offset)
             // full data is within the mmap region
             memcpy(addr+offset, ptr, size);
             bytes_written = size;
+            if(sync_on_write)
+                RollableFile::ShmSync(addr+offset, size);
         }
         else
         {
@@ -201,6 +207,8 @@ size_t MmapFileIO::RandomWrite(const void *data, size_t size, off_t offset)
             memcpy(addr+offset, ptr, written_left);
             ptr += written_left;
             bytes_written = written_left;
+            if(sync_on_write)
+                RollableFile::ShmSync(addr+offset, written_left);
             // partial overlap with the right region
             bytes_written += FileIO::RandomWrite(ptr, size-written_left, mmap_end);
         }
@@ -310,6 +318,13 @@ bool MmapFileIO::IsMapped() const
 uint8_t* MmapFileIO::GetMapAddr() const
 {
     return addr;
+}
+
+void MmapFileIO::Flush()
+{
+    if(addr != NULL)
+	msync(addr, mmap_size, MS_SYNC);
+    FileIO::Flush();
 }
 
 }

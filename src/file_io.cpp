@@ -26,8 +26,8 @@ namespace mabain {
 FileIO::FileIO(const std::string &fpath, int oflags, int fmode, bool sync)
         : path(fpath),
           options(oflags),
-          mode(fmode),
-          sync_on_write(sync)
+          sync_on_write(sync),
+          mode(fmode)
 {
     fd = -1;
 }
@@ -143,6 +143,12 @@ int FileIO::TruncateFile(off_t filesize)
         return ftruncate(fd, filesize);
 
     return 1;
+}
+
+void FileIO::Flush()
+{
+    if(fd > 0)
+        fsync(fd);
 }
 
 }

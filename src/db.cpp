@@ -135,8 +135,8 @@ DB::DB(const std::string &db_path, int db_options, size_t memcap_index, size_t m
     // required and the file does not exist, we should bail here and the DB open will
     // not be successful.
     bool init_header = false;
-    std::string index_file_0 = db_path_tmp + "_mabain_i0";
-    if(access(index_file_0.c_str(), R_OK))
+    std::string header_file = db_path_tmp + "_mabain_h";
+    if(access(header_file.c_str(), R_OK))
     {
         if(db_options & CONSTS::ACCESS_MODE_WRITER)
         {
@@ -150,9 +150,7 @@ DB::DB(const std::string &db_path, int db_options, size_t memcap_index, size_t m
         }
     }
 
-    dict = new Dict(db_path_tmp, init_header, data_size, db_options, memcap_index,
-                    memcap_data, db_options & CONSTS::USE_SLIDING_WINDOW,
-                    db_options & CONSTS::SYNC_ON_WRITE);
+    dict = new Dict(db_path_tmp, init_header, data_size, db_options, memcap_index, memcap_data);
 
     if((db_options & CONSTS::ACCESS_MODE_WRITER) && init_header)
     {
@@ -379,6 +377,13 @@ int DB::RemoveAll()
     return rval;
 }
 
+void DB::Flush() const
+{
+    if(status != MBError::SUCCESS)
+        return;
+    dict->Flush();
+}
+
 int DB::Shrink(size_t min_index_shk_size, size_t min_data_shk_size)
 {
     if(status != MBError::SUCCESS)
@@ -444,6 +449,11 @@ int DB::ClearLock() const
 int DB::SetLogLevel(int level)
 {
     return Logger::SetLogLevel(level);
+}
+
+void DB::LogDebug()
+{
+    Logger::SetLogLevel(LOG_LEVEL_DEBUG);
 }
 
 Dict* DB::GetDictPtr() const
