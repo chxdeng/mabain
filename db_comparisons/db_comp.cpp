@@ -307,6 +307,10 @@ static void Delete(int n)
     timeval start, stop;
     int nfound = 0;
     char kv[65];
+#if LMDB
+    if(!sync_on_write)
+        mdb_txn_begin(env, NULL, 0, &txn);
+#endif
 
     gettimeofday(&start,NULL);
     for(int i = 0; i < n; i++) {
@@ -330,6 +334,16 @@ static void Delete(int n)
         std::string value;
         if(db->remove(key)) nfound++;
 #elif LMDB
+        MDB_val lmdb_key;
+        lmdb_key.mv_size = key.size();
+        lmdb_key.mv_data = (void*) key.data();
+        if(sync_on_write) {
+            mdb_txn_begin(env, NULL, 0, &txn);
+            if(mdb_del(txn, db, &lmdb_key, NULL) == 0) nfound++;
+            mdb_txn_commit(txn);
+        } else {
+            if(mdb_del(txn, db, &lmdb_key, NULL) == 0) nfound++;
+        }
 #elif MABAIN
         int rval = db->Remove(key);
         if(rval == 0) nfound++;
@@ -339,6 +353,11 @@ static void Delete(int n)
             std::cout << "deleted: " << (i+1) << " keys\n";
         }
     }
+
+#if LMDB
+    if(!sync_on_write)
+        mdb_txn_commit(txn);
+#endif
     gettimeofday(&stop,NULL);
 
     std::cout << "deleted " << nfound << " key-value pairs\n";
