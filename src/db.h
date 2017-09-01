@@ -133,6 +133,7 @@ public:
     int RemoveAll();
     // Close the DB handle
     int Close();
+    void Flush() const;
 
     // DB shrink
     int Shrink(size_t min_index_shk_size = INDEX_BLOCK_SIZE/2,
@@ -152,6 +153,7 @@ public:
     // level 2: error, warn, and info will be logged. This is the default setting.
     // level 3: error, warn, info and debug will be logged.
     static int  SetLogLevel(int level);
+    static void LogDebug();
 
     // Print database stats
     void PrintStats(std::ostream &out_stream = std::cout) const;

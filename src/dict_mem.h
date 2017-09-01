@@ -34,7 +34,6 @@
 #include "lock_free.h"
 #include "error.h"
 
-#define HEADER_PADDING_SIZE        32
 #define OFFSET_SIZE                6
 #define EDGE_SIZE                  13
 #define EDGE_LEN_POS               5
@@ -82,16 +81,13 @@ typedef struct _IndexHeader
 
     // read/write lock
     pthread_rwlock_t mb_rw_lock;
-
-    uint8_t  padding[HEADER_PADDING_SIZE];
 } IndexHeader;
 
 // Memory management class for the dictionary
 class DictMem
 {
 public:
-    DictMem(const std::string &mbdir, bool init_header5, size_t memsize,
-            bool smap, int mode, bool sync_on_write);
+    DictMem(const std::string &mbdir, bool init_header5, size_t memsize, int mode);
     void Destroy();
     ~DictMem();
 
@@ -123,7 +119,7 @@ public:
     inline void WriteEdge(const EdgePtrs &edge_ptrs) const;
     inline void WriteData(const uint8_t *buff, unsigned len, size_t offset) const;
     inline int  Reserve(size_t &offset, int size, uint8_t* &ptr);
-    size_t GetRootOffset() const;
+    inline size_t GetRootOffset() const;
     IndexHeader *GetHeaderPtr() const;
     void ClearMem() const;
     FreeList *GetFreeList();
@@ -131,6 +127,8 @@ public:
     void ResetSlidingWindow() const;
 
     void InitLockFreePtr(LockFree *lf);
+
+    void Flush() const;
 
 private:
     bool     ReserveNode(int nt, size_t &offset, uint8_t* &ptr);
@@ -144,7 +142,6 @@ private:
                             size_t &edge_str_off, bool &map_new_sliding);
 
     IndexHeader *header;
-    bool use_sliding_map;
 
     int *node_size;
     bool is_valid;
@@ -160,6 +157,9 @@ private:
 
     // lock free pointer
     LockFree *lfree;
+
+    // header file
+    MmapFileIO *header_file;
 };
 
 inline int DictMem::ReadData(uint8_t *buff, int len, size_t offset, bool reader_mode) const

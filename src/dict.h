@@ -38,8 +38,7 @@ class Dict
 {
 public:
     Dict(const std::string &mbdir, bool init_header, int datasize, int db_options,
-         size_t memsize_index, size_t memsize_data, bool use_sliding_map=true,
-         bool sync_on_write=false);
+         size_t memsize_index, size_t memsize_data);
     ~Dict();
     void Destroy();
 
@@ -96,6 +95,7 @@ public:
     int  UpdateNumWriter(int delta) const;
 
     void ResetSlidingWindow() const;
+    void Flush() const;
 
 private:
     int ReleaseBuffer(size_t offset);

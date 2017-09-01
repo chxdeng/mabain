@@ -35,8 +35,7 @@ namespace mabain {
 class RollableFile {
 public:
     RollableFile(const std::string &fpath, size_t blocksize,
-                 size_t memcap, bool smap, int access_mode,
-                 bool sync=false, long max_block=0);
+                 size_t memcap, int access_mode, long max_block=0);
     ~RollableFile();
 
     size_t   RandomWrite(const void *data, size_t size, off_t offset);
@@ -46,6 +45,11 @@ public:
     void     PrintStats(std::ostream &out_stream = std::cout) const;
     void     Close();
     void     ResetSlidingWindow();
+
+    void     Flush();
+
+    static const long page_size;
+    static int ShmSync(uint8_t *addr, int size);
 
 private:
     int      OpenAndMapBlockFile(int block_order);
@@ -66,7 +70,6 @@ private:
     // read unflushed data from disk.
     std::atomic<size_t> *shm_sliding_start_ptr;
 
-    bool sync_on_write;
     long max_num_block;
 
     std::vector<MmapFileIO*> files;
@@ -74,7 +77,6 @@ private:
     size_t sliding_size;
     off_t sliding_start;
     off_t sliding_map_off;
-    long page_size;
 };
 
 }

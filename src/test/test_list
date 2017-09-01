@@ -1,0 +1,5 @@
+./key_list_3 load 1000000 keep 1000
+./key_list_3 iterator 1000000 keep 1000
+./key_list_3 longest_prefix 100000 keep 1000
+./key_list_3 delete 0 keep 1000
+./key_list_3 lookup 0 remove 0

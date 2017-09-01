@@ -12,7 +12,12 @@
 #include <leveldb/db.h>
 #elif KYOTO_CABINET
 #include <kcpolydb.h>
-#else
+#include <kchashdb.h>
+#elif LMDB
+extern "C" {
+#include <lmdb.h>
+}
+#elif MABAIN
 #include <mabain/db.h>
 #endif
 
@@ -20,7 +25,11 @@
 leveldb::DB *db = NULL;
 #elif KYOTO_CABINET
 kyotocabinet::PolyDB *db = NULL;
-#else
+#elif LMDB
+MDB_env *env = NULL;
+MDB_dbi db;
+MDB_txn *txn = NULL;
+#elif MABAIN
 mabain::DB *db = NULL;
 #endif
 
@@ -28,6 +37,8 @@ static const char *db_dir = "/var/tmp/db_test/";
 static int num_kv = 1000000;
 static int n_reader = 7;
 static int key_type = 0;
+static bool sync_on_write = false;
+static unsigned long long memcap = 1024ULL*1024*1024;
 
 static void get_sha256_str(int key, char *sha256_str)
 {
@@ -109,7 +120,10 @@ static void InitTestDir()
 #elif KYOTO_CABINET
     std::cout << "===== using kyotocabinet for testing\n";
     std::string db_dir_tmp = std::string(db_dir) + "/kyotocabinet/";
-#else
+#elif LMDB
+    std::cout << "===== using lmdb for testing\n";
+    std::string db_dir_tmp = std::string(db_dir) + "/lmdb/";
+#elif MABAIN
     std::cout << "===== using mabain for testing\n";
     std::string db_dir_tmp = std::string(db_dir) + "/mabain/";
 #endif
@@ -126,26 +140,34 @@ static void InitDB()
 {
 #ifdef LEVEL_DB
     std::string db_dir_tmp = std::string(db_dir) + "/leveldb/";
-#elif KYOTO_CABINET
-    std::string db_dir_tmp = std::string(db_dir) + "/kyotocabinet/";
-#else
-    std::string db_dir_tmp = std::string(db_dir) + "/mabain/";
-#endif
-
-#ifdef LEVEL_DB
     leveldb::Options options;
     options.create_if_missing = true;
     leveldb::Status status = leveldb::DB::Open(options, db_dir_tmp, &db);
     assert(status.ok());
 #elif KYOTO_CABINET
+    std::string db_dir_tmp = std::string(db_dir) + "/kyotocabinet/";
     db = new kyotocabinet::PolyDB();
     std::string db_path = db_dir_tmp + "casket.kch";
     if (!db->open(db_path.c_str(), kyotocabinet::PolyDB::OWRITER | kyotocabinet::PolyDB::OCREATE)) {
         std::cerr << "failed to open kyotocabinet db\n";
         abort();
     }
-#else
-    db = new mabain::DB(db_dir_tmp, mabain::CONSTS::WriterOptions(), 64*1024*1024LL, 0*1024*1024LL);
+#elif LMDB
+    std::string db_dir_tmp = std::string(db_dir) + "/lmdb";
+    mdb_env_create(&env);
+    mdb_env_set_mapsize(env, memcap);
+    mdb_env_open(env, db_dir_tmp.c_str(), 0, 0664);
+    mdb_txn_begin(env, NULL, 0, &txn);
+    mdb_open(txn, NULL, 0, &db);
+    mdb_txn_commit(txn);
+#elif MABAIN
+    std::string db_dir_tmp = std::string(db_dir) + "/mabain/";
+    int options = mabain::CONSTS::WriterOptions();
+    if(sync_on_write) {
+        options |= mabain::CONSTS::SYNC_ON_WRITE;
+    }
+    db = new mabain::DB(db_dir_tmp, options, (unsigned long long)(0.6666667*memcap),
+                                             (unsigned long long)(0.3333333*memcap));
     assert(db->is_open());
 #endif
 }
@@ -156,11 +178,15 @@ static void Add(int n)
     char kv[65];
 
     gettimeofday(&start,NULL);
+#if LMDB
+    if(!sync_on_write)
+        mdb_txn_begin(env, NULL, 0, &txn);
+#endif
     for(int i = 0; i < n; i++) {
         std::string key, val;
         if(key_type == 0) {
-            key = "db-comparison-key" + std::to_string(i);
-            val = "db-comparison-value" + std::to_string(i);
+            key = std::to_string(i);
+            val = std::to_string(i);
         } else {
             if(key_type == 1) {
                 get_sha1_str(i, kv);
@@ -172,10 +198,30 @@ static void Add(int n)
         }
 
 #ifdef LEVEL_DB
-        db->Put(leveldb::WriteOptions(), key, val);
+        leveldb::WriteOptions opts = leveldb::WriteOptions();
+        opts.sync = sync_on_write;
+        db->Put(opts, key, val);
 #elif KYOTO_CABINET
         db->set(key.c_str(), val.c_str());
-#else
+#elif LMDB
+        MDB_val lmdb_key, lmdb_val;
+        lmdb_key.mv_size = key.size();
+        lmdb_key.mv_data = (void*) key.data();
+        lmdb_val.mv_size = val.size();
+        lmdb_val.mv_data = (void*) val.data();
+        MDB_cursor *mc;
+        if(sync_on_write) {
+            mdb_txn_begin(env, NULL, 0, &txn);
+            mdb_cursor_open(txn, db, &mc);
+            mdb_cursor_put(mc, &lmdb_key, &lmdb_val, 0);
+            mdb_cursor_close(mc);
+            mdb_txn_commit(txn);
+        } else {
+            mdb_cursor_open(txn, db, &mc);
+            mdb_cursor_put(mc, &lmdb_key, &lmdb_val, 0);
+            mdb_cursor_close(mc);
+        }
+#elif MABAIN
         db->Add(key, val);
 #endif
 
@@ -183,6 +229,11 @@ static void Add(int n)
             std::cout << "inserted: " << (i+1) << " key-value pairs\n";
         }
     }    
+#if LMDB
+    if(!sync_on_write)
+        mdb_txn_commit(txn);
+#endif
+
     gettimeofday(&stop,NULL);
 
     uint64_t timediff = (stop.tv_sec - start.tv_sec)*1000000 + (stop.tv_usec - start.tv_usec);
@@ -194,12 +245,18 @@ static void Lookup(int n)
     timeval start, stop;
     int nfound = 0;
     char kv[65];
+#ifdef LMDB
+    MDB_val lmdb_key, lmdb_value;
+    MDB_cursor *cursor;
+    mdb_txn_begin(env, NULL, MDB_RDONLY, &txn);
+    mdb_cursor_open(txn, db, &cursor);
+#endif
 
     gettimeofday(&start,NULL);
     for(int i = 0; i < n; i++) {
         std::string key;
         if(key_type == 0) {
-            key = "db-comparison-key" + std::to_string(i);
+            key = std::to_string(i);
         } else {
             if(key_type == 1) {
                 get_sha1_str(i, kv);
@@ -216,9 +273,16 @@ static void Lookup(int n)
 #elif KYOTO_CABINET
         std::string value;
         if(db->get(key, &value)) nfound++;
-#else
+#elif LMDB
+        lmdb_key.mv_data = (void*) key.data();
+        lmdb_key.mv_size = key.size();
+        if(mdb_cursor_get(cursor, &lmdb_key, &lmdb_value, MDB_SET) == 0)
+            nfound++;
+        //std::cout<<key<<":"<<std::string((char*)lmdb_value.mv_data, lmdb_value.mv_size)<<"\n";
+#elif MABAIN
         mabain::MBData mbd;
         int rval = db->Find(key, mbd);
+        //std::cout<<key<<":"<<std::string((char*)mbd.buff, mbd.data_len)<<"\n";
         if(rval == 0) nfound++;
 #endif
 
@@ -226,6 +290,11 @@ static void Lookup(int n)
             std::cout << "looked up: " << (i+1) << " keys\n";
         }
     }
+
+#ifdef LMDB
+    mdb_cursor_close(cursor);
+    mdb_txn_abort(txn);
+#endif
     gettimeofday(&stop,NULL);
 
     std::cout << "found " << nfound << " key-value pairs\n";
@@ -238,12 +307,16 @@ static void Delete(int n)
     timeval start, stop;
     int nfound = 0;
     char kv[65];
+#if LMDB
+    if(!sync_on_write)
+        mdb_txn_begin(env, NULL, 0, &txn);
+#endif
 
     gettimeofday(&start,NULL);
     for(int i = 0; i < n; i++) {
         std::string key;
         if(key_type == 0) {
-            key = "db-comparison-key" + std::to_string(i);
+            key = std::to_string(i);
         } else {
             if(key_type == 1) {
                 get_sha1_str(i, kv);
@@ -253,12 +326,25 @@ static void Delete(int n)
             key = kv;
         }
 #ifdef LEVEL_DB
-        leveldb::Status s = db->Delete(leveldb::WriteOptions(), key);
+        leveldb::WriteOptions opts = leveldb::WriteOptions();
+        opts.sync = sync_on_write;
+        leveldb::Status s = db->Delete(opts, key);
         if(s.ok()) nfound++;
 #elif KYOTO_CABINET
         std::string value;
         if(db->remove(key)) nfound++;
-#else
+#elif LMDB
+        MDB_val lmdb_key;
+        lmdb_key.mv_size = key.size();
+        lmdb_key.mv_data = (void*) key.data();
+        if(sync_on_write) {
+            mdb_txn_begin(env, NULL, 0, &txn);
+            if(mdb_del(txn, db, &lmdb_key, NULL) == 0) nfound++;
+            mdb_txn_commit(txn);
+        } else {
+            if(mdb_del(txn, db, &lmdb_key, NULL) == 0) nfound++;
+        }
+#elif MABAIN
         int rval = db->Remove(key);
         if(rval == 0) nfound++;
 #endif
@@ -267,6 +353,11 @@ static void Delete(int n)
             std::cout << "deleted: " << (i+1) << " keys\n";
         }
     }
+
+#if LMDB
+    if(!sync_on_write)
+        mdb_txn_commit(txn);
+#endif
     gettimeofday(&stop,NULL);
 
     std::cout << "deleted " << nfound << " key-value pairs\n";
@@ -283,8 +374,8 @@ static void *Writer(void *arg)
     for(int i = 0; i < num; i++) {
         std::string key, val;
         if(key_type == 0) {
-            key = "db-comparison-key" + std::to_string(i);
-            val = "db-comparison-value" + std::to_string(i);
+            key = std::to_string(i);
+            val = std::to_string(i);
         } else {
             if(key_type == 1) {
                 get_sha1_str(i, kv);
@@ -296,9 +387,10 @@ static void *Writer(void *arg)
         }
 
 #ifdef LEVEL_DB
-        db->Put(leveldb::WriteOptions(), key, val);
-#elif KYOTO_CABINET
-#else
+        leveldb::WriteOptions opts = leveldb::WriteOptions();
+        opts.sync = sync_on_write;
+        db->Put(opts, key, val);
+#elif MABAIN
         db->Add(key.c_str(), key.length(), val.c_str(), val.length());
 #endif
 
@@ -316,20 +408,21 @@ static void *Reader(void *arg)
     int tid = static_cast<int>(syscall(SYS_gettid));
     char kv[65];
 
-#ifdef LEVEL_DB
-#elif KYOTO_CABINET
-#else
+#if MABAIN
     std::string db_dir_tmp = std::string(db_dir) + "/mabain/";
     mabain::DB *db_r = new mabain::DB(db_dir_tmp, mabain::CONSTS::ReaderOptions(),
-                                      64*1024*1024LL, 0*1024*1024LL);
+                                      (unsigned long long)(0.6666667*memcap),
+                                      (unsigned long long)(0.3333333*memcap));
     assert(db_r->is_open());
 #endif
 
     std::cout << "reader " << tid << " started " << "\n";
     while(i < num) {
         std::string key;
+        bool found = false;
+
         if(key_type == 0) {
-            key = "db-comparison-key" + std::to_string(i);
+            key = std::to_string(i);
         } else {
             if(key_type == 1) {
                 get_sha1_str(i, kv);
@@ -343,46 +436,30 @@ static void *Reader(void *arg)
 #ifdef LEVEL_DB
         leveldb::Status s = db->Get(leveldb::ReadOptions(), key, &value);
         if(s.ok()) {
-            std::string v;
-            if(key_type == 0) {
-                v = "db-comparison-value" + std::to_string(i);
-            } else {
-                v = key;
-            }
-            if(value.compare(v) != 0) {
-                std::cout << "VALUE NOT MATCH for key:" << key << ":" << value << "\n";
-                abort();
-            }
-            i++;
+            found = true;
         }
-#elif KYOTO_CABINET
-#else
+#elif MABAIN
         mabain::MBData mbd;
         int rval = db_r->Find(key, mbd);
         if(rval == 0) {
-            std::string v;
-            if(key_type == 0) {
-                v = "db-comparison-value" + std::to_string(i);
-            } else {
-                v = key;
-            }
             value = std::string((const char *)mbd.buff, mbd.data_len);
-            if(value.compare(v) != 0) {
+            found = true;
+        }
+#endif
+        if(found) {
+            if(key.compare(value) != 0) {
                 std::cout << "VALUE NOT MATCH for key:" << key << ":" << value << "\n";
                 abort();
             }
-            i++;
-        }
-#endif
 
-        if((i+1)%1000000 == 0) {
-            std::cout << "reader " << tid << " found " << (i+1) << "\n";
+            i++;
+            if((i+1)%1000000 == 0) {
+                std::cout << "reader " << tid << " found " << (i+1) << "\n";
+            }
         }
     }
 
-#ifdef LEVEL_DB
-#elif KYOTO_CABINET
-#else
+#if MABAIN
     db_r->Close();
     delete db_r;
 #endif
@@ -392,6 +469,9 @@ static void ConcurrencyTest(int num, int n_r)
 {
 #ifdef KYOTO_CABINET
     std::cout << "===== concurrency test ignored for kyotocabinet\n";
+    return;
+#elif LMDB
+    std::cout << "===== concurrency test ignored for lmdb\n";
     return;
 #endif
 
@@ -430,14 +510,37 @@ static void ConcurrencyTest(int num, int n_r)
 static void DestroyDB()
 {
 #ifdef LEVEL_DB
-#elif KYOTO_CABINET
-    db->close();
-#else
-    db->Close();
-#endif
-
     delete db;
     db = NULL;
+#elif KYOTO_CABINET
+    db->close();
+    delete db;
+    db = NULL;
+#elif LMDB
+    mdb_close(env, db);
+    mdb_env_close(env);
+#elif MABAIN
+    db->Close();
+    delete db;
+    db = NULL;
+#endif
+}
+
+static void RemoveDB()
+{
+    std::string cmd = std::string("rm -rf ") + db_dir;
+#ifdef LEVEL_DB
+    cmd += "leveldb/*";
+#elif KYOTO_CABINET
+    cmd += "kyotocabinet/*";
+#elif LMDB
+    cmd += "lmdb/*";
+#elif MABAIN
+    cmd += "mabain/*";
+#endif
+
+    if(system(cmd.c_str()) != 0) {
+    }
 }
 
 int main(int argc, char *argv[])
@@ -464,13 +567,25 @@ int main(int argc, char *argv[])
         } else if(strcmp(argv[i], "-d") == 0) {
             if(++i >= argc) abort();
             db_dir = argv[i];
+        } else if(strcmp(argv[i], "-s") == 0) {
+            sync_on_write = true;
+        } else if(strcmp(argv[i], "-m") == 0) {
+            if(++i >= argc) abort();
+            memcap = atoi(argv[i]);
         } else {
             std::cerr << "invalid argument: " << argv[i] << "\n";
         }
     }
 
     print_cpu_info();
+    if(sync_on_write)
+        std::cout << "===== Disk sync is on\n";
+    else
+        std::cout << "===== Disk sync is off\n";
+    std::cout << "===== Memcap is " << memcap << "\n";
+
     InitTestDir();
+    RemoveDB();
 
     InitDB();
     Add(num_kv);
@@ -483,6 +598,8 @@ int main(int argc, char *argv[])
     InitDB();
     Delete(num_kv);
     DestroyDB();
+
+    RemoveDB();
 
     InitDB();
     ConcurrencyTest(num_kv, n_reader);

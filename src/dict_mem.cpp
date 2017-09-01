@@ -29,7 +29,6 @@
 
 #define OFFSET_SIZE_P1             7
 
-#define MIN_INDEX_MEM_SIZE         32*1024
 #define MAX_BUFFER_RESERVE_SIZE    8192
 #define NUM_BUFFER_RESERVE         MAX_BUFFER_RESERVE_SIZE/BUFFER_ALIGNMENT
 
@@ -63,44 +62,32 @@ namespace mabain {
 /////////////////////////////////////////////////////////////////////////////////////
 
 
-DictMem::DictMem(const std::string &mbdir, bool init_header, size_t memsize,
-                 bool smap, int mode, bool sync_on_write)
+DictMem::DictMem(const std::string &mbdir, bool init_header, size_t memsize, int mode)
                : header(NULL),
-                 use_sliding_map(smap),
                  is_valid(false),
                  mem_file(NULL),
                  free_lists(NULL)
 {
-    root_offset = sizeof(IndexHeader);
+    root_offset = 0;
     node_ptr = NULL;
 
-    if(sizeof(IndexHeader) > MIN_INDEX_MEM_SIZE)
-    {
-        Logger::Log(LOG_LEVEL_ERROR, "IndexHeader size %u is too large", sizeof(IndexHeader));
-        return;
-    }
-    if(memsize < MIN_INDEX_MEM_SIZE)
-    {
-        memsize = MIN_INDEX_MEM_SIZE;
-        Logger::Log(LOG_LEVEL_INFO, "use minimum required memcap %llu", memsize);
-    }
-
-    // Both reader and writer need to open the mmapped file.
-    mem_file = new RollableFile(mbdir + "_mabain_i",
-                     static_cast<size_t>(INDEX_BLOCK_SIZE), memsize,
-                     use_sliding_map, mode, sync_on_write);
-
-    // mmap the header. header will always be maped to memory.
-    // This needs to be done for both writer and reader.
-    size_t offset_start = 0;
-    uint8_t *ptr;
-    mem_file->Reserve(offset_start, static_cast<int>(sizeof(IndexHeader)), ptr);
-    header = reinterpret_cast<IndexHeader *>(ptr);
-    if(header == NULL || offset_start != 0)
+    // mmap header file
+    int hdr_mode = O_RDWR;
+    if(init_header)
+        hdr_mode |= O_CREAT;
+    assert(sizeof(IndexHeader) <= (unsigned) RollableFile::page_size);
+    header_file = new MmapFileIO(mbdir + "_mabain_h", hdr_mode,
+                      RollableFile::page_size, false);
+    header = (IndexHeader *) header_file->MapFile(sizeof(IndexHeader), 0, false);
+    if(header == NULL)
     {
         Logger::Log(LOG_LEVEL_ERROR, "failed to map index header");
         return;
     }
+
+    // Both reader and writer need to open the mmapped file.
+    mem_file = new RollableFile(mbdir + "_mabain_i", static_cast<size_t>(INDEX_BLOCK_SIZE),
+                                memsize, mode);
 
     mem_file->InitShmSlidingAddr(&header->shm_index_sliding_start);
 
@@ -155,13 +142,13 @@ uint8_t DictMem::empty_edge[] = {0};
 void DictMem::InitRootNode()
 {
     assert(header != NULL);
-    header->m_index_offset = sizeof(IndexHeader);
+    header->m_index_offset = 0;
 
     bool node_move;
     uint8_t *root_node;
 
     node_move = ReserveNode(NUM_ALPHABET-1, root_offset, root_node);
-    assert(root_offset == sizeof(IndexHeader));
+    assert(root_offset == 0);
 
     root_node[0] = FLAG_NODE_NONE;
     root_node[1] = NUM_ALPHABET-1;
@@ -183,6 +170,12 @@ DictMem::~DictMem()
 
 void DictMem::Destroy()
 {
+    if(header_file != NULL)
+        delete header_file;
+
+    if(mem_file != NULL)
+        delete mem_file;
+
     // Dump free list to disk
     if(free_lists)
     {
@@ -193,11 +186,9 @@ void DictMem::Destroy()
         delete free_lists;
     }
 
-    if(mem_file)
-        delete mem_file;
-    if(node_size)
+    if(node_size != NULL)
         delete [] node_size;
-    if(node_ptr)
+    if(node_ptr != NULL)
         delete [] node_ptr;
 }
 
@@ -1040,11 +1031,20 @@ const int* DictMem::GetNodeSizePtr() const
 void DictMem::ResetSlidingWindow() const
 {
     mem_file->ResetSlidingWindow();
+    header->shm_index_sliding_start.store(0, std::memory_order_relaxed);
 }
 
 void DictMem::InitLockFreePtr(LockFree *lf)
 {
     lfree = lf;
+}
+
+void DictMem::Flush() const
+{
+    if(mem_file != NULL)
+        mem_file->Flush();
+    if(header_file != NULL)
+        header_file->Flush();
 }
 
 }
