@@ -27,6 +27,7 @@
 #include <string>
 #include <vector>
 #include <openssl/sha.h>
+#include <map>
 
 #include <mabain/db.h>
 
@@ -48,8 +49,9 @@ static int num_keys = 1000000;
 static int test_type = 0;
 static int64_t memcap_index = 256*1024*1024LL;
 static int64_t memcap_data  = 0*1024*1024LL;
-//static int key_type = KEY_TYPE_SHA256;
-static int key_type = KEY_TYPE_INT;
+static int key_type = KEY_TYPE_SHA256;
+//static int key_type = KEY_TYPE_INT;
+static std::map<std::string,int> checked;
 
 static const char* get_sha256_str(int key);
 
@@ -73,6 +75,7 @@ static void RemoveRandom(int rm_cnt, DB &db)
         }
 
         db.Remove(kv);
+        checked[kv] = 0;
         if(cnt % 1000000 == 0)
             std::cout << "Removed " << cnt << "\n";
     }
@@ -103,11 +106,11 @@ static void PopulateDB(DB &db)
             std::cout << "failed to add " << kv << " " << rval << "\n";
             abort();
         }
+        checked[kv] = 1;
 
         if(nkeys % 1000000 == 0)
             std::cout << "populate db:  " << " inserted " << nkeys << " keys\n";
     }
-    //db.PrintStats();
 }
 
 static void RemoveHalf(DB &db)
@@ -132,6 +135,7 @@ static void RemoveHalf(DB &db)
                 break;
         }
         rval = db.Remove(kv.c_str(), kv.length());
+        checked[kv] = 0;
         if(rval != MBError::SUCCESS)
         {
             std::cout << "failed to remove " << nkeys << " " << kv << " " << rval << "\n";
@@ -144,7 +148,6 @@ static void RemoveHalf(DB &db)
 //Writer process
 static void Writer(int id)
 {
-    //std::cout << "Start time: " << time(NULL) << "\n";
     //std::cout << "I am writer " << id << " with pid " << getpid() << "\n";
 
     DB db(mb_dir, CONSTS::WriterOptions(), memcap_index, memcap_data);
@@ -157,7 +160,6 @@ static void Writer(int id)
     if(test_type == SHRINK_TEST) {
         db.Shrink(0, 0);
 
-        //if(id == 0) db.PrintStats();
         std::cout << "writer " << id << " exiting\n";
         db.Close();
         exit(0);
@@ -187,8 +189,6 @@ static void Writer(int id)
             else
                 count++;
         } else if(test_type == REMOVE_ALL) {
-            //if(nkeys % 50 == 0) usleep(1);
-
             if(nkeys == int(num_keys * 0.666666)) {
                 db.RemoveAll();
             }
@@ -206,7 +206,6 @@ static void Writer(int id)
         if(nkeys >= num_keys) break;
     }
 
-    //if(id == 0) db.PrintStats();
     if(test_type == ADD_TEST)
         std::cout << "writer " << id << " inserted " << count << " keys\n";
     else if(test_type == REMOVE_ONE_BY_ONE)
@@ -228,21 +227,36 @@ static void Reader(int id)
         exit(1);
     }
 
+    std::string key;
     if(test_type == ITERATOR_TEST) {
         int count = 0;
         for(DB::iterator iter = db.begin(); iter != db.end(); ++iter) {
             count++;
             if(iter.key != std::string((char*)iter.value.buff, iter.value.data_len)) {
-                std::cout << iter.key << ": " << std::string((char*)iter.value.buff, iter.value.data_len) << "\n";
+                std::cout << "VALUE NOT MATCH " << iter.key << ": " << std::string((char*)iter.value.buff, iter.value.data_len) << "\n";
+            } else {
+                if(checked[iter.key] == 1)
+                    checked[iter.key]++;
             }
         }
         db.Close();
         std::cout << "Reader iterates " << count << " keys\n";
+        for(int i = 1; i <= num_keys; i++) {
+            switch(key_type) {
+            case KEY_TYPE_SHA256:
+                key = get_sha256_str(i);
+                break;
+            case KEY_TYPE_INT:
+            default:
+                key = std::string("key") + std::to_string(i);
+                break;
+            }
+            assert(checked[key] == 0 || checked[key] == 2);
+        }
         exit(0);
     }
 
     int ikey = 1;
-    std::string key;
     MBData mb_data;
     int rval;
     int nfound = 0;
@@ -294,8 +308,6 @@ static void Reader(int id)
                 }
                 ikey++;
             }
-            //else
-            //    usleep(1);
         }
         else {
             // for removing all test, READ_ERROR is expected.
@@ -376,21 +388,19 @@ int main(int argc, char *argv[])
     PopulateDB(db);
     switch(test_type) {
     case ADD_TEST:
-        RemoveRandom(int(num_keys * 0.11), db);
+        RemoveRandom(int(num_keys * 0.71), db);
         break;
     case LOOKUP_TEST:
         break;
     case SHRINK_TEST:
-        //RemoveHalf(db);
-        RemoveRandom(int(num_keys * 0.11), db);
+        RemoveHalf(db);
         break;
     case REMOVE_ONE_BY_ONE:
         break;
     case REMOVE_ALL:
         break;
     case ITERATOR_TEST:
-        //RemoveRandom(int(num_keys * 0.11), db);
-        RemoveHalf(db);
+        RemoveRandom(int(num_keys * 0.61), db);
         break;
     default:
         abort();
