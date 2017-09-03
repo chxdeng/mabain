@@ -595,27 +595,6 @@ int DB::iterator::node_offset_modified(const std::string &key, size_t node_off, 
     return rval;
 }
 
-int DB::iterator::edge_offset_modified(const std::string &key, size_t edge_off, MBData &mbd)
-{
-    int rval;
-    mbd.options |= CONSTS::OPTION_FIND_AND_STORE_PARENT;
-    while(true)
-    {
-        rval = db_ref.dict->Find((const uint8_t *)key.c_str(), key.size(), mbd);
-        if(rval != MBError::TRY_AGAIN)
-            break;
-        nanosleep((const struct timespec[]){{0, 10L}}, NULL);
-    }
-
-    if(rval == MBError::IN_DICT)
-    {
-        if(edge_off != mbd.edge_ptrs.offset)
-            return MBError::EDGE_OFF_CHANGED;
-    }
-        
-    return rval;
-}
-
 // Find the next match using depth-first search.
 DB::iterator* DB::iterator::next()
 {
@@ -652,25 +631,6 @@ DB::iterator* DB::iterator::next()
 #endif
             if(rval != MBError::SUCCESS)
                 break;
-
-#ifdef __LOCK_FREE__
-            if(lfree->ReaderValidateNodeOffset(curr_node_counter, curr_node_offset, node_counter))
-            {
-                lf_ret = edge_offset_modified(curr_key+match_str, edge_off_prev, mbd);
-                if(lf_ret == MBError::EDGE_OFF_CHANGED)
-                {
-                    // prepare for the next edge with updated offset
-                    edge_ptrs.offset = mbd.edge_ptrs.offset + EDGE_SIZE;
-                    edge_ptrs.curr_nt++;
-                }
-                else if(lf_ret == MBError::NOT_EXIST)
-                {
-                    // go to next edge
-                    match = false;
-                    node_off = 0;    
-                }
-            }
-#endif
 
             if(match)
             {
