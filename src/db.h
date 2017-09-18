@@ -86,7 +86,6 @@ public:
         void iter_obj_init();
         int  next_index_buffer(size_t &parent_node_off, struct _IndexNode *inp);
         int  node_offset_modified(const std::string &key, size_t node_off, MBData &mbd);
-        int  edge_offset_modified(const std::string &key, size_t edge_off, MBData &mbd);
 
         const DB &db_ref;
         int state;

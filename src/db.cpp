@@ -618,7 +618,8 @@ DB::iterator* DB::iterator::next()
             lfree->ReaderLockFreeStart(snapshot);
 #endif
             // Get the next edge in current node
-            rval = db_ref.dict->ReadNextEdge(node_buff, edge_ptrs, match, value, match_str, node_off);
+            rval = db_ref.dict->ReadNextEdge(node_buff, edge_ptrs, match,
+                                              value, match_str, node_off);
 #ifdef __LOCK_FREE__
             lf_ret = lfree->ReaderLockFreeStop(snapshot, edge_off_prev);
             if(lf_ret == MBError::TRY_AGAIN)
@@ -632,6 +633,26 @@ DB::iterator* DB::iterator::next()
             if(rval != MBError::SUCCESS)
                 break;
 
+#ifdef __LOCK_FREE__
+            if(match && lfree->ReaderValidateNodeOffset(curr_node_counter,
+                                          curr_node_offset, node_counter))
+            {
+                lf_ret = node_offset_modified(curr_key, curr_node_offset, mbd);
+                if(lf_ret == MBError::NODE_OFF_CHANGED)
+                {
+                    curr_node_offset = mbd.edge_ptrs.curr_node_offset;
+                    int match_t;
+                    rval = db_ref.dict->ReadNode(curr_node_offset, node_buff,
+                                                 edge_ptrs, match_t, mbd);
+                    if(rval != MBError::SUCCESS)
+                        break;
+                    edge_ptrs.curr_nt = nt_prev;
+                    edge_ptrs.offset += edge_ptrs.curr_nt*EDGE_SIZE;
+                    continue;
+                }
+            }
+#endif
+
             if(match)
             {
                 key = curr_key + match_str;
@@ -641,7 +662,7 @@ DB::iterator* DB::iterator::next()
             {
                 // Push the node to stack
                 rval = node_stack->AddToHead(new iter_node(node_off, curr_key + match_str,
-                                                           edge_ptrs.parent_offset, node_counter));
+                                             edge_ptrs.parent_offset, node_counter));
                 if(rval != MBError::SUCCESS)
                     throw rval;
             }
@@ -677,12 +698,11 @@ DB::iterator* DB::iterator::next()
                         }
                         continue;
                     }
-
-                    curr_node_counter = node_counter;
-                    curr_node_offset = inode->node_off;
                 }
 #endif
 
+                curr_node_counter = node_counter;
+                curr_node_offset = inode->node_off;
                 break;
             }
 
@@ -760,7 +780,7 @@ int DB::iterator::next_index_buffer(size_t &parent_node_off, struct _IndexNode *
             rval = db_ref.dict->ReadNode(inode->node_edge_off, node_buff, edge_ptrs, match, value);
             if(rval != MBError::SUCCESS)
                 throw rval;
-            
+
             inp->parent_off     = inode->parent_off;
             inp->node_edge_off  = inode->node_edge_off;
             inp->rel_parent_off = inode->rel_parent_off;

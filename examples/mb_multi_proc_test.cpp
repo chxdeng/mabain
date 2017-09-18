@@ -240,7 +240,7 @@ static void Reader(int id)
             }
         }
         db.Close();
-        std::cout << "Reader iterates " << count << " keys\n";
+        std::cout << "Reader " << id << " iterates " << count << " keys\n";
         for(int i = 1; i <= num_keys; i++) {
             switch(key_type) {
             case KEY_TYPE_SHA256:
@@ -251,7 +251,9 @@ static void Reader(int id)
                 key = std::string("key") + std::to_string(i);
                 break;
             }
-            assert(checked[key] == 0 || checked[key] == 2);
+            if(!(checked[key] == 0 || checked[key] == 2)) {
+                std::cerr << i << ": " << key << " " << checked[key] << " for id " << id << "\n";
+            }
         }
         exit(0);
     }
