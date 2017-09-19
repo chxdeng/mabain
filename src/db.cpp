@@ -634,8 +634,8 @@ DB::iterator* DB::iterator::next()
                 break;
 
 #ifdef __LOCK_FREE__
-            if(match && lfree->ReaderValidateNodeOffset(curr_node_counter,
-                                          curr_node_offset, node_counter))
+            if(lfree->ReaderValidateNodeOffset(curr_node_counter,
+                         curr_node_offset, node_counter))
             {
                 lf_ret = node_offset_modified(curr_key, curr_node_offset, mbd);
                 if(lf_ret == MBError::NODE_OFF_CHANGED)
