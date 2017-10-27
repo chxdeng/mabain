@@ -2,7 +2,7 @@ TEST_BIN_NAME=mb_test
 
 CPP=g++
 
-CPPFLAGS = -I. -I.. -I../util -Wall -Werror -g -O2 -c -std=c++11 -D__UNIT_TEST__
+CPPFLAGS = -I. -I.. -I../util -Wall -Werror -g -O2 -c -std=c++11
 LDFLAGS  = -lpthread
 
 TESTSOURCES=$(wildcard *.cpp)

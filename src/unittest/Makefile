@@ -2,7 +2,7 @@ TEST_BIN_NAME=test_mabain
 
 CPP=g++
 
-CPPFLAGS = -I. -I.. -I../util -I/usr/include -Wall -Werror -g -O2 -std=c++11 -D__UNIT_TEST__
+CPPFLAGS = -I. -I.. -I../util -I/usr/include -Wall -Werror -g -O2 -std=c++11
 LDFLAGS  = -lpthread -L/usr/lib64 -lgtest -lcrypto
 
 TESTSOURCES=$(wildcard *.cpp)

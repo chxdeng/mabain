@@ -46,6 +46,13 @@
 #define LOCAL_EDGE_LEN_M1          5
 #define EDGE_NODE_LEADING_POS      7
 
+#define EXCEP_STATUS_NONE          0
+#define EXCEP_STATUS_ADD_EDGE      1
+#define EXCEP_STATUS_ADD_DATA_OFF  2
+#define EXCEP_STATUS_ADD_NODE      3
+#define EXCEP_STATUS_REMOVE_EDGE   4
+#define EXCEP_STATUS_CLEAR_EDGE    5
+
 namespace mabain {
 
 typedef struct _NodePtrs
@@ -81,6 +88,12 @@ typedef struct _IndexHeader
 
     // read/write lock
     pthread_rwlock_t mb_rw_lock;
+
+    // temp variables used for abnormal writer terminations
+    uint8_t excep_buff[16];
+    size_t  excep_offset;
+    size_t  excep_lf_offset;
+    int     excep_updating_status;
 } IndexHeader;
 
 // Memory management class for the dictionary
@@ -108,6 +121,7 @@ public:
     bool FindNext(const unsigned char *key, int keylen, int &match_len,
                   EdgePtrs &edge_ptr, uint8_t *key_tmp) const;
     int  GetRootEdge(int nt, EdgePtrs &edge_ptrs) const;
+    int  GetRootEdge_Writer(int nt, EdgePtrs &edge_ptrs) const;
     int  ClearRootEdge(int nt) const;
     void ReserveData(const uint8_t* key, int size, size_t &offset,
                      bool map_new_sliding=true);
@@ -130,6 +144,9 @@ public:
 
     void Flush() const;
 
+    // empty edge, used for clearing edges
+    static const uint8_t empty_edge[EDGE_SIZE];
+
 private:
     bool     ReserveNode(int nt, size_t &offset, uint8_t* &ptr);
     void     ReleaseNode(size_t offset, int nt);
@@ -140,6 +157,13 @@ private:
     void     UpdateHeadEdge(EdgePtrs &edge_ptrs, int match_len,
                             MBData &data, int &release_buffer_size,
                             size_t &edge_str_off, bool &map_new_sliding);
+    void     RemoveRootEdge(const EdgePtrs &edge_ptrs);
+    int      RemoveEdgeSizeN(const EdgePtrs &edge_ptrs, int nt, size_t node_offset,
+                            uint8_t *old_node_buffer, size_t &str_off_rel,
+                            int &str_size_rel, size_t parent_edge_offset);
+    int      RemoveEdgeSizeOne(uint8_t *old_node_buffer, size_t parent_edge_offset,
+                            size_t node_offset, int nt, size_t &str_off_rel,
+                            int &str_size_rel);
 
     IndexHeader *header;
 
@@ -151,9 +175,6 @@ private:
     FreeList *free_lists;
     size_t root_offset;
     uint8_t *node_ptr;
-
-    // empty edge, used for clearing edges
-    static uint8_t empty_edge[EDGE_SIZE];
 
     // lock free pointer
     LockFree *lfree;
@@ -178,8 +199,15 @@ inline void DictMem::WriteEdge(const EdgePtrs &edge_ptrs) const
         throw (int) MBError::OUT_OF_BOUND;
     }
 
+    // for segfault recovery
+    header->excep_lf_offset = edge_ptrs.offset;
+    header->excep_updating_status = EXCEP_STATUS_ADD_EDGE;
+
     if(mem_file->RandomWrite(edge_ptrs.ptr, EDGE_SIZE, edge_ptrs.offset) != EDGE_SIZE)
         throw (int) MBError::WRITE_ERROR;
+
+    // unset the segault flag
+    header->excep_updating_status = EXCEP_STATUS_NONE;
 }
 
 inline void DictMem::WriteData(const uint8_t *buff, unsigned len, size_t offset) const

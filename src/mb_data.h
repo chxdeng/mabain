@@ -86,6 +86,7 @@ public:
     uint8_t node_buff[NUM_ALPHABET+NODE_EDGE_KEY_FIRST];
 
 private:
+    bool free_buffer;
 };
 
 }

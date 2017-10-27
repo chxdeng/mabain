@@ -353,6 +353,7 @@ int main(int argc, char *argv[])
     int num_writer = 1; // There can be one writer at most.
     int num_reader = 2;
     test_type = -1;
+    srand(time(NULL));
 
     if(argc >= 4) {
         const char *test_tp = argv[1];

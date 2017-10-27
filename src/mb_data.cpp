@@ -32,6 +32,7 @@ MBData::MBData()
     match_len = 0;
     next = false;
     options = 0;
+    free_buffer = false;
 }
 
 MBData::MBData(int size, int match_options)
@@ -45,6 +46,10 @@ MBData::MBData(int size, int match_options)
     else
         buff = NULL;
 
+    if(buff != NULL)
+        free_buffer = true;
+    else
+        free_buffer = false;
     data_len = 0;
     match_len = 0;
     next = false;
@@ -53,7 +58,7 @@ MBData::MBData(int size, int match_options)
 
 MBData::~MBData()
 {
-    if(buff)
+    if(free_buffer)
         free(buff);
 }
 
@@ -70,15 +75,19 @@ int MBData::Resize(int size)
     if(size > buff_len)
     {
         buff_len = size;
-        if(buff != NULL)
+        if(free_buffer)
             free(buff);
+        else
+            free_buffer = true;
 
         buff = static_cast<uint8_t*>(malloc(buff_len));
         if(buff == NULL)
         {
             buff_len = 0;
+            free_buffer = false;
             return MBError::NO_MEMORY;
         }
+
     }
     return MBError::SUCCESS;
 }

@@ -96,6 +96,7 @@ public:
 
     void ResetSlidingWindow() const;
     void Flush() const;
+    int  ExceptionRecovery();
 
 private:
     int ReleaseBuffer(size_t offset);

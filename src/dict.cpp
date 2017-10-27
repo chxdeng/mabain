@@ -89,7 +89,11 @@ Dict::Dict(const std::string &mbdir, bool init_header, int datasize,
             if(rval == MBError::SUCCESS)
             {
                 if(mm.IsValid())
-                    status = MBError::SUCCESS;
+                {
+                    rval = ExceptionRecovery();
+                    if(rval == MBError::SUCCESS)
+                        status = MBError::SUCCESS;
+                }
             }
             else
             {
@@ -185,7 +189,7 @@ int Dict::Add(const uint8_t *key, int len, MBData &data, bool overwrite)
         return MBError::OUT_OF_BOUND;
 
     EdgePtrs edge_ptrs;
-    int rval = mm.GetRootEdge(key[0], edge_ptrs);
+    int rval = mm.GetRootEdge_Writer(key[0], edge_ptrs);
     size_t data_offset = 0;
     if(rval != MBError::SUCCESS)
         return rval;
@@ -363,6 +367,10 @@ int Dict::DeleteDataFromEdge(MBData &data, EdgePtrs &edge_ptrs)
     }
     else
     {
+        // No exception handling in this case
+        header->excep_lf_offset = 0;
+        header->excep_offset = 0;
+
         uint8_t node_buff[NODE_EDGE_KEY_FIRST];
         size_t node_off = Get6BInteger(edge_ptrs.offset_ptr);
 
@@ -1042,17 +1050,22 @@ int Dict::UpdateDataBuffer(EdgePtrs &edge_ptrs, bool overwrite, const uint8_t *b
             Logger::Log(LOG_LEVEL_WARN, "failed to release data buffer");
         ReserveData(buff, len, data_off);
         Write6BInteger(edge_ptrs.offset_ptr, data_off);
+
+        header->excep_lf_offset = edge_ptrs.offset;
+        memcpy(header->excep_buff, edge_ptrs.offset_ptr, OFFSET_SIZE);
 #ifdef __LOCK_FREE__
         lfree.WriterLockFreeStart(edge_ptrs.offset);
 #endif
+        header->excep_updating_status = EXCEP_STATUS_ADD_DATA_OFF;
         mm.WriteData(edge_ptrs.offset_ptr, OFFSET_SIZE, edge_ptrs.offset+EDGE_NODE_LEADING_POS);
 #ifdef __LOCK_FREE__
         lfree.WriterLockFreeStop();
 #endif
+        header->excep_updating_status = EXCEP_STATUS_NONE;
     }
     else
     {
-        uint8_t node_buff[NODE_EDGE_KEY_FIRST];
+        uint8_t *node_buff = header->excep_buff;
         size_t node_off = Get6BInteger(edge_ptrs.offset_ptr);
 
         if(mm.ReadData(node_buff, EDGE_NODE_LEADING_POS, node_off, false) != EDGE_NODE_LEADING_POS)
@@ -1067,23 +1080,31 @@ int Dict::UpdateDataBuffer(EdgePtrs &edge_ptrs, bool overwrite, const uint8_t *b
             data_off = Get6BInteger(node_buff+2);
             if(ReleaseBuffer(data_off) != MBError::SUCCESS)
                 Logger::Log(LOG_LEVEL_WARN, "failed to release data buffer");
+
+            node_buff[NODE_EDGE_KEY_FIRST] = 0;
         }
         else
         {
             // set the match flag
             node_buff[0] |= FLAG_NODE_MATCH;
+
+            node_buff[NODE_EDGE_KEY_FIRST] = 1;
         }
 
         ReserveData(buff, len, data_off);
         Write6BInteger(node_buff+2, data_off);
 
+        header->excep_offset = node_off;
 #ifdef __LOCK_FREE__
+        header->excep_lf_offset = edge_ptrs.offset;
         lfree.WriterLockFreeStart(edge_ptrs.offset);
 #endif
+        header->excep_updating_status = EXCEP_STATUS_ADD_NODE;
         mm.WriteData(node_buff, NODE_EDGE_KEY_FIRST, node_off);
 #ifdef __LOCK_FREE__
         lfree.WriterLockFreeStop();
 #endif
+        header->excep_updating_status = EXCEP_STATUS_NONE;
     }
 
     return MBError::SUCCESS;
@@ -1163,6 +1184,82 @@ void Dict::Flush() const
     if(db_file != NULL)
         db_file->Flush();
     mm.Flush();
+}
+
+// Recovery from abnormal writer terminations (segfault, kill -9 etc)
+// during DB updates (insertion, replacing and deletion).
+int Dict::ExceptionRecovery()
+{
+    if(header == NULL) return MBError::NOT_INITIALIZED;
+
+    int rval = MBError::SUCCESS;
+    if(header->excep_updating_status == EXCEP_STATUS_NONE)
+    {
+        Logger::Log(LOG_LEVEL_INFO, "writer was shutdown successfully previously");
+        return rval;
+    }
+
+    Logger::Log(LOG_LEVEL_INFO, "writer was not shutdown gracefully with exception status %d",
+                header->excep_updating_status);
+    switch(header->excep_updating_status)
+    {
+        case EXCEP_STATUS_ADD_EDGE:
+#ifdef __LOCK_FREE__
+            lfree.WriterLockFreeStart(header->excep_lf_offset);
+#endif
+            mm.WriteData(header->excep_buff, EDGE_SIZE, header->excep_lf_offset);
+            header->count++;
+	    break;
+        case EXCEP_STATUS_ADD_DATA_OFF:
+#ifdef __LOCK_FREE__
+            lfree.WriterLockFreeStart(header->excep_lf_offset);
+#endif
+            mm.WriteData(header->excep_buff, OFFSET_SIZE,
+                         header->excep_lf_offset+EDGE_NODE_LEADING_POS);
+            break;
+        case EXCEP_STATUS_ADD_NODE:
+#ifdef __LOCK_FREE__
+            lfree.WriterLockFreeStart(header->excep_lf_offset);
+#endif
+            mm.WriteData(header->excep_buff, NODE_EDGE_KEY_FIRST,
+                         header->excep_offset);
+            if(header->excep_buff[NODE_EDGE_KEY_FIRST]) header->count++;
+            break;
+        case EXCEP_STATUS_REMOVE_EDGE:
+#ifdef __LOCK_FREE__
+            lfree.WriterLockFreeStart(header->excep_lf_offset);
+#endif
+            Write6BInteger(header->excep_buff, header->excep_offset);
+            mm.WriteData(header->excep_buff, OFFSET_SIZE,
+                         header->excep_lf_offset+EDGE_NODE_LEADING_POS);
+            break;
+        case EXCEP_STATUS_CLEAR_EDGE:
+#ifdef __LOCK_FREE__
+            lfree.WriterLockFreeStart(header->excep_lf_offset);
+#endif
+            mm.WriteData(DictMem::empty_edge, EDGE_SIZE, header->excep_lf_offset);
+            header->count--;
+            break;
+        default:
+            Logger::Log(LOG_LEVEL_ERROR, "unknown exception status: %d",
+                        header->excep_updating_status);
+            return MBError::INVALID_ARG;
+    }
+#ifdef __LOCK_FREE__
+    lfree.WriterLockFreeStop();
+#endif
+
+    if(rval == MBError::SUCCESS)
+    {
+        header->excep_updating_status = EXCEP_STATUS_NONE;
+        Logger::Log(LOG_LEVEL_INFO, "successfully recovered from abnormal termination");
+    }
+    else
+    {
+        Logger::Log(LOG_LEVEL_ERROR, "failed to recover from abnormal termination");
+    }
+
+    return rval;
 }
 
 }

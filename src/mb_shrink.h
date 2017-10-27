@@ -49,9 +49,7 @@ public:
     int Shrink(int64_t min_index_shk_size = INDEX_BLOCK_SIZE/2,
                int64_t min_data_shk_size  = DATA_BLOCK_SIZE/2);
 
-#ifndef __UNIT_TEST__
-private:
-#endif
+    // Following are not public interface.
     int    MoveIndexBuffer(size_t src, const std::string &key, int size,
                            size_t parent, int rel_off, int buff_type);
     int    MoveDataBuffer(size_t src, int size, size_t parent, size_t edge_off);
