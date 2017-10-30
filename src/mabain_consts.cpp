@@ -37,6 +37,7 @@ int CONSTS::WriterOptions()
 {
     int options = ACCESS_MODE_WRITER;
     options |= USE_SLIDING_WINDOW;
+    options |= ASYNC_WRITER_MODE;
     return options;
 }
 

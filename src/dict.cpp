@@ -92,7 +92,11 @@ Dict::Dict(const std::string &mbdir, bool init_header, int datasize,
                 {
                     rval = ExceptionRecovery();
                     if(rval == MBError::SUCCESS)
+                    {
+                        header->excep_lf_offset = 0;
+                        header->excep_offset = 0;
                         status = MBError::SUCCESS;
+                    }
                 }
             }
             else
