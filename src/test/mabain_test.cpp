@@ -43,7 +43,9 @@ static void clean_db_dir()
 
 static void clear_mabain_db()
 {
-    DB db(MB_DIR, CONSTS::WriterOptions(), 0, 0);
+    int option = CONSTS::WriterOptions();
+    option &= ~CONSTS::ASYNC_WRITER_MODE;
+    DB db(MB_DIR, option, 0, 0);
     if(db.Status() != MBError::SUCCESS) {
         std::cout << "DB error: " << MBError::get_error_str(db.Status()) << "\n";
         exit(1);
@@ -58,7 +60,9 @@ static void load_test(std::string &list_file, int64_t memcap, uint32_t db_id,
                int64_t expected_count)
 {
     std::cout << "Loading " << list_file << "\n";
-    DB db(MB_DIR, CONSTS::WriterOptions(), memcap, 0, 10, db_id);
+    int option = CONSTS::WriterOptions();
+    option &= ~CONSTS::ASYNC_WRITER_MODE;
+    DB db(MB_DIR, option, memcap, 0, 10, db_id);
     if(db.Status() != MBError::SUCCESS) {
         std::cout << "DB error: " << MBError::get_error_str(db.Status()) << "\n";
         exit(1);
@@ -112,6 +116,7 @@ static void load_test(std::string &list_file, int64_t memcap, uint32_t db_id,
     std::cout << "count: " << count << " " << count_existing <<
                  "    time: " << 1.0*tmdiff/count << "\n";
     assert(expected_count == count);
+std::cout<<expected_count<<" "<<db_cnt<<"\n";
     assert(expected_count == db_cnt);
 }
 
@@ -230,7 +235,9 @@ static void delete_odd_test(std::string &list_file, int64_t memcap, uint32_t db_
                  int64_t expected_count)
 {
     std::cout << "deletion odd-entry test: " << list_file << "\n";
-    DB db(MB_DIR, CONSTS::WriterOptions(), memcap, 0, 0, db_id);
+    int option = CONSTS::WriterOptions();
+    option &= ~CONSTS::ASYNC_WRITER_MODE;
+    DB db(MB_DIR, option, memcap, 0, 0, db_id);
     assert(db.Status() == MBError::SUCCESS);
     std::ifstream in(list_file.c_str());
     assert(in.is_open());
@@ -273,7 +280,9 @@ static void delete_test(std::string &list_file, int64_t memcap, uint32_t db_id,
                  int64_t expected_count)
 {
     std::cout << "deletion test: " << list_file << "\n";
-    DB db(MB_DIR, CONSTS::WriterOptions(), memcap, 0, 0, db_id);
+    int option = CONSTS::WriterOptions();
+    option &= ~CONSTS::ASYNC_WRITER_MODE;
+    DB db(MB_DIR, option, memcap, 0, 0, db_id);
     assert(db.Status() == MBError::SUCCESS);
     std::ifstream in(list_file.c_str());
     assert(in.is_open());
@@ -313,7 +322,9 @@ static void shrink_test(std::string &list_file, int64_t memcap, uint32_t db_id,
                  int64_t expected_count)
 {
     std::cout << "shrink test: " << list_file << "\n";
-    DB db(MB_DIR, CONSTS::WriterOptions(), memcap, 0, 0, db_id);
+    int option = CONSTS::WriterOptions();
+    option &= ~CONSTS::ASYNC_WRITER_MODE;
+    DB db(MB_DIR, option, memcap, 0, 0, db_id);
     assert(db.Status() == MBError::SUCCESS);
     struct timeval start, stop;
 
@@ -330,7 +341,7 @@ static void shrink_test(std::string &list_file, int64_t memcap, uint32_t db_id,
 
 static void iterator_test(int64_t memcap, uint32_t db_id, int64_t expected_count)
 {
-    DB db(MB_DIR, CONSTS::WriterOptions(), memcap, 0, 0, db_id);
+    DB db(MB_DIR, CONSTS::ReaderOptions(), memcap, 0, 0, db_id);
     assert(db.Status() == MBError::SUCCESS);
  
     int count = 0;
@@ -352,11 +363,15 @@ static void iterator_test(int64_t memcap, uint32_t db_id, int64_t expected_count
     assert(expected_count == count);
 }
 
-int main()
+int main(int argc, char *argv[])
 {
     clean_db_dir();
 
-    std::ifstream test_in("./test_list");
+    std::string test_list_file = "./test_list";
+    if(argc == 2) {
+        test_list_file = argv[1];
+    }
+    std::ifstream test_in(test_list_file);
     assert(test_in.is_open());
     std::string file;
     std::string mode;

@@ -24,7 +24,7 @@ extern "C" {
 #ifdef LEVEL_DB
 leveldb::DB *db = NULL;
 #elif KYOTO_CABINET
-kyotocabinet::PolyDB *db = NULL;
+kyotocabinet::HashDB *db = NULL;
 #elif LMDB
 MDB_env *env = NULL;
 MDB_dbi db;
@@ -145,12 +145,13 @@ static void InitDB()
     leveldb::Status status = leveldb::DB::Open(options, db_dir_tmp, &db);
     assert(status.ok());
 #elif KYOTO_CABINET
-    std::string db_dir_tmp = std::string(db_dir) + "/kyotocabinet/";
-    db = new kyotocabinet::PolyDB();
-    std::string db_path = db_dir_tmp + "casket.kch";
-    if (!db->open(db_path.c_str(), kyotocabinet::PolyDB::OWRITER | kyotocabinet::PolyDB::OCREATE)) {
-        std::cerr << "failed to open kyotocabinet db\n";
-        abort();
+    std::string db_file = std::string(db_dir) + "/kyotocabinet/dbbench_hashDB.kch";
+    db = new kyotocabinet::HashDB();
+    int open_options = kyotocabinet::PolyDB::OWRITER |
+                       kyotocabinet::PolyDB::OCREATE;
+    db->tune_map(memcap);
+    if(!db->open(db_file, open_options)) {
+      fprintf(stderr, "open error: %s\n", db->error().name());
     }
 #elif LMDB
     std::string db_dir_tmp = std::string(db_dir) + "/lmdb";
