@@ -328,23 +328,6 @@ int DB::Add(const std::string &key, const std::string &value, bool overwrite)
     return Add(key.data(), key.size(), value.data(), value.size(), overwrite);
 }
 
-// Delete entry by key
-int DB::Remove(const char *key, int len, MBData &data)
-{
-    if(status != MBError::SUCCESS)
-        return MBError::NOT_INITIALIZED;
-
-    if(async_writer != NULL)
-        return async_writer->Remove(key, len);
-
-    data.options |= CONSTS::OPTION_FIND_AND_STORE_PARENT;
-
-    int rval;
-    rval = dict->Remove(reinterpret_cast<const uint8_t*>(key), len, data);
-
-    return rval;
-}
-
 int DB::Remove(const char *key, int len)
 {
     if(status != MBError::SUCCESS)
@@ -413,6 +396,12 @@ void DB::PrintStats(std::ostream &out_stream) const
 
     Logger::Log(LOG_LEVEL_INFO, "printing DB stats");
     dict->PrintStats(out_stream);
+}
+
+void DB::PrintHeader(std::ostream &out_stream) const
+{
+    if(dict != NULL)
+        dict->PrintHeader(out_stream);
 }
 
 int DB::WrLock()
@@ -484,10 +473,18 @@ const DB::iterator DB::end() const
 
 DB::iterator::iter_node::iter_node(size_t offset, const std::string &ckey, size_t edge_off, uint32_t counter)
                        : node_off(offset),
-                         key(ckey),
                          parent_edge_off(edge_off),
                          node_counter(counter)
 {
+    key = new std::string(ckey);
+}
+
+void DB::iterator::free_iter_node(void *node)
+{
+    if(node == NULL) return;
+    iter_node *inode = (iter_node *) node;
+    delete inode->key;
+    delete inode;
 }
 
 void DB::iterator::iter_obj_init()
@@ -501,7 +498,6 @@ void DB::iterator::iter_obj_init()
     {
         state = DB_ITER_STATE_MORE;
         curr_key = "";
-        node_stack = new MBlsq(free);
     }
 }
 
@@ -526,6 +522,8 @@ DB::iterator::~iterator()
 // Initialize the iterator, get the very first key-value pair.
 void DB::iterator::init()
 {
+    node_stack = new MBlsq(free_iter_node);
+
 #ifdef __LOCK_FREE__
     curr_node_offset = 0;
     curr_node_counter = lfree->LoadCounter();
@@ -546,8 +544,10 @@ void DB::iterator::init()
 
 // Initialize the iterator, but do not get the first key-value pair.
 // This is for internal use only.
-int DB::iterator::Initialize()
+int DB::iterator::init_no_next()
 {
+    node_stack = new MBlsq(free);
+
     int rval = db_ref.dict->ReadRootNode(node_buff, edge_ptrs, match, value);
     if(rval != MBError::SUCCESS)
         state = DB_ITER_STATE_DONE;
@@ -683,7 +683,7 @@ DB::iterator* DB::iterator::next()
 #ifdef __LOCK_FREE__
                 if(lfree->ReaderValidateNodeOffset(inode->node_counter, inode->node_off, node_counter))
                 {
-                    lf_ret = node_offset_modified(inode->key, inode->node_off, mbd);
+                    lf_ret = node_offset_modified(*inode->key, inode->node_off, mbd);
                     // retrieve the next node
                     if(lf_ret != MBError::IN_DICT)
                     {
@@ -709,18 +709,18 @@ DB::iterator* DB::iterator::next()
             if(rval != MBError::SUCCESS)
                 throw rval;
 
-            curr_key = inode->key;
+            curr_key = *inode->key;
             if(match)
             {
                 key = curr_key;
                 // for db shrinking
                 edge_ptrs.curr_node_offset = inode->node_off;
                 edge_ptrs.parent_offset = inode->parent_edge_off;
-                delete inode;
+                free_iter_node(inode);
                 return this;
             }
 
-            delete inode;
+            free_iter_node(inode);
         }
         else
         {

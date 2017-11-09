@@ -56,7 +56,7 @@ Dict::Dict(const std::string &mbdir, bool init_header, int datasize,
     if(header == NULL)
     {
         Logger::Log(LOG_LEVEL_ERROR, "header not mapped");
-        return;
+        throw (int) MBError::MMAP_FAILED;
     }
 
     lfree.LockFreeInit(&header->lock_free, db_options);
@@ -83,6 +83,8 @@ Dict::Dict(const std::string &mbdir, bool init_header, int datasize,
     {
         if(options & CONSTS::ACCESS_MODE_WRITER)
         {
+            mm.ResetSlidingWindow();
+            ResetSlidingWindow();
             free_lists = new FreeList(mbdir+"_dbfl", DATA_BUFFER_ALIGNMENT,
                                       NUM_DATA_BUFFER_RESERVE);
             int rval = free_lists->LoadListFromDisk();
@@ -156,6 +158,12 @@ int Dict::Init(uint32_t id)
 
 void Dict::Destroy()
 {
+    if(options & CONSTS::ACCESS_MODE_WRITER)
+    {
+        mm.ResetSlidingWindow();
+        ResetSlidingWindow();
+    }
+
     mm.Destroy();
 
     // Dump free list to disk
@@ -763,6 +771,47 @@ void Dict::PrintStats(std::ostream &out_stream) const
     db_file->PrintStats(out_stream);
 }
 
+void Dict::PrintHeader(std::ostream &out_stream) const
+{
+    if(header == NULL)
+        return;
+
+    out_stream << "---------------- START OF HEADER ----------------\n";
+    out_stream << "version: " << header->version[0] << "." <<
+                                 header->version[1] << "." <<
+                                 header->version[2] << "\n";
+    out_stream << "data size: " << header->data_size << "\n";
+    out_stream << "db count: " << header->count << "\n";
+    out_stream << "max data offset: " << header->m_data_offset << "\n";
+    out_stream << "max index offset: " << header->m_index_offset << "\n";
+    out_stream << "pending data buffer size: " << header->pending_data_buff_size << "\n";
+    out_stream << "pending index buffer size: " << header->pending_index_buff_size << "\n";
+    out_stream << "node count: " << header->n_states << "\n";
+    out_stream << "edge count: " << header->n_edges << "\n";
+    out_stream << "edge string size: " << header->edge_str_size << "\n";
+    out_stream << "writer count: " << header->num_writer << "\n";
+    out_stream << "reader count: " << header->num_reader << "\n";
+    out_stream << "data sliding start: " << header->shm_data_sliding_start << "\n";
+    out_stream << "index sliding start: " << header->shm_index_sliding_start << "\n";
+    out_stream << "lock free data: " << "\n";
+    out_stream << "\tmodify flag: " << header->lock_free.modify_flag << "\n";
+    out_stream << "\tcounter: " << header->lock_free.counter << "\n";
+    out_stream << "\toffset: " << header->lock_free.offset << "\n";
+    out_stream << "exception data: " << "\n";
+    out_stream << "\tupdating status: " << header->excep_updating_status << "\n";
+    out_stream << "\texception data buffer: ";
+    char data_str_buff[64];
+    for(int i = 0; i < 16; i++)
+    {
+        sprintf(data_str_buff + 3*i, "%2x ", header->excep_buff[i]);
+    }
+    data_str_buff[48] = '\0'; 
+    out_stream << data_str_buff << "\n";
+    out_stream << "\toffset: " << header->excep_offset << "\n";
+    out_stream << "\tlock free offset: " << header->excep_lf_offset << "\n";
+    out_stream << "---------------- END OF HEADER ----------------\n";
+}
+
 int64_t Dict::Count() const
 {
     if(header == NULL)
@@ -912,6 +961,7 @@ int Dict::Remove(const uint8_t *key, int len, MBData &data)
             RemoveAll();
         }
     }
+
     return rval;
 }
 
@@ -1137,7 +1187,10 @@ int Dict::UpdateNumWriter(int delta) const
         header->num_writer++;
     }
     else if(delta < 0)
+    {
         header->num_writer = 0;
+        header->lock_free.modify_flag = 0;
+    }
 
     Logger::Log(LOG_LEVEL_INFO, "number of writer is set to: %d",
                              header->num_writer);
@@ -1205,6 +1258,9 @@ int Dict::ExceptionRecovery()
 
     Logger::Log(LOG_LEVEL_INFO, "writer was not shutdown gracefully with exception status %d",
                 header->excep_updating_status);
+    // Dumper header before running recover
+    PrintHeader(*Logger::GetLogStream());
+
     switch(header->excep_updating_status)
     {
         case EXCEP_STATUS_ADD_EDGE:

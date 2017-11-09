@@ -61,7 +61,8 @@ public:
     ~MBData();
     // Clear the data for repeated usage
     void Clear();
-    int Resize(int size);
+    int  Resize(int size);
+    void SetValue(char *buff, int size);
 
     // data length
     int data_len;

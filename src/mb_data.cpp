@@ -70,6 +70,18 @@ void MBData::Clear()
     next = false;
 }
 
+void MBData::SetValue(char *buf, int size)
+{
+    if(free_buffer)
+    {
+        free(buff);
+        free_buffer = false;
+        buff_len = 0;
+    }
+    buff = (uint8_t *) buf;
+    data_len = size;
+}
+
 int MBData::Resize(int size)
 {
     if(size > buff_len)

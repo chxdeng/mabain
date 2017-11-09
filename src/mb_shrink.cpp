@@ -355,7 +355,7 @@ int MBShrink::BuildIndexLink()
         return rval;
 
     DB::iterator iter = DB::iterator(db_ref, DB_ITER_STATE_INIT);
-    rval = iter.Initialize();
+    rval = iter.init_no_next();
     if(rval != MBError::SUCCESS)
         return rval;
 

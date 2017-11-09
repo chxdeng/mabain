@@ -63,6 +63,7 @@ public:
     // Print dictinary stats
     void PrintStats(std::ostream *out_stream) const;
     void PrintStats(std::ostream &out_stream) const;
+    void PrintHeader(std::ostream &out_stream) const;
     int Status() const;
     int64_t Count() const;
     int GetDBOptions() const;

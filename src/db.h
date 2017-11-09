@@ -64,7 +64,7 @@ public:
         // Copy constructor
         iterator(const iterator &rhs);
         void init();
-        int Initialize();
+        int init_no_next();
         ~iterator();
 
         // operator overloading
@@ -76,12 +76,13 @@ public:
         {
         public:
             size_t node_off;
-            std::string key;
+            std::string *key;
             size_t parent_edge_off;
             uint32_t node_counter;
             iter_node(size_t offset, const std::string &ckey, size_t edge_off, uint32_t counter);
         };
 
+        static void free_iter_node(void *inode);
         iterator* next();
         void iter_obj_init();
         int  next_index_buffer(size_t &parent_node_off, struct _IndexNode *inp);
@@ -126,7 +127,6 @@ public:
     int FindLongestPrefix(const char* key, int len, MBData &data) const;
     int FindLongestPrefix(const std::string &key, MBData &data) const;
     // Remove an entry using a key
-    int Remove(const char *key, int len, MBData &data);
     int Remove(const char *key, int len);
     int Remove(const std::string &key);
     int RemoveAll();
@@ -156,6 +156,7 @@ public:
 
     // Print database stats
     void PrintStats(std::ostream &out_stream = std::cout) const;
+    void PrintHeader(std::ostream &out_stream = std::cout) const;
     // current count of key-value pair
     int64_t Count() const;
     // DB status

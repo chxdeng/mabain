@@ -193,32 +193,33 @@ void* AsyncWriter::async_writer_thread()
             // process the node
             switch(node_ptr->type)
             {
-            case MABAIN_ASYNC_TYPE_ADD:
-                mbd.buff = (uint8_t *) node_ptr->data;
-                mbd.data_len = node_ptr->data_len;
-                rval = dict->Add((uint8_t *)node_ptr->key, node_ptr->key_len, mbd, node_ptr->overwrite);
-                if(rval != MBError::SUCCESS)
-                    Logger::Log(LOG_LEVEL_DEBUG, "failed to add to db %s", MBError::get_error_str(rval)); 
-                break;
-            case MABAIN_ASYNC_TYPE_REMOVE:
-                mbd.options |= CONSTS::OPTION_FIND_AND_STORE_PARENT;
-                rval = dict->Remove((uint8_t *)node_ptr->key, node_ptr->key_len, mbd);
-                if(rval != MBError::SUCCESS)
-                    Logger::Log(LOG_LEVEL_DEBUG, "failed to delete from db %s", MBError::get_error_str(rval)); 
-                break;
-            case MABAIN_ASYNC_TYPE_REMOVE_ALL:
-                rval = dict->RemoveAll();
-                if(rval != MBError::SUCCESS)
-                    Logger::Log(LOG_LEVEL_ERROR, "failed to delete all from db %s", MBError::get_error_str(rval)); 
-                break;
-            case MABAIN_ASYNC_TYPE_SHRINK:
-                {
-                    MBShrink shk(*db);
-                    shk.Shrink(min_index_shrink_size, min_data_shrink_size);
-                }
-                break; 
-            default:
-                break;
+                case MABAIN_ASYNC_TYPE_ADD:
+                    mbd.buff = (uint8_t *) node_ptr->data;
+                    mbd.data_len = node_ptr->data_len;
+                    rval = dict->Add((uint8_t *)node_ptr->key, node_ptr->key_len, mbd, node_ptr->overwrite);
+                    if(rval != MBError::SUCCESS)
+                        Logger::Log(LOG_LEVEL_DEBUG, "failed to add to db %s", MBError::get_error_str(rval)); 
+                    break;
+                case MABAIN_ASYNC_TYPE_REMOVE:
+                    mbd.options |= CONSTS::OPTION_FIND_AND_STORE_PARENT;
+                    rval = dict->Remove((uint8_t *)node_ptr->key, node_ptr->key_len, mbd);
+                    if(rval != MBError::SUCCESS)
+                        Logger::Log(LOG_LEVEL_DEBUG, "failed to delete from db %s", MBError::get_error_str(rval)); 
+                    mbd.options &= ~CONSTS::OPTION_FIND_AND_STORE_PARENT;
+                    break;
+                case MABAIN_ASYNC_TYPE_REMOVE_ALL:
+                    rval = dict->RemoveAll();
+                    if(rval != MBError::SUCCESS)
+                        Logger::Log(LOG_LEVEL_ERROR, "failed to delete all from db %s", MBError::get_error_str(rval)); 
+                    break;
+                case MABAIN_ASYNC_TYPE_SHRINK:
+                    {
+                        MBShrink shk(*db);
+                        shk.Shrink(min_index_shrink_size, min_data_shrink_size);
+                    }
+                    break; 
+                default:
+                    break;
             }
 
             free_async_node(node_ptr);

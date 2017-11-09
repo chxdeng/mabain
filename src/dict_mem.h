@@ -65,7 +65,6 @@ typedef struct _NodePtrs
 } NodePtrs;
 
 // Mabain db header
-// This header is stored in the head of the first index file mabain_i0.
 typedef struct _IndexHeader
 {
     uint16_t version[4];
@@ -90,10 +89,10 @@ typedef struct _IndexHeader
     pthread_rwlock_t mb_rw_lock;
 
     // temp variables used for abnormal writer terminations
+    int     excep_updating_status;
     uint8_t excep_buff[16];
     size_t  excep_offset;
     size_t  excep_lf_offset;
-    int     excep_updating_status;
 } IndexHeader;
 
 // Memory management class for the dictionary
