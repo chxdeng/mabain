@@ -128,15 +128,15 @@ void ResourceCollection::Finish()
     if(index_rc_status == MBError::SUCCESS)
     {
         Logger::Log(LOG_LEVEL_INFO, "index buffer size reclaimed: %lld",
-                    m_index_off_pre - index_offset_top);
-        header->m_index_offset = index_offset_top;
+                    m_index_off_pre - index_size);
+        header->m_index_offset = index_size;
         header->pending_index_buff_size = 0;
     }
     if(data_rc_status == MBError::SUCCESS)
     {
         Logger::Log(LOG_LEVEL_INFO, "data buffer size reclaimed: %lld",
-                    m_data_off_pre - data_offset_top);
-        header->m_data_offset = data_offset_top;
+                    m_data_off_pre - data_size);
+        header->m_data_offset = data_size;
         header->pending_data_buff_size = 0;
     }
 
@@ -146,9 +146,9 @@ void ResourceCollection::Finish()
 
 bool ResourceCollection::MoveIndexBuffer(int phase, size_t &offset_src, int size)
 {
-    index_offset_top = dmm->CheckAlignment(index_offset_top, size);
+    index_size = dmm->CheckAlignment(index_size, size);
 
-    if(index_offset_top == offset_src)
+    if(index_size == offset_src)
         return false;
 
     uint8_t *ptr_src;
@@ -158,7 +158,7 @@ bool ResourceCollection::MoveIndexBuffer(int phase, size_t &offset_src, int size
 
     if(phase == RESOURCE_COLLECTION_PHASE_REORDER)
     {
-        if(index_offset_top + size <= offset_src)
+        if(index_size + size <= offset_src)
             return false;
 
         offset_dst = header->m_index_offset;
@@ -170,8 +170,8 @@ bool ResourceCollection::MoveIndexBuffer(int phase, size_t &offset_src, int size
     }
     else
     {
-        assert(index_offset_top + size <= offset_src);
-        offset_dst = index_offset_top;
+        assert(index_size + size <= offset_src);
+        offset_dst = index_size;
         ptr_dst = dmm->GetShmPtr(offset_dst, size);
     }
 
@@ -184,8 +184,8 @@ bool ResourceCollection::MoveIndexBuffer(int phase, size_t &offset_src, int size
 
 bool ResourceCollection::MoveDataBuffer(int phase, size_t &offset_src, int size)
 {
-    data_offset_top = dict->CheckAlignment(data_offset_top, size);
-    if(data_offset_top == offset_src)
+    data_size = dict->CheckAlignment(data_size, size);
+    if(data_size == offset_src)
         return false;
 
     uint8_t *ptr_src;
@@ -195,7 +195,7 @@ bool ResourceCollection::MoveDataBuffer(int phase, size_t &offset_src, int size)
 
     if(phase == RESOURCE_COLLECTION_PHASE_REORDER)
     {
-        if(data_offset_top + size < offset_src)
+        if(data_size + size < offset_src)
             return false;
 
         offset_dst = header->m_data_offset;
@@ -207,8 +207,8 @@ bool ResourceCollection::MoveDataBuffer(int phase, size_t &offset_src, int size)
     }
     else
     {
-        assert(data_offset_top + size <= offset_src);
-        offset_dst = data_offset_top;
+        assert(data_size + size <= offset_src);
+        offset_dst = data_size;
         ptr_dst = dict->GetShmPtr(offset_dst, size);
     }
 
@@ -243,7 +243,7 @@ void ResourceCollection::DoTask(int phase, DBTraverseNode &dbt_node)
                 if(dbt_node.buffer_type & BUFFER_TYPE_DATA)
                     dbt_node.data_link_offset = dbt_node.node_offset + 2;
             }
-            index_offset_top += dbt_node.node_size;
+            index_size += dbt_node.node_size;
         }
 
         if(dbt_node.buffer_type & BUFFER_TYPE_EDGE_STR)
@@ -262,7 +262,7 @@ void ResourceCollection::DoTask(int phase, DBTraverseNode &dbt_node)
                 lfree->WriterLockFreeStop();
 #endif
             }
-            index_offset_top += dbt_node.edgestr_size;
+            index_size += dbt_node.edgestr_size;
         }
     }
 
@@ -284,7 +284,7 @@ void ResourceCollection::DoTask(int phase, DBTraverseNode &dbt_node)
                 lfree->WriterLockFreeStop();
 #endif
             }
-            data_offset_top += dbt_node.data_size;
+            data_size += dbt_node.data_size;
         }
     }
 

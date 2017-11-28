@@ -67,8 +67,8 @@ void DBTraverseBase::TraverseDB(int arg)
         throw rval;
 
     DBTraverseNode dbt_node;
-    index_offset_top = dmm->GetRootOffset() + dmm->GetNodeSizePtr()[NUM_ALPHABET-1];
-    data_offset_top = dict->GetStartDataOffset();
+    index_size = dmm->GetRootOffset() + dmm->GetNodeSizePtr()[NUM_ALPHABET-1];
+    data_size = dict->GetStartDataOffset();
     while(iter.next_dbt_buffer(&dbt_node))
     {
         GetAlignmentSize(dbt_node);

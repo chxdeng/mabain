@@ -66,14 +66,15 @@ protected:
     LockFree *lfree;
 
     // Used for tracking index and data sizes that have been traversed.
-    size_t   index_offset_top;
-    size_t   data_offset_top;
+    size_t   index_size;
+    size_t   data_size;
 
-    uint8_t *rw_buffer; 
-    int      rw_buffer_size;
 private:
     void GetAlignmentSize(DBTraverseNode &dbt_node) const;
     void ResizeRWBuffer(int size);
+
+    uint8_t *rw_buffer; 
+    int      rw_buffer_size;
 };
 
 }
