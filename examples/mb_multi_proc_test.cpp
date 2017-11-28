@@ -158,7 +158,7 @@ static void Writer(int id)
     }
 
     if(test_type == SHRINK_TEST) {
-        db.Shrink(0, 0);
+        db.CollectResource(0, 0);
 
         std::cout << "writer " << id << " exiting\n";
         db.Close();
