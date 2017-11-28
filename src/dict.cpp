@@ -154,7 +154,6 @@ void Dict::Destroy()
 
     mm.Destroy();
 
-    // Dump free list to disk
     if(free_lists)
         delete free_lists;
 

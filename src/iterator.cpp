@@ -149,17 +149,8 @@ int DB::iterator::init_no_next()
 
 const DB::iterator& DB::iterator::operator++()
 {
-    try
-    {
-        if(next() == NULL)
-            state = DB_ITER_STATE_DONE;
-    }
-    catch (int error)
-    {
-        std::cerr << "iterator next() exception: "
-                  << MBError::get_error_str(error) << "\n";
+    if(next() == NULL)
         state = DB_ITER_STATE_DONE;
-    }
 
     return *this;
 }

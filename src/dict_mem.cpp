@@ -123,16 +123,7 @@ DictMem::DictMem(const std::string &mbdir, bool init_header, size_t memsize, int
     }
     else
     {
-        int rval = free_lists->LoadListFromDisk();
-        if(rval == MBError::SUCCESS)
-        {
-            is_valid = true;
-        }
-        else
-        {
-            Logger::Log(LOG_LEVEL_ERROR, "failed to load free list from disk %s",
-                        MBError::get_error_str(rval));
-        }
+        is_valid = true;
     }
     Logger::Log(LOG_LEVEL_INFO, "set up mabain db version to %u.%u.%u",
                 header->version[0], header->version[1], header->version[2]);
@@ -178,15 +169,8 @@ void DictMem::Destroy()
     if(kv_file != NULL)
         delete kv_file;
 
-    // Dump free list to disk
     if(free_lists)
-    {
-        int rval = free_lists->StoreListOnDisk();
-        if(rval != MBError::SUCCESS)
-            Logger::Log(LOG_LEVEL_ERROR, "failed to dump free list to disk %s",
-                        MBError::get_error_str(rval));
         delete free_lists;
-    }
 
     if(node_size != NULL)
         delete [] node_size;

@@ -62,7 +62,6 @@ protected:
     IndexHeader *header;
     FreeList *index_free_lists;
     FreeList *data_free_lists;
-    // ResourceCollection does not own lfree pointer.
     LockFree *lfree;
 
     // Used for tracking index and data sizes that have been traversed.
