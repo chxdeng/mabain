@@ -61,8 +61,6 @@ public:
     int  ReaderLockFreeStop(const LockFreeData &snapshot, size_t reader_offset);
     void PushOffsets(size_t edge_off, size_t node_off);
     bool ReleasedOffsetInUse(size_t offset);
-    bool ReaderValidateNodeOffset(uint32_t counter_prev, size_t node_off, uint32_t &counter_curr);
-    uint32_t LoadCounter();
 
 private:
     LockFreeShmData *shm_data_ptr;

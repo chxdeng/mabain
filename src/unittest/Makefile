@@ -13,4 +13,4 @@ unit-test: $(TESTSOURCES) ../libmabain.so
 	$(CPP) $(CPPFLAGS) -o $(TEST_BIN_NAME) $(TESTSOURCES) -L.. -lmabain $(LDFLAGS)
 
 clean:
-	-rm -rf $(TEST_BIN_NAME)
+	-rm -rf $(TEST_BIN_NAME) *.tap

@@ -63,10 +63,7 @@ namespace mabain {
 
 
 DictMem::DictMem(const std::string &mbdir, bool init_header, size_t memsize, int mode)
-               : header(NULL),
-                 is_valid(false),
-                 mem_file(NULL),
-                 free_lists(NULL)
+               : is_valid(false)
 {
     root_offset = 0;
     node_ptr = NULL;
@@ -86,10 +83,10 @@ DictMem::DictMem(const std::string &mbdir, bool init_header, size_t memsize, int
     }
 
     // Both reader and writer need to open the mmapped file.
-    mem_file = new RollableFile(mbdir + "_mabain_i", static_cast<size_t>(INDEX_BLOCK_SIZE),
-                                memsize, mode);
+    kv_file = new RollableFile(mbdir + "_mabain_i", static_cast<size_t>(INDEX_BLOCK_SIZE),
+                               memsize, mode);
 
-    mem_file->InitShmSlidingAddr(&header->shm_index_sliding_start);
+    kv_file->InitShmSlidingAddr(&header->shm_index_sliding_start);
 
     if(!(mode & CONSTS::ACCESS_MODE_WRITER))
     {
@@ -128,10 +125,14 @@ DictMem::DictMem(const std::string &mbdir, bool init_header, size_t memsize, int
     {
         int rval = free_lists->LoadListFromDisk();
         if(rval == MBError::SUCCESS)
+        {
             is_valid = true;
+        }
         else
+        {
             Logger::Log(LOG_LEVEL_ERROR, "failed to load free list from disk %s",
                         MBError::get_error_str(rval));
+        }
     }
     Logger::Log(LOG_LEVEL_INFO, "set up mabain db version to %u.%u.%u",
                 header->version[0], header->version[1], header->version[2]);
@@ -174,8 +175,8 @@ void DictMem::Destroy()
     if(header_file != NULL)
         delete header_file;
 
-    if(mem_file != NULL)
-        delete mem_file;
+    if(kv_file != NULL)
+        delete kv_file;
 
     // Dump free list to disk
     if(free_lists)
@@ -657,7 +658,7 @@ bool DictMem::ReserveNode(int nt, size_t &offset, uint8_t* &ptr)
     ptr = NULL;
     size_t old_off = header->m_index_offset;
     bool node_move = false;
-    int rval = mem_file->Reserve(header->m_index_offset, buf_size, ptr);
+    int rval = kv_file->Reserve(header->m_index_offset, buf_size, ptr);
     if(rval != MBError::SUCCESS)
         throw rval;
     if(ptr == NULL)
@@ -705,7 +706,7 @@ void DictMem::ReserveData(const uint8_t* key, int size, size_t &offset,
         size_t old_off = header->m_index_offset;
         uint8_t *ptr;
 
-        int rval = mem_file->Reserve(header->m_index_offset, buf_size, ptr,
+        int rval = kv_file->Reserve(header->m_index_offset, buf_size, ptr,
                                     map_new_sliding);
         if(rval != MBError::SUCCESS)
             throw rval;
@@ -1069,16 +1070,8 @@ void DictMem::PrintStats(std::ostream &out_stream) const
     {
         out_stream << "\tPending Buffer Size: " << header->pending_index_buff_size << "\n";
         out_stream << "\tTrackable Buffer Size: " << free_lists->GetTotSize() << "\n";
-        out_stream << "\tResidual Buffer Size: " <<
-            header->m_index_offset - header->pending_index_buff_size -
-            root_offset - free_lists->GetAlignmentSize(node_size[NUM_ALPHABET-1]) << "\n";
     }
-    mem_file->PrintStats(out_stream);
-}
-
-FreeList* DictMem::GetFreeList()
-{
-    return free_lists;
+    kv_file->PrintStats(out_stream);
 }
 
 const int* DictMem::GetNodeSizePtr() const
@@ -1088,7 +1081,7 @@ const int* DictMem::GetNodeSizePtr() const
 
 void DictMem::ResetSlidingWindow() const
 {
-    mem_file->ResetSlidingWindow();
+    kv_file->ResetSlidingWindow();
     header->shm_index_sliding_start.store(0, std::memory_order_relaxed);
 }
 
@@ -1099,10 +1092,23 @@ void DictMem::InitLockFreePtr(LockFree *lf)
 
 void DictMem::Flush() const
 {
-    if(mem_file != NULL)
-        mem_file->Flush();
+    if(kv_file != NULL)
+        kv_file->Flush();
     if(header_file != NULL)
         header_file->Flush();
+}
+
+void DictMem::WriteData(const uint8_t *buff, unsigned len, size_t offset) const
+{
+    if(offset + len > header->m_index_offset)
+    {
+        std::cerr << "invalid dmm write: " << offset << " " << len << " "
+                  << header->m_index_offset << "\n";
+        throw (int) MBError::OUT_OF_BOUND;
+    }
+
+    if(kv_file->RandomWrite(buff, len, offset) != len)
+        throw (int) MBError::WRITE_ERROR;
 }
 
 }

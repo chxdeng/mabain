@@ -28,7 +28,7 @@
 #include "logger.h"
 #include "mb_lsq.h"
 #include "version.h"
-#include "mb_shrink.h"
+#include "mb_rc.h"
 #include "integer_4b_5b.h"
 #include "async_writer.h"
 
@@ -46,7 +46,6 @@ DB::~DB()
 int DB::Close()
 {
     int rval = MBError::SUCCESS;
-    int db_opts = dict->GetDBOptions();
 
     if(async_writer != NULL)
     {
@@ -55,12 +54,9 @@ int DB::Close()
 
     if(dict != NULL)
     {
-        if(!(db_opts & CONSTS::NO_GLOBAL_INIT))
-        {
-            if(db_opts & CONSTS::ACCESS_MODE_WRITER)
-                dict->PrintStats(Logger::GetLogStream());
-            UpdateNumHandlers(db_opts, -1);
-        }
+        if(options & CONSTS::ACCESS_MODE_WRITER)
+            dict->PrintStats(Logger::GetLogStream());
+        UpdateNumHandlers(options, -1);
 
         dict->Destroy();
         delete dict;
@@ -73,7 +69,7 @@ int DB::Close()
 
     status = MBError::DB_CLOSED;
     Logger::Log(LOG_LEVEL_INFO, "connector %u disconnected from DB", identifier);
-    if((db_opts & CONSTS::ACCESS_MODE_WRITER) && !(db_opts & CONSTS::NO_GLOBAL_INIT))
+    if(options & CONSTS::ACCESS_MODE_WRITER)
         Logger::Close();
     return rval;
 }
@@ -96,7 +92,7 @@ int DB::UpdateNumHandlers(int mode, int delta)
 
 // Constructor for initializing DB handle
 DB::DB(const std::string &db_path, int db_options, size_t memcap_index, size_t memcap_data,
-       int data_size, uint32_t id)
+       int data_size, uint32_t id) : mb_dir(db_path), options(db_options)
 {
     status = MBError::NOT_INITIALIZED;
     dict = NULL;
@@ -168,16 +164,13 @@ DB::DB(const std::string &db_path, int db_options, size_t memcap_index, size_t m
         return;
     }
 
-    if(!(db_options & CONSTS::NO_GLOBAL_INIT))
+    lock.Init(dict->GetShmLockPtrs());
+    status = UpdateNumHandlers(db_options, 1);
+    if(status != MBError::SUCCESS)
     {
-        lock.Init(dict->GetShmLockPtrs());
-        status = UpdateNumHandlers(db_options, 1);
-        if(status != MBError::SUCCESS)
-        {
-            Logger::Log(LOG_LEVEL_ERROR, "failed to initialize db: %s",
-                        MBError::get_error_str(dict->Status()));
-            return;
-        }
+        Logger::Log(LOG_LEVEL_ERROR, "failed to initialize db: %s",
+                    MBError::get_error_str(dict->Status()));
+        return;
     }
 
     if(db_options & CONSTS::ACCESS_MODE_WRITER)
@@ -367,18 +360,27 @@ void DB::Flush() const
     dict->Flush();
 }
 
-int DB::Shrink(size_t min_index_shk_size, size_t min_data_shk_size)
+int DB::CollectResource(int min_index_rc_size, int min_data_rc_size)
 {
     if(status != MBError::SUCCESS)
-        return -1;
+        return status;
 
     if(async_writer != NULL)
-        return async_writer->Shrink(min_index_shk_size, min_data_shk_size);
+        return async_writer->CollectResource(min_index_rc_size, min_data_rc_size);
 
-    MBShrink shr(*this);
-    int rval = shr.Shrink(min_index_shk_size, min_data_shk_size);
+    try {
+        ResourceCollection rc(*this);
+        rc.ReclaimResource(min_index_rc_size, min_data_rc_size);
+    } catch (int error) {
+        if(error != MBError::SUCCESS)
+        {
+            Logger::Log(LOG_LEVEL_ERROR, "failed to run gc: %s",
+                        MBError::get_error_str(error));
+        }
+        return error;
+    }
     dict->PrintStats(Logger::GetLogStream());
-    return rval;
+    return MBError::SUCCESS;
 }
 
 int64_t DB::Count() const
@@ -447,354 +449,19 @@ void DB::LogDebug()
 
 Dict* DB::GetDictPtr() const
 {
-    return dict;
-}
-
-/////////////////////////////////////////////////////////////////////
-// DB iterator
-// Example to use DB iterator
-// for(DB::iterator iter = db.begin(); iter != db.end(); ++iter) {
-//     std::cout << iter.key << "\n";
-// }
-/////////////////////////////////////////////////////////////////////
-
-const DB::iterator DB::begin() const
-{
-    DB::iterator iter = iterator(*this, DB_ITER_STATE_INIT);
-    iter.init();
-
-    return iter;
-}
-
-const DB::iterator DB::end() const
-{
-    return iterator(*this, DB_ITER_STATE_DONE);
-}
-
-DB::iterator::iter_node::iter_node(size_t offset, const std::string &ckey, size_t edge_off, uint32_t counter)
-                       : node_off(offset),
-                         parent_edge_off(edge_off),
-                         node_counter(counter)
-{
-    key = new std::string(ckey);
-}
-
-void DB::iterator::free_iter_node(void *node)
-{
-    if(node == NULL) return;
-    iter_node *inode = (iter_node *) node;
-    delete inode->key;
-    delete inode;
-}
-
-void DB::iterator::iter_obj_init()
-{
-    node_stack = NULL;
-#ifdef __LOCK_FREE__
-    lfree = db_ref.dict->GetLockFreePtr();
-#endif
-
-    if(state == DB_ITER_STATE_INIT)
-    {
-        state = DB_ITER_STATE_MORE;
-        curr_key = "";
-    }
-}
-
-DB::iterator::iterator(const DB &db, int iter_state)
-                     : db_ref(db), state(iter_state)
-{
-    iter_obj_init();
-}
-
-DB::iterator::iterator(const iterator &rhs)
-                     : db_ref(rhs.db_ref), state(rhs.state)
-{
-    iter_obj_init();
-}
-
-DB::iterator::~iterator()
-{
-    if(node_stack)
-        delete node_stack;
-}
-
-// Initialize the iterator, get the very first key-value pair.
-void DB::iterator::init()
-{
-    node_stack = new MBlsq(free_iter_node);
-
-#ifdef __LOCK_FREE__
-    curr_node_offset = 0;
-    curr_node_counter = lfree->LoadCounter();
-#endif
-
-    int rval = db_ref.dict->ReadRootNode(node_buff, edge_ptrs, match, value);
-    if(rval == MBError::SUCCESS)
-    {
-        if(next() == NULL)
-            state = DB_ITER_STATE_DONE;
-    }
-    else
-    {
-        state = DB_ITER_STATE_DONE;
-        Logger::Log(LOG_LEVEL_WARN, "failed to read root node for iterator");
-    }
-}
-
-// Initialize the iterator, but do not get the first key-value pair.
-// This is for internal use only.
-int DB::iterator::init_no_next()
-{
-    node_stack = new MBlsq(free);
-
-    int rval = db_ref.dict->ReadRootNode(node_buff, edge_ptrs, match, value);
-    if(rval != MBError::SUCCESS)
-        state = DB_ITER_STATE_DONE;
-    return rval;
-}
-
-const DB::iterator& DB::iterator::operator++()
-{
-    if(next() == NULL)
-    {
-        if(node_stack)
-            delete node_stack;
-        node_stack = NULL;
-        state = DB_ITER_STATE_DONE;
-    }
-    return *this;
-}
-
-// This overloaded operator should only be used for iterator state check.
-bool DB::iterator::operator!=(const iterator &rhs)
-{
-    return state != rhs.state;
-}
-
-int DB::iterator::node_offset_modified(const std::string &key, size_t node_off, MBData &mbd)
-{
-    int rval;
-    mbd.options |= CONSTS::OPTION_FIND_AND_STORE_PARENT;
-    mbd.edge_ptrs.curr_node_offset = 0;
-    while(true)
-    {
-        rval = db_ref.dict->Find((const uint8_t *)key.c_str(), key.size(), mbd);
-        if(rval != MBError::TRY_AGAIN)
-            break;
-        nanosleep((const struct timespec[]){{0, 10L}}, NULL);
-    }
-
-    if(rval == MBError::IN_DICT)
-    {
-        mbd.edge_ptrs.curr_node_offset = Get6BInteger(mbd.edge_ptrs.offset_ptr);
-        if(node_off != mbd.edge_ptrs.curr_node_offset)
-            return MBError::NODE_OFF_CHANGED;
-    }
-
-    return rval;
-}
-
-// Find the next match using depth-first search.
-DB::iterator* DB::iterator::next()
-{
-    int rval;
-    size_t node_off;
-#ifdef __LOCK_FREE__
-    LockFreeData snapshot;
-    int lf_ret;
-    size_t edge_off_prev;
-    int nt_prev;
-    MBData mbd;
-#endif
-    uint32_t node_counter = 0;
-
-    do {
-        while(true)
-        {
-#ifdef __LOCK_FREE__
-            edge_off_prev = edge_ptrs.offset;
-            nt_prev = edge_ptrs.curr_nt;
-            lfree->ReaderLockFreeStart(snapshot);
-#endif
-            // Get the next edge in current node
-            rval = db_ref.dict->ReadNextEdge(node_buff, edge_ptrs, match,
-                                              value, match_str, node_off);
-#ifdef __LOCK_FREE__
-            lf_ret = lfree->ReaderLockFreeStop(snapshot, edge_off_prev);
-            if(lf_ret == MBError::TRY_AGAIN)
-            {
-                edge_ptrs.offset = edge_off_prev;
-                edge_ptrs.curr_nt = nt_prev;
-                nanosleep((const struct timespec[]){{0, 10L}}, NULL);
-                continue;
-            }
-#endif
-            if(rval != MBError::SUCCESS)
-                break;
-
-#ifdef __LOCK_FREE__
-            if(lfree->ReaderValidateNodeOffset(curr_node_counter,
-                         curr_node_offset, node_counter))
-            {
-                lf_ret = node_offset_modified(curr_key, curr_node_offset, mbd);
-                if(lf_ret == MBError::NODE_OFF_CHANGED)
-                {
-                    curr_node_offset = mbd.edge_ptrs.curr_node_offset;
-                    int match_t;
-                    rval = db_ref.dict->ReadNode(curr_node_offset, node_buff,
-                                                 edge_ptrs, match_t, mbd);
-                    if(rval != MBError::SUCCESS)
-                        break;
-                    edge_ptrs.curr_nt = nt_prev;
-                    edge_ptrs.offset += edge_ptrs.curr_nt*EDGE_SIZE;
-                    continue;
-                }
-            }
-#endif
-
-            if(match)
-            {
-                key = curr_key + match_str;
-                return this;
-            }
-            if(node_off > 0)
-            {
-                // Push the node to stack
-                rval = node_stack->AddToHead(new iter_node(node_off, curr_key + match_str,
-                                             edge_ptrs.parent_offset, node_counter));
-                if(rval != MBError::SUCCESS)
-                    throw rval;
-            }
-        }
-
-        // All edges in current node have been iterated, need to pop the latest node.
-        if(rval == MBError::OUT_OF_BOUND)
-        {
-            iter_node *inode;
-            while(true)
-            {
-                inode = reinterpret_cast<iter_node*>(node_stack->RemoveFromHead());
-                if(inode == NULL)
-                    return NULL;
-
-                rval = db_ref.dict->ReadNode(inode->node_off, node_buff, edge_ptrs, match, value);
-
-#ifdef __LOCK_FREE__
-                if(lfree->ReaderValidateNodeOffset(inode->node_counter, inode->node_off, node_counter))
-                {
-                    lf_ret = node_offset_modified(*inode->key, inode->node_off, mbd);
-                    // retrieve the next node
-                    if(lf_ret != MBError::IN_DICT)
-                    {
-                        if(lf_ret == MBError::NODE_OFF_CHANGED)
-                        {
-                            inode->node_off = mbd.edge_ptrs.curr_node_offset;
-                            inode->node_counter = node_counter;
-                            // Update the node with current offset and push it back to the stack
-                            rval = node_stack->AddToHead(inode);
-                            if(rval != MBError::SUCCESS)
-                                throw rval;
-                        }
-                        continue;
-                    }
-                }
-#endif
-
-                curr_node_counter = node_counter;
-                curr_node_offset = inode->node_off;
-                break;
-            }
-
-            if(rval != MBError::SUCCESS)
-                throw rval;
-
-            curr_key = *inode->key;
-            if(match)
-            {
-                key = curr_key;
-                // for db shrinking
-                edge_ptrs.curr_node_offset = inode->node_off;
-                edge_ptrs.parent_offset = inode->parent_edge_off;
-                free_iter_node(inode);
-                return this;
-            }
-
-            free_iter_node(inode);
-        }
-        else
-        {
-            throw rval;
-        }
-    } while(true);
-
+    if(options & CONSTS::ACCESS_MODE_WRITER)
+        return dict;
     return NULL;
 }
 
-// There is no need to perform lock-free check in next_index_buffer since it can only be called
-// by writer.
-int DB::iterator::next_index_buffer(size_t &parent_node_off, struct _IndexNode *inp)
+int DB::GetDBOptions() const
 {
-    int rval;
-    size_t node_off;
-    size_t parent_off;
+    return options;
+}
 
-    do {
-        parent_off = edge_ptrs.offset;
-        while((rval = db_ref.dict->ReadNextEdge(node_buff, edge_ptrs, match,
-                      value, match_str, node_off)) == MBError::SUCCESS)
-        {
-            if(node_off > 0)
-            {
-                struct _IndexNode *inode = (struct _IndexNode *) calloc(sizeof(*inode), 1);
-                if(inode == NULL)
-                    throw (int) MBError::NO_MEMORY;
-                inode->parent_off = parent_node_off;
-                inode->node_edge_off = node_off;
-                inode->rel_parent_off = (int) (parent_off + EDGE_NODE_LEADING_POS - parent_node_off);
-                assert(inode->rel_parent_off > 0);
-                rval = node_stack->AddToHead(inode);
-                if(rval != MBError::SUCCESS)
-                    throw rval;
-            }
-
-            if(edge_ptrs.len_ptr[0] > LOCAL_EDGE_LEN)
-            {
-                inp->node_edge_off = Get5BInteger(edge_ptrs.ptr);
-                inp->parent_off = parent_node_off;
-                inp->rel_parent_off = (int) (parent_off - parent_node_off);
-                return BUFFER_TYPE_EDGE_STR;
-            }
-
-            parent_off = edge_ptrs.offset;
-        }
-
-        // All edges in current node have been iterated, need to pop the latest node.
-        if(rval == MBError::OUT_OF_BOUND)
-        {
-            struct _IndexNode *inode = reinterpret_cast<struct _IndexNode*>(node_stack->RemoveFromHead());
-            if(inode == NULL)
-                break;
-
-            parent_node_off = inode->node_edge_off;
-            rval = db_ref.dict->ReadNode(inode->node_edge_off, node_buff, edge_ptrs, match, value);
-            if(rval != MBError::SUCCESS)
-                throw rval;
-
-            inp->parent_off     = inode->parent_off;
-            inp->node_edge_off  = inode->node_edge_off;
-            inp->rel_parent_off = inode->rel_parent_off;
-
-            free(inode);
-            return BUFFER_TYPE_NODE;
-        }
-        else
-        {
-            throw rval;
-        }
-    } while(true);
-
-    return BUFFER_TYPE_NONE;
+const std::string& DB::GetDBDir() const
+{
+    return mb_dir;
 }
 
 } // namespace mabain

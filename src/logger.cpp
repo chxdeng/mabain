@@ -65,7 +65,6 @@ void Logger::InitLogFile(const std::string &logfile)
 {
     if(!logfile.empty())
     {
-        std::cout << "Settting mabain log file to " << logfile << "\n";
         log_file = logfile;
         log_stream = new std::ofstream();
         log_stream->open(log_file.c_str(), std::ios::out | std::ios::app);

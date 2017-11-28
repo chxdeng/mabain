@@ -23,7 +23,7 @@
 #include "error.h"
 #include "logger.h"
 #include "mb_data.h"
-#include "mb_shrink.h"
+#include "mb_rc.h"
 
 namespace mabain {
 
@@ -42,16 +42,19 @@ static void free_async_node(AsyncNode *node_ptr)
 
 AsyncWriter::AsyncWriter(DB *db_ptr) : db(db_ptr)
 {
+    if(!(db_ptr->GetDBOptions() & CONSTS::ACCESS_MODE_WRITER))
+        throw (int) MBError::NOT_ALLOWED;
+
     dict = NULL;
     queue = new MBlsq(NULL);
     q_mutex = PTHREAD_MUTEX_INITIALIZER;
     q_cond = PTHREAD_COND_INITIALIZER;
     stop_processing = false;
-    min_index_shrink_size = 0;
-    min_data_shrink_size = 0;
+    min_index_rc_size = 0;
+    min_data_rc_size = 0;
 
     if(db == NULL)
-        throw (int) MBError::NOT_INITIALIZED;
+        throw (int) MBError::INVALID_ARG;
     dict = db->GetDictPtr();
     if(dict == NULL) 
         throw (int) MBError::NOT_INITIALIZED;
@@ -134,14 +137,19 @@ int AsyncWriter::RemoveAll()
     return Enqueue(node_ptr);
 }
 
-int  AsyncWriter::Shrink(size_t min_index_shk_size, size_t min_data_shk_size)
+int  AsyncWriter::CollectResource(int m_index_rc_size, int m_data_rc_size)
 {
     AsyncNode *node_ptr = (AsyncNode *) calloc(1, sizeof(*node_ptr));
     if(node_ptr == NULL)
         return MBError::NO_MEMORY;
-    node_ptr->type = MABAIN_ASYNC_TYPE_SHRINK;
-    min_index_shrink_size = min_index_shk_size;
-    min_data_shrink_size = min_data_shk_size;
+    node_ptr->type = MABAIN_ASYNC_TYPE_RC;
+
+    pthread_mutex_lock(&q_mutex);
+    if(m_index_rc_size < min_index_rc_size)
+        min_index_rc_size = m_index_rc_size;
+    if(m_data_rc_size < min_data_rc_size)
+        min_data_rc_size = m_data_rc_size;
+    pthread_mutex_unlock(&q_mutex);
 
     return Enqueue(node_ptr);
 }
@@ -212,10 +220,24 @@ void* AsyncWriter::async_writer_thread()
                     if(rval != MBError::SUCCESS)
                         Logger::Log(LOG_LEVEL_ERROR, "failed to delete all from db %s", MBError::get_error_str(rval)); 
                     break;
-                case MABAIN_ASYNC_TYPE_SHRINK:
+                case MABAIN_ASYNC_TYPE_RC:
                     {
-                        MBShrink shk(*db);
-                        shk.Shrink(min_index_shrink_size, min_data_shrink_size);
+                        int min_rc_index;
+                        int min_rc_data;
+                        pthread_mutex_lock(&q_mutex);
+                        min_rc_index = min_index_rc_size;
+                        min_rc_data = min_data_rc_size;
+                        pthread_mutex_unlock(&q_mutex);
+                        try {
+                            ResourceCollection rc(*db);
+                            rc.ReclaimResource(min_rc_index, min_rc_data);
+                        } catch (int error) {
+                            if(error != MBError::SUCCESS)
+                            {
+                                Logger::Log(LOG_LEVEL_ERROR, "failed to run gc: %s",
+                                            MBError::get_error_str(error));
+                            }
+                        }
                     }
                     break; 
                 default:

@@ -28,7 +28,6 @@
 #include "../dict.h"
 #include "../error.h"
 #include "../mabain_consts.h"
-#include "../mb_shrink.h"
 
 using namespace mabain;
 
@@ -246,7 +245,6 @@ static void delete_odd_test(std::string &list_file, int64_t memcap, uint32_t db_
     std::string line;
     int rval;
     struct timeval start, stop;
-    MBData data(0, CONSTS::OPTION_FIND_AND_STORE_PARENT);
 
     gettimeofday(&start, NULL);
     while(std::getline(in, line)) {
@@ -256,7 +254,7 @@ static void delete_odd_test(std::string &list_file, int64_t memcap, uint32_t db_
         count++;
         if(count % 2 == 0)
         {
-            rval = db.Remove(line.c_str(), line.length(), data);
+            rval = db.Remove(line);
             if(rval == MBError::SUCCESS) {
                 nfound++;
             } else {
@@ -291,14 +289,13 @@ static void delete_test(std::string &list_file, int64_t memcap, uint32_t db_id,
     std::string line;
     int rval;
     struct timeval start, stop;
-    MBData data(0, CONSTS::OPTION_FIND_AND_STORE_PARENT);
 
     gettimeofday(&start, NULL);
     while(std::getline(in, line)) {
         if(line.length() > (unsigned) CONSTS::MAX_KEY_LENGHTH) {
             continue;
         }
-        rval = db.Remove(line.c_str(), line.length(), data);
+        rval = db.Remove(line);
         if(rval == MBError::SUCCESS) {
             nfound++;
         } else {
@@ -329,7 +326,7 @@ static void shrink_test(std::string &list_file, int64_t memcap, uint32_t db_id,
     struct timeval start, stop;
 
     gettimeofday(&start, NULL);
-    int rval = db.Shrink(0*2222222222ULL, 0*2222222222ULL);
+    int rval = db.CollectResource(0, 0);
     gettimeofday(&stop, NULL);
     assert(rval == MBError::SUCCESS);
 

@@ -186,11 +186,13 @@ int RollableFile::OpenAndMapBlockFile(int block_order)
 // different blocks or one in mmaped region and the other one on disk.
 size_t RollableFile::CheckAlignment(size_t offset, int size)
 {
-    size_t index = offset % block_size;
+    size_t block_offset = offset % block_size;
 
-    // Start at the begining of the next block
-    if(index + size > block_size)
-        offset = offset - index + block_size;
+    if(block_offset + size > block_size)
+    {
+        // Start at the begining of the next block
+        offset = offset + block_size - block_offset;
+    }
 
     // Check alignment with mmap_mem
     if(offset <  mmap_mem)
@@ -200,9 +202,9 @@ size_t RollableFile::CheckAlignment(size_t offset, int size)
             offset = mmap_mem;
             // Need to check block_size alignement again since we changed
             // offset to mmap_mem.
-            index = offset % block_size;
-            if(index + size > block_size)
-                offset = offset - index + block_size;
+            block_offset = offset % block_size;
+            if(block_offset + size > block_size)
+                offset = offset + block_size - block_offset;
         }
     }
 
@@ -222,6 +224,34 @@ int RollableFile::CheckAndOpenFile(int order)
     return rval;
 }
 
+// Get shared memory address for existing buffer
+// No need to check alignment
+uint8_t* RollableFile::GetShmPtr(size_t offset, int size) const
+{
+    int order = offset / block_size;
+
+    if(offset + size <= mmap_mem)
+    {
+        size_t index = offset % block_size;
+        return files[order]->GetMapAddr() + index;
+    }
+
+    if(files[order]->IsMapped())
+        return NULL;
+
+    if(sliding_mmap)
+    {
+        if(static_cast<off_t>(offset) >= sliding_start &&
+               offset + size <= sliding_start + sliding_size)
+        {
+            if(sliding_addr != NULL)
+                return sliding_addr + (offset % block_size) - sliding_map_off;
+        }
+    }
+
+    return NULL;
+}
+
 int RollableFile::Reserve(size_t &offset, int size, uint8_t* &ptr, bool map_new_sliding)
 {
     int rval;
@@ -230,7 +260,7 @@ int RollableFile::Reserve(size_t &offset, int size, uint8_t* &ptr, bool map_new_
 
     int order = offset / block_size;
     if(order >= max_num_block)
-        return MBError::NO_DISK_STORAGE;
+        return MBError::NO_RESOURCE;
 
     rval = CheckAndOpenFile(order);
     if(rval != MBError::SUCCESS)
@@ -344,9 +374,10 @@ size_t RollableFile::RandomWrite(const void *data, size_t size, off_t offset)
         {
             uint8_t *start_addr = sliding_addr + (offset % block_size) - sliding_map_off;
             memcpy(start_addr, data, size);
-            if(mode & CONSTS::SYNC_ON_WRITE) {
+            if(mode & CONSTS::SYNC_ON_WRITE)
+            {
                 off_t page_off = ((off_t) start_addr) % RollableFile::page_size;
-                if(msync(start_addr-page_off, size+page_off, MS_SYNC)==-1)
+                if(msync(start_addr-page_off, size+page_off, MS_SYNC) == -1)
                     std::cout<<"msync error\n";
             }
             return size;
@@ -368,9 +399,13 @@ void* RollableFile::NewReaderSlidingMap(int order)
     sliding_start = start_off;
     sliding_map_off = sliding_start % block_size;
     if(sliding_map_off + SLIDING_MEM_SIZE > block_size)
+    {
         sliding_size = block_size - sliding_map_off;
+    }
     else
+    {
         sliding_size = SLIDING_MEM_SIZE;
+    }
 
     sliding_addr = files[order]->MapFile(sliding_size, sliding_map_off, true);
     return sliding_addr;

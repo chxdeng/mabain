@@ -68,7 +68,7 @@ public:
 
     void SimulateAbnormalExit(int exception_type) {
         Dict *dict = db->GetDictPtr();
-        IndexHeader *header = dict->GetHeader();
+        IndexHeader *header = dict->GetHeaderPtr();
         DictMem *dmm = dict->GetMM();
         std::string key_str;
         TestKey tkey(key_type);

@@ -26,6 +26,19 @@
 
 #define NUM_ALPHABET               256
 #define NODE_EDGE_KEY_FIRST        8
+#define DB_ITER_STATE_INIT         0x00
+#define DB_ITER_STATE_MORE         0x01
+#define DB_ITER_STATE_DONE         0x02
+#define DATA_BLOCK_SIZE            128LLU*1024*1024
+#define INDEX_BLOCK_SIZE           128LLU*1024*1024
+#define BUFFER_TYPE_NONE           0
+#define BUFFER_TYPE_EDGE_STR       0x01
+#define BUFFER_TYPE_NODE           0x02
+#define BUFFER_TYPE_DATA           0x04
+#define MATCH_NONE                 0
+#define MATCH_EDGE                 1
+#define MATCH_NODE                 2
+#define MATCH_NODE_OR_EDGE         3
 
 namespace mabain {
 
@@ -42,11 +55,11 @@ typedef struct _EdgePtrs
     uint8_t edge_buff[16];
     // temp usage for calling UpdateNode or entry removing
     int curr_nt;
-    // temp usage for entry removing and shrinking
+    // temp usage for entry removing
     size_t curr_node_offset;
     // temp usage for entry removing
     int curr_edge_index;
-    // temp usage for entry removing and shrinking
+    // temp usage for entry removing and rc
     size_t parent_offset;
 } EdgePtrs;
 
@@ -62,7 +75,8 @@ public:
     // Clear the data for repeated usage
     void Clear();
     int  Resize(int size);
-    void SetValue(char *buff, int size);
+    int  TransferValueTo(uint8_t* &data, int &dlen);
+    int  TransferValueFrom(uint8_t* &data, int dlen);
 
     // data length
     int data_len;

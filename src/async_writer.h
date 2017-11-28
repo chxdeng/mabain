@@ -30,7 +30,7 @@ namespace mabain {
 #define MABAIN_ASYNC_TYPE_ADD        1
 #define MABAIN_ASYNC_TYPE_REMOVE     2
 #define MABAIN_ASYNC_TYPE_REMOVE_ALL 3
-#define MABAIN_ASYNC_TYPE_SHRINK     4
+#define MABAIN_ASYNC_TYPE_RC         4
 
 typedef struct _AsyncNode
 {
@@ -53,7 +53,7 @@ public:
     int  Add(const char *key, int key_len, const char *data, int data_len, bool overwrite);
     int  Remove(const char *key, int len);
     int  RemoveAll();
-    int  Shrink(size_t min_index_shk_size, size_t min_data_shk_size);
+    int  CollectResource(int m_index_rc_size, int m_data_rc_size);
     void StopAsyncThread();
 
 private:
@@ -76,8 +76,8 @@ private:
     pthread_t tid;
 
     bool stop_processing;
-    size_t min_index_shrink_size;
-    size_t min_data_shrink_size;
+    int min_index_rc_size;
+    int min_data_rc_size;
 };
 
 }

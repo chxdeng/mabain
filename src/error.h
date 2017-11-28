@@ -43,14 +43,12 @@ public:
         TRY_AGAIN = 13,
         ALLOCATION_ERROR = 14,
         MUTEX_ERROR = 15,
-        KEY_IN_MODIFYING = 16,
+        UNKNOWN_ERROR = 16,
         WRITER_EXIST = 17,
-        NO_DISK_STORAGE = 18,
+        NO_RESOURCE = 18,
         DB_CLOSED = 19,
         BUFFER_LOST = 20,
         THREAD_FAILED = 21,
-        EDGE_OFF_CHANGED = 22,
-        NODE_OFF_CHANGED = 23,
 
         // NO_DB should be the last enum.
         NO_DB

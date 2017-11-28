@@ -246,7 +246,7 @@ static int parse_command(std::string &cmd,
                 std::cout << "Do you want to delete all entries? Press \'Y\' to continue: ";
                 std::string del_all;
                 std::getline(std::cin, del_all);
-                if(del_all.length() == 0 || del_all[0] != 'y')
+                if(del_all.length() == 0 || del_all[0] != 'Y')
                     return COMMAND_NONE;
                 return COMMAND_DELETE_ALL;
             }
@@ -288,7 +288,7 @@ static int parse_command(std::string &cmd,
             {
                 std::cout << "Do you want to reset number of writer? Press \'Y\' to continue: ";
                 std::getline(std::cin, yes);   
-                if(yes.length() > 0 && yes[0] == 'y')
+                if(yes.length() > 0 && yes[0] == 'Y')
                     return COMMAND_RESET_N_WRITER;
                 return COMMAND_NONE;
             }
@@ -451,7 +451,7 @@ static void mbclient(DB *db, int mode)
     rl_bind_key('\t', rl_complete);
 
     printf("mabain %d.%d.%d shell\n", version[0], version[1], version[2]);
-    std::cout << "database directory: " << db->GetDictPtr()->GetDBDir() << "\n";
+    std::cout << "database directory: " << db->GetDBDir() << "\n";
 
     int cmd_id;
     std::string key;

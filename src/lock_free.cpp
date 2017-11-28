@@ -68,37 +68,6 @@ bool LockFree::ReleasedOffsetInUse(size_t offset)
     return false;
 }
 
-uint32_t LockFree::LoadCounter()
-{
-    return shm_data_ptr->counter.load(MEMORY_ORDER_READER);
-}
-
-bool LockFree::ReaderValidateNodeOffset(uint32_t counter_prev, size_t node_off, uint32_t &counter_curr)
-{
-    int counter = shm_data_ptr->counter.load(MEMORY_ORDER_READER);
-
-    counter_curr = counter;
-    // Note it is expected that count_diff can overflow.
-    uint32_t count_diff = counter - counter_prev;
-    if(count_diff == 0)
-        return false; // Writer was doing nothing. Reader can proceed.
-    if(count_diff >= MAX_OFFSET_CACHE)
-        return true; // Cache is overwritten. Have to retry.
-
-    for(unsigned i = 0; i <= count_diff; i++)
-    {
-        int index = (counter_prev + i) % MAX_OFFSET_CACHE;
-        if(node_off == shm_data_ptr->node_offset_cache[index].load(MEMORY_ORDER_READER))
-            return true;
-    }
-
-    // Need to recheck the counter difference
-    count_diff = shm_data_ptr->counter.load(MEMORY_ORDER_READER) - counter_prev;
-    if(count_diff >= MAX_OFFSET_CACHE)
-        return true;
-    return false;
-}
-
 //////////////////////////////////////////////////
 // DO NOT CHANGE THE STORE ORDER IN THIS FUNCTION.
 //////////////////////////////////////////////////
