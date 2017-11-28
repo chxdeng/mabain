@@ -226,9 +226,13 @@ int RollableFile::CheckAndOpenFile(int order)
 
 // Get shared memory address for existing buffer
 // No need to check alignment
-uint8_t* RollableFile::GetShmPtr(size_t offset, int size) const
+uint8_t* RollableFile::GetShmPtr(size_t offset, int size)
 {
     int order = offset / block_size;
+    int rval = CheckAndOpenFile(order);
+
+    if(rval != MBError::SUCCESS)
+        return NULL;
 
     if(offset + size <= mmap_mem)
     {
