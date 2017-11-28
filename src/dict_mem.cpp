@@ -1066,11 +1066,9 @@ void DictMem::PrintStats(std::ostream &out_stream) const
     out_stream << "\tEdge string size: " << header->edge_str_size << "\n";
     out_stream << "\tEdge size: " << header->n_edges*EDGE_SIZE << "\n";
     out_stream << "\tException flag: " << header->excep_updating_status << "\n";
+    out_stream << "\tPending Buffer Size: " << header->pending_index_buff_size << "\n";
     if(free_lists)
-    {
-        out_stream << "\tPending Buffer Size: " << header->pending_index_buff_size << "\n";
         out_stream << "\tTrackable Buffer Size: " << free_lists->GetTotSize() << "\n";
-    }
     kv_file->PrintStats(out_stream);
 }
 

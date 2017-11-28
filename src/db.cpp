@@ -379,7 +379,6 @@ int DB::CollectResource(int min_index_rc_size, int min_data_rc_size)
         }
         return error;
     }
-    dict->PrintStats(Logger::GetLogStream());
     return MBError::SUCCESS;
 }
 

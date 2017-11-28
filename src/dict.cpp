@@ -84,24 +84,15 @@ Dict::Dict(const std::string &mbdir, bool init_header, int datasize,
             ResetSlidingWindow();
             free_lists = new FreeList(mbdir+"_dbfl", DATA_BUFFER_ALIGNMENT,
                                       NUM_DATA_BUFFER_RESERVE);
-            int rval = free_lists->LoadListFromDisk();
-            if(rval == MBError::SUCCESS)
+            if(mm.IsValid())
             {
-                if(mm.IsValid())
+                int rval = ExceptionRecovery();
+                if(rval == MBError::SUCCESS)
                 {
-                    rval = ExceptionRecovery();
-                    if(rval == MBError::SUCCESS)
-                    {
-                        header->excep_lf_offset = 0;
-                        header->excep_offset = 0;
-                        status = MBError::SUCCESS;
-                    }
+                    header->excep_lf_offset = 0;
+                    header->excep_offset = 0;
+                    status = MBError::SUCCESS;
                 }
-            }
-            else
-            {
-                Logger::Log(LOG_LEVEL_ERROR, "failed to load data free list from disk %s",
-                            MBError::get_error_str(rval));
             }
         }
         else
@@ -165,13 +156,7 @@ void Dict::Destroy()
 
     // Dump free list to disk
     if(free_lists)
-    {
-        int rval = free_lists->StoreListOnDisk();
-        if(rval != MBError::SUCCESS)
-            Logger::Log(LOG_LEVEL_ERROR, "failed to dump free list to disk %s",
-                                     MBError::get_error_str(rval));
         delete free_lists;
-    }
 
     if(kv_file)
         delete kv_file;
@@ -751,11 +736,9 @@ void Dict::PrintStats(std::ostream &out_stream) const
     out_stream << "\tNumer of DB reader: " << header->num_reader << std::endl;
     out_stream << "\tEntry count in DB: "  << header->count << std::endl;
     out_stream << "\tData size: " << header->m_data_offset << std::endl;
+    out_stream << "\tPending Buffer Size: " << header->pending_data_buff_size << "\n";
     if(free_lists)
-    {
-        out_stream << "\tPending Buffer Size: " << header->pending_data_buff_size << "\n";
         out_stream << "\tTrackable Buffer Size: " << free_lists->GetTotSize() << "\n";
-    }
     mm.PrintStats(out_stream);
 
     kv_file->PrintStats(out_stream);

@@ -39,16 +39,17 @@ void ResourceCollection::ReclaimResource(int min_index_size, int min_data_size)
     if(!db_ref.is_open())
         throw db_ref.Status();
 
-    Logger::Log(LOG_LEVEL_INFO, "ResourceCollection started");
+    Prepare(min_index_size, min_data_size);
 
     timeval start, stop;
+    Logger::Log(LOG_LEVEL_INFO, "ResourceCollection started");
+
     gettimeofday(&start,NULL);
 
-    Prepare(min_index_size, min_data_size);
     ReorderBuffers();
     CollectBuffers();
-
     Finish();
+
     gettimeofday(&stop,NULL);
 
     uint64_t timediff = (stop.tv_sec - start.tv_sec)*1000000 + (stop.tv_usec - start.tv_usec);
@@ -82,7 +83,8 @@ void ResourceCollection::Prepare(int min_index_size, int min_data_size)
     }
     if(rc_type == 0)
     {
-        Logger::Log(LOG_LEVEL_INFO, "gc skipped");
+        Logger::Log(LOG_LEVEL_INFO, "garbage collection skipped since pending "
+                                    "sizes smaller than required");
         throw (int) MBError::SUCCESS;
     }
 
