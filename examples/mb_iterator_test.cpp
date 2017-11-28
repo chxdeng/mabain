@@ -29,25 +29,13 @@ int main(int argc, char *argv[])
         db_dir = argv[1];
     }
 
-    DB db(db_dir, CONSTS::WriterOptions());
+    DB db(db_dir, CONSTS::ReaderOptions());
     if(!db.is_open()) {
         std::cerr << "failed to open mabain db: " << db.StatusStr() << "\n";
         exit(1);
     }
 
     std::string key, value;
-
-    key = "Apple";
-    value = "Red";
-    db.Add(key, value);
-
-    key = "Orange";
-    value = "Yellow";
-    db.Add(key, value);
-
-    key = "Grape";
-    value = "Purple";
-    db.Add(key, value);
 
     for(DB::iterator iter = db.begin(); iter != db.end(); ++iter) {
         std::cout << iter.key << ": " << std::string((char*)iter.value.buff, iter.value.data_len) << "\n";
