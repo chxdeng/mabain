@@ -26,7 +26,6 @@ MBlsq::MBlsq(void (*free_fn)(void *)) : FreeFunc(free_fn)
     head = NULL;
     tail = NULL;
     count = 0;
-    peek_node = NULL;
 }
 
 void MBlsq::Clear()
@@ -189,20 +188,6 @@ int64_t MBlsq::RemoveIntFromHead()
     }
 
     return value;
-}
-
-void MBlsq::PeekInit()
-{
-    peek_node = head;
-}
-
-bool MBlsq::PeekNextInt(int64_t &value)
-{
-    if(peek_node == NULL)
-        return false;
-    value = peek_node->data.value;
-    peek_node = peek_node->next;
-    return true;
 }
 
 }

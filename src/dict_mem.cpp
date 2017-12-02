@@ -203,7 +203,6 @@ void DictMem::AddRootEdge(EdgePtrs &edge_ptrs, const uint8_t *key,
     Write6BInteger(edge_ptrs.offset_ptr, data_offset);
 
 #ifdef __LOCK_FREE__
-    lfree->PushOffsets(0, 0);
     lfree->WriterLockFreeStart(edge_ptrs.offset);
 #endif
     WriteEdge(edge_ptrs);
@@ -337,20 +336,10 @@ int DictMem::InsertNode(EdgePtrs &edge_ptrs, int match_len,
     if(node_move)
         WriteData(node, node_size[0], node_ptrs.offset);
 
+    if(release_buffer_size > 0)
+        ReleaseBuffer(edge_str_off, release_buffer_size);
 #ifdef __LOCK_FREE__
-    if(release_buffer_size > 0)
-    {
-        lfree->PushOffsets(edge_str_off, 0);
-        ReleaseBuffer(edge_str_off, release_buffer_size);
-    }
-    else
-    {
-        lfree->PushOffsets(0, 0);
-    }
     lfree->WriterLockFreeStart(edge_ptrs.offset);
-#else
-    if(release_buffer_size > 0)
-        ReleaseBuffer(edge_str_off, release_buffer_size);
 #endif
     WriteEdge(edge_ptrs);
 #ifdef __LOCK_FREE__
@@ -420,20 +409,10 @@ int DictMem::AddLink(EdgePtrs &edge_ptrs, int match_len, const uint8_t *key,
         WriteData(node, node_size[1], node_ptrs.offset);
 
     // Update the parent edge
+    if(release_buffer_size > 0)
+        ReleaseBuffer(edge_str_off, release_buffer_size);
 #ifdef __LOCK_FREE__
-    if(release_buffer_size > 0)
-    {
-        lfree->PushOffsets(edge_str_off, 0);
-        ReleaseBuffer(edge_str_off, release_buffer_size);
-    }
-    else
-    {
-        lfree->PushOffsets(0, 0);
-    }
     lfree->WriterLockFreeStart(edge_ptrs.offset);
-#else
-    if(release_buffer_size > 0)
-        ReleaseBuffer(edge_str_off, release_buffer_size);
 #endif
     WriteEdge(edge_ptrs);
 #ifdef __LOCK_FREE__
@@ -521,20 +500,10 @@ int DictMem::UpdateNode(EdgePtrs &edge_ptrs, const uint8_t *key, int key_len,
     if(node_move)
         WriteData(node, node_size[nt], node_ptrs.offset);
 
+    if(release_node_index >= 0)
+        ReleaseNode(old_node_off, release_node_index);
 #ifdef __LOCK_FREE__
     lfree->WriterLockFreeStart(edge_ptrs.offset);
-    if(release_node_index >= 0)
-    {
-        lfree->PushOffsets(0, old_node_off);
-        ReleaseNode(old_node_off, release_node_index);
-    }
-    else
-    {
-        lfree->PushOffsets(0, 0);
-    }
-#else
-    if(release_node_index >= 0)
-        ReleaseNode(old_node_off, release_node_index);
 #endif
     WriteEdge(edge_ptrs);
 #ifdef __LOCK_FREE__
@@ -621,7 +590,7 @@ bool DictMem::ReserveNode(int nt, size_t &offset, uint8_t* &ptr)
 
     header->n_states++;
 #ifdef __LOCK_FREE__
-    if(free_lists->GetBufferByIndex(buf_index, offset, lfree))
+    if(free_lists->GetBufferByIndex(buf_index, offset))
     {
         ptr = node_ptr;
         memset(ptr, 0, buf_size); 
@@ -672,7 +641,7 @@ void DictMem::ReserveData(const uint8_t* key, int size, size_t &offset,
     int buf_size  = free_lists->GetAlignmentSize(size);
 
 #ifdef __LOCK_FREE__
-    if(free_lists->GetBufferByIndex(buf_index, offset, lfree))
+    if(free_lists->GetBufferByIndex(buf_index, offset))
     {
         WriteData(key, size, offset);
         header->pending_index_buff_size -= buf_size;
@@ -837,17 +806,10 @@ void DictMem::RemoveRootEdge(const EdgePtrs &edge_ptrs)
 {
     // Clear the edge
     // Root node needs special handling.
-#ifdef __LOCK_FREE__
-    if(edge_ptrs.len_ptr[0] > LOCAL_EDGE_LEN)
-    {
-        size_t str_off = Get5BInteger(edge_ptrs.ptr);
-        ReleaseBuffer(str_off, edge_ptrs.len_ptr[0]-1);
-        lfree->PushOffsets(str_off, 0);
-    }
-    lfree->WriterLockFreeStart(edge_ptrs.offset);
-#else
     if(edge_ptrs.len_ptr[0] > LOCAL_EDGE_LEN)
         ReleaseBuffer(Get5BInteger(edge_ptrs.ptr), edge_ptrs.len_ptr[0]-1);
+#ifdef __LOCK_FREE__
+    lfree->WriterLockFreeStart(edge_ptrs.offset);
 #endif
     header->excep_lf_offset = edge_ptrs.offset;
     header->excep_updating_status = EXCEP_STATUS_CLEAR_EDGE;
@@ -1006,20 +968,8 @@ int DictMem::RemoveEdgeByIndex(const EdgePtrs &edge_ptrs, MBData &data)
 
     header->n_edges--;
     ReleaseNode(header->excep_offset, nt-1);
-#ifdef __LOCK_FREE__
-    if(str_size_rel > 0)
-    {
-        lfree->PushOffsets(str_off_rel, header->excep_offset);
-        ReleaseBuffer(str_off_rel, str_size_rel);
-    }
-    else
-    {
-        lfree->PushOffsets(0, header->excep_offset);
-    }
-#else
     if(str_size_rel > 0)
         ReleaseBuffer(str_off_rel, str_size_rel);
-#endif
 
     // Clear the edge
 #ifdef __LOCK_FREE__

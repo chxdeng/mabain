@@ -52,18 +52,11 @@ public:
     void     Clear();
     uint64_t Count() const;
 
-    // Peek functions
-    void     PeekInit();
-    bool     PeekNextInt(int64_t &value);
-
 private:
     LSQ_Node *head;
     LSQ_Node *tail;
     uint64_t count;
     void (*FreeFunc)(void *);
-
-    // for peek
-    const LSQ_Node *peek_node;
 };
 
 }

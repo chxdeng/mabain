@@ -48,26 +48,6 @@ void LockFree::LockFreeInit(LockFreeShmData *lock_free_ptr, int mode)
     }
 }
 
-void LockFree::PushOffsets(size_t off_str, size_t off_node)
-{
-    int index = shm_data_ptr->counter % MAX_OFFSET_CACHE;
-    shm_data_ptr->edge_offset_cache[index] = off_str;
-    shm_data_ptr->node_offset_cache[index].store(off_node, MEMORY_ORDER_WRITER);
-}
-
-// Check if we can reuse the released offset.
-// Called by writer only.
-bool LockFree::ReleasedOffsetInUse(size_t offset)
-{
-    for(int i = 0; i < MAX_OFFSET_CACHE; i++)
-    {
-        if(shm_data_ptr->edge_offset_cache[i] == offset ||
-           shm_data_ptr->node_offset_cache[i] == offset)
-            return true;
-    }
-    return false;
-}
-
 //////////////////////////////////////////////////
 // DO NOT CHANGE THE STORE ORDER IN THIS FUNCTION.
 //////////////////////////////////////////////////

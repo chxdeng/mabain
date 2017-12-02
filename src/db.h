@@ -60,11 +60,11 @@ public:
         const iterator& operator++();
 
     private:
-        int  get_node_offset(const std::string &node_key, size_t &node_offset);
-        int  load_node(const std::string &curr_node_key, size_t &curr_node_offset);
+        int  get_node_offset(const std::string &node_key, size_t &parent_edge_off,
+                 size_t &node_offset);
+        int  load_node(const std::string &curr_node_key, size_t &parent_edge_off);
         int  load_kv_for_node(const std::string &curr_node_key);
-        int  load_kvs(const std::string &curr_node_key, size_t &curr_node_offset,
-                 MBlsq *chid_node_list);
+        int  load_kvs(const std::string &curr_node_key, MBlsq *chid_node_list);
         void iter_obj_init();
         bool next_dbt_buffer(struct _DBTraverseNode *dbt_n);
         void add_node_offset(size_t node_offset);

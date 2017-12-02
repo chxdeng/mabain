@@ -94,10 +94,14 @@ void DB::iterator::iter_obj_init()
 {
     node_stack = NULL;
     kv_per_node = NULL;
+    lfree = NULL;
 
+    if(!(db_ref.GetDBOptions() & CONSTS::ACCESS_MODE_WRITER))
+    {
 #ifdef __LOCK_FREE__
-    lfree = db_ref.dict->GetLockFreePtr();
+        lfree = db_ref.dict->GetLockFreePtr();
 #endif
+    }
 
     if(state == DB_ITER_STATE_INIT)
         state = DB_ITER_STATE_MORE;
@@ -162,6 +166,7 @@ bool DB::iterator::operator!=(const iterator &rhs)
 }
 
 int DB::iterator::get_node_offset(const std::string &node_key,
+                                  size_t &parent_edge_off,
                                   size_t &node_offset)
 {
     int rval;
@@ -179,6 +184,7 @@ int DB::iterator::get_node_offset(const std::string &node_key,
 
     if(rval == MBError::IN_DICT)
     {
+        parent_edge_off = edge_ptrs.parent_offset;
         node_offset = Get6BInteger(value.edge_ptrs.offset_ptr);
         rval = MBError::SUCCESS;
     }
@@ -186,53 +192,44 @@ int DB::iterator::get_node_offset(const std::string &node_key,
 }
 
 int DB::iterator::load_kvs(const std::string &curr_node_key,
-                           size_t &curr_node_offset,
                            MBlsq *child_node_list)
 {
     int rval;
     size_t child_node_off;
     std::string match_str;
     iterator_node *inode;
-    size_t edge_off_prev = 0;
-#ifdef __LOCK_FREE__
-    LockFreeData snapshot;
-    int lf_ret;
-    int nt_prev;
-#endif
 
     while(true)
     {
-#ifdef __LOCK_FREE__
-        if(edge_off_prev == 0)
-            rval = load_node(curr_node_key, curr_node_offset);
-        edge_off_prev = edge_ptrs.offset;
-        nt_prev = edge_ptrs.curr_nt;
-        lfree->ReaderLockFreeStart(snapshot);
-#else
-        if(edge_off_prev == 0)
+        if(lfree == NULL)
         {
-            rval = load_node(curr_node_key, curr_node_offset);
-            edge_off_prev = edge_ptrs.offset;
+            rval = db_ref.dict->ReadNextEdge(node_buff, edge_ptrs, match, value,
+                                match_str, child_node_off);
         }
-#endif
-        rval = db_ref.dict->ReadNextEdge(node_buff, edge_ptrs, match, value,
-                            match_str, child_node_off);
-#ifdef __LOCK_FREE__
-        lf_ret = lfree->ReaderLockFreeStop(snapshot, edge_off_prev);
-        if(lf_ret == MBError::TRY_AGAIN)
+        else
         {
-            edge_ptrs.offset = edge_off_prev;
-            edge_ptrs.curr_nt = nt_prev;
-            nanosleep((const struct timespec[]){{0, 10L}}, NULL);
-            continue;
-        }
+#ifdef __LOCK_FREE__
+            LockFreeData snapshot;
+            int lf_ret;
+            size_t edge_off_prev = edge_ptrs.offset;
+            lfree->ReaderLockFreeStart(snapshot);
 #endif
+            rval = db_ref.dict->ReadNextEdge(node_buff, edge_ptrs, match, value,
+                                match_str, child_node_off);
+#ifdef __LOCK_FREE__
+            lf_ret = lfree->ReaderLockFreeStop(snapshot, edge_off_prev);
+            if(lf_ret == MBError::TRY_AGAIN)
+                return lf_ret;
+#endif
+        }
+
         if(rval != MBError::SUCCESS)
             break;
 
+        match_str = curr_node_key + match_str;
         if(child_node_off > 0)
         {
-            inode = new_iterator_node(curr_node_key + match_str, NULL);
+            inode = new_iterator_node(match_str, NULL);
             if(inode != NULL)
             {
                 rval = child_node_list->AddToTail(inode);
@@ -246,7 +243,7 @@ int DB::iterator::load_kvs(const std::string &curr_node_key,
 
         if(match != MATCH_NONE)
         {
-            inode = new_iterator_node(curr_node_key + match_str, &value);
+            inode = new_iterator_node(match_str, &value);
             if(inode != NULL)
             {
                 rval = kv_per_node->AddToTail(inode);
@@ -265,23 +262,22 @@ int DB::iterator::load_kvs(const std::string &curr_node_key,
 }
 
 int DB::iterator::load_node(const std::string &curr_node_key,
-                            size_t &curr_node_offset)
+                            size_t &parent_edge_off)
 {
     int rval;
 
     if(curr_node_key.size() == 0)
     {
-        // root node offset never changes, it is OK to arbitrarily use zero here.
-         curr_node_offset = 0;
          rval = db_ref.dict->ReadRootNode(node_buff, edge_ptrs, match, value);
     }
     else
     {
-        rval = get_node_offset(curr_node_key, curr_node_offset);
+        size_t node_offset;
+        rval = get_node_offset(curr_node_key, parent_edge_off, node_offset);
         if(rval != MBError::SUCCESS)
             return rval;
-        rval = db_ref.dict->ReadNode(curr_node_offset, node_buff, edge_ptrs,
-                                     match, value, false);
+        rval = db_ref.dict->ReadNode(node_offset, node_buff, edge_ptrs, match,
+                                     value, false);
     }
 
     return rval;
@@ -290,35 +286,50 @@ int DB::iterator::load_node(const std::string &curr_node_key,
 int DB::iterator::load_kv_for_node(const std::string &curr_node_key)
 {
     int rval;
-    size_t curr_node_offset;
     MBlsq child_node_list(free_iterator_node);
+    size_t parent_edge_off;
 
-    while(true)
+    if(lfree == NULL)
     {
-        rval = load_kvs(curr_node_key, curr_node_offset, &child_node_list);
-
+        rval = load_node(curr_node_key, parent_edge_off);
+        if(rval == MBError::SUCCESS)
+            rval = load_kvs(curr_node_key, &child_node_list);
+    }
+    else
+    {
 #ifdef __LOCK_FREE__
-        if(curr_node_offset != 0)
+        LockFreeData snapshot;
+        int lf_ret;
+#endif
+        while(true)
         {
-            size_t new_node_offset;
-            int lf_ret;
-            lf_ret = get_node_offset(curr_node_key, new_node_offset);    
-            if(lf_ret == MBError::SUCCESS && new_node_offset != curr_node_offset)
+#ifdef __LOCK_FREE__
+            lfree->ReaderLockFreeStart(snapshot);
+#endif
+            rval = load_node(curr_node_key, parent_edge_off);
+            if(rval == MBError::SUCCESS)
             {
-                // Reload node
+                rval = load_kvs(curr_node_key, &child_node_list);
+#ifdef __LOCK_FREE__
+                if(rval == MBError::TRY_AGAIN)
+                {
+                    kv_per_node->Clear();
+                    child_node_list.Clear();
+                    continue;
+                }
+#endif
+            }
+#ifdef __LOCK_FREE__
+            lf_ret = lfree->ReaderLockFreeStop(snapshot, parent_edge_off);
+            if(lf_ret == MBError::TRY_AGAIN)
+            {
                 kv_per_node->Clear();
-                curr_node_offset = new_node_offset;
                 child_node_list.Clear();
                 continue;
             }
-            else if(lf_ret != MBError::SUCCESS)
-            {
-                rval = lf_ret;
-            }
-        }
 #endif
-
-        break;
+            break;
+        }
     }
 
     if(rval == MBError::SUCCESS)
@@ -331,6 +342,8 @@ int DB::iterator::load_kv_for_node(const std::string &curr_node_key)
     }
     else
     {
+        std::cerr << "failed to run ietrator: " << MBError::get_error_str(rval) << "\n";
+        kv_per_node->Clear();
         child_node_list.Clear();
     }
     return rval;
