@@ -993,16 +993,16 @@ void DictMem::PrintStats(std::ostream &out_stream) const
     if(!is_valid)
         return;
 
-    out_stream << "Dict Memory Stats:\n";
-    out_stream << "\tIndex size: " << header->m_index_offset << "\n";
-    out_stream << "\tNumber of edges: " << header->n_edges << "\n";
-    out_stream << "\tNumber of nodes: " << header->n_states << "\n";
-    out_stream << "\tEdge string size: " << header->edge_str_size << "\n";
-    out_stream << "\tEdge size: " << header->n_edges*EDGE_SIZE << "\n";
-    out_stream << "\tException flag: " << header->excep_updating_status << "\n";
-    out_stream << "\tPending Buffer Size: " << header->pending_index_buff_size << "\n";
+    out_stream << "Dict Memory Stats:" << std::endl;
+    out_stream << "\tIndex size: " << header->m_index_offset << std::endl;
+    out_stream << "\tNumber of edges: " << header->n_edges << std::endl;
+    out_stream << "\tNumber of nodes: " << header->n_states << std::endl;
+    out_stream << "\tEdge string size: " << header->edge_str_size << std::endl;
+    out_stream << "\tEdge size: " << header->n_edges*EDGE_SIZE << std::endl;
+    out_stream << "\tException flag: " << header->excep_updating_status << std::endl;
+    out_stream << "\tPending Buffer Size: " << header->pending_index_buff_size << std::endl;
     if(free_lists)
-        out_stream << "\tTrackable Buffer Size: " << free_lists->GetTotSize() << "\n";
+        out_stream << "\tTrackable Buffer Size: " << free_lists->GetTotSize() << std::endl;
     kv_file->PrintStats(out_stream);
 }
 

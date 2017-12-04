@@ -535,7 +535,7 @@ int Dict::FindPrefix(const uint8_t *key, int len, MBData &data)
                 key_buff = edge_ptrs.ptr;
             }
 
-            if(edge_len > 1 && memcmp(key_buff, p+1, edge_len_m1) != 0)
+            if((edge_len > 1 && memcmp(key_buff, p+1, edge_len_m1) != 0) || edge_len == 0)
             {
                 rval = MBError::NOT_EXIST;
                 break;
@@ -657,7 +657,7 @@ int Dict::Find(const uint8_t *key, int len, MBData &data)
                 key_buff = edge_ptrs.ptr;
             }
 
-            if(edge_len_m1 > 0 && memcmp(key_buff, p+1, edge_len_m1) != 0)
+            if((edge_len_m1 > 0 && memcmp(key_buff, p+1, edge_len_m1) != 0) || edge_len_m1 < 0)
             {
                 rval = MBError::NOT_EXIST;
                 break;
@@ -735,9 +735,9 @@ void Dict::PrintStats(std::ostream &out_stream) const
     out_stream << "\tNumer of DB reader: " << header->num_reader << std::endl;
     out_stream << "\tEntry count in DB: "  << header->count << std::endl;
     out_stream << "\tData size: " << header->m_data_offset << std::endl;
-    out_stream << "\tPending Buffer Size: " << header->pending_data_buff_size << "\n";
+    out_stream << "\tPending Buffer Size: " << header->pending_data_buff_size << std::endl;
     if(free_lists)
-        out_stream << "\tTrackable Buffer Size: " << free_lists->GetTotSize() << "\n";
+        out_stream << "\tTrackable Buffer Size: " << free_lists->GetTotSize() << std::endl;
     mm.PrintStats(out_stream);
 
     kv_file->PrintStats(out_stream);
@@ -777,7 +777,7 @@ void Dict::PrintHeader(std::ostream &out_stream) const
     {
         sprintf(data_str_buff + 3*i, "%2x ", header->excep_buff[i]);
     }
-    data_str_buff[MB_EXCEPTION_BUFF_SIZE*3] = '\0'; 
+    data_str_buff[MB_EXCEPTION_BUFF_SIZE*3] = '\0';
     out_stream << data_str_buff << "\n";
     out_stream << "\toffset: " << header->excep_offset << "\n";
     out_stream << "\tlock free offset: " << header->excep_lf_offset << "\n";
@@ -893,7 +893,7 @@ void Dict::ReadNodeHeader(size_t node_off, int &node_size, int &match,
     if(mm.ReadData(node_buff, NODE_EDGE_KEY_FIRST, node_off) != NODE_EDGE_KEY_FIRST)
         throw (int) MBError::READ_ERROR;
 
-    node_size = mm.GetNodeSizePtr()[ node_buff[1] ]; 
+    node_size = mm.GetNodeSizePtr()[ node_buff[1] ];
     if(node_buff[0] & FLAG_NODE_MATCH)
     {
         match = MATCH_NODE;
@@ -963,7 +963,6 @@ int Dict::Remove(const uint8_t *key, int len, MBData &data)
                 rval = mm.RemoveEdgeByIndex(data.edge_ptrs, data);
             }
         }
-         
     }
 
     if(rval == MBError::SUCCESS)
@@ -982,7 +981,7 @@ int Dict::RemoveAll()
 {
     int rval = MBError::SUCCESS;;
     for(int c = 0; c < NUM_ALPHABET; c++)
-    { 
+    {
         rval = mm.ClearRootEdge(c);
         if(rval != MBError::SUCCESS)
             break;

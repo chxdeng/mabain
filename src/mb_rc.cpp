@@ -85,7 +85,7 @@ void ResourceCollection::Prepare(int min_index_size, int min_data_size)
     {
         Logger::Log(LOG_LEVEL_INFO, "garbage collection skipped since pending "
                                     "sizes smaller than required");
-        throw (int) MBError::SUCCESS;
+        throw (int) MBError::RC_SKIPPED;
     }
 
     if(rc_type & RESOURCE_COLLECTION_TYPE_INDEX)
@@ -101,9 +101,6 @@ void ResourceCollection::Prepare(int min_index_size, int min_data_size)
     data_reorder_status = MBError::NOT_INITIALIZED;
     m_index_off_pre = header->m_index_offset;
     m_data_off_pre = header->m_data_offset;
-
-    Logger::Log(LOG_LEVEL_INFO, "DB stats before running rc");
-    db_ref.PrintStats(*Logger::GetLogStream());
 }
 
 void ResourceCollection::CollectBuffers()
@@ -130,20 +127,17 @@ void ResourceCollection::Finish()
     if(index_rc_status == MBError::SUCCESS)
     {
         Logger::Log(LOG_LEVEL_INFO, "index buffer size reclaimed: %lld",
-                    m_index_off_pre - index_size);
+                    (m_index_off_pre>index_size) ? (m_index_off_pre-index_size) : 0);
         header->m_index_offset = index_size;
         header->pending_index_buff_size = 0;
     }
     if(data_rc_status == MBError::SUCCESS)
     {
         Logger::Log(LOG_LEVEL_INFO, "data buffer size reclaimed: %lld",
-                    m_data_off_pre - data_size);
+                    (m_data_off_pre>data_size) ? (m_data_off_pre-data_size) : 0);
         header->m_data_offset = data_size;
         header->pending_data_buff_size = 0;
     }
-
-    Logger::Log(LOG_LEVEL_INFO, "DB stats after running rc");
-    db_ref.PrintStats(*Logger::GetLogStream());
 }
 
 bool ResourceCollection::MoveIndexBuffer(int phase, size_t &offset_src, int size)
@@ -299,13 +293,17 @@ void ResourceCollection::ReorderBuffers()
     dmm->ResetSlidingWindow();
     dict->ResetSlidingWindow();
 
-    Logger::Log(LOG_LEVEL_INFO, "index size before reorder: %llu", header->m_index_offset);
-    Logger::Log(LOG_LEVEL_INFO, "data size before reorder: %llu", header->m_data_offset);
+    if(rc_type & RESOURCE_COLLECTION_TYPE_INDEX)
+        Logger::Log(LOG_LEVEL_INFO, "index size before reorder: %llu", header->m_index_offset);
+    if(rc_type & RESOURCE_COLLECTION_TYPE_DATA)
+        Logger::Log(LOG_LEVEL_INFO, "data size before reorder: %llu", header->m_data_offset);
 
     TraverseDB(RESOURCE_COLLECTION_PHASE_REORDER);
 
-    Logger::Log(LOG_LEVEL_INFO, "index size after reorder: %llu", header->m_index_offset);
-    Logger::Log(LOG_LEVEL_INFO, "data size after reorder: %llu", header->m_data_offset);
+    if(rc_type & RESOURCE_COLLECTION_TYPE_INDEX)
+        Logger::Log(LOG_LEVEL_INFO, "index size after reorder: %llu", header->m_index_offset);
+    if(rc_type & RESOURCE_COLLECTION_TYPE_DATA)
+        Logger::Log(LOG_LEVEL_INFO, "data size after reorder: %llu", header->m_data_offset);
 
     if(rc_type & RESOURCE_COLLECTION_TYPE_INDEX)
     {

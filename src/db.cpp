@@ -120,9 +120,14 @@ DB::DB(const std::string &db_path, int db_options, size_t memcap_index, size_t m
         db_path_tmp = db_path;
 
     if((db_options & CONSTS::ACCESS_MODE_WRITER))
+    {
         Logger::InitLogFile(db_path_tmp + "mabain.log");
+        Logger::SetLogLevel(LOG_LEVEL_INFO);
+    }
     else
+    {
         Logger::SetLogLevel(LOG_LEVEL_WARN);
+    }
     Logger::Log(LOG_LEVEL_INFO, "connector %u DB options: %d", id, db_options);
 
     // Check if DB exist. This can be done by check existence of the first index file.
@@ -372,7 +377,7 @@ int DB::CollectResource(int min_index_rc_size, int min_data_rc_size)
         ResourceCollection rc(*this);
         rc.ReclaimResource(min_index_rc_size, min_data_rc_size);
     } catch (int error) {
-        if(error != MBError::SUCCESS)
+        if(error != MBError::RC_SKIPPED)
         {
             Logger::Log(LOG_LEVEL_ERROR, "failed to run gc: %s",
                         MBError::get_error_str(error));

@@ -29,7 +29,7 @@ namespace mabain {
 
 std::string Logger::log_file = "";
 std::ofstream* Logger::log_stream = NULL;
-int Logger::log_level_       = LOG_LEVEL_INFO;
+int Logger::log_level_       = LOG_LEVEL_WARN;
 int Logger::roll_size        = 50*1024*1024;
 const char* Logger::LOG_LEVEL[4] =
 {
@@ -159,8 +159,8 @@ int Logger::SetLogLevel(int level)
         return MBError::INVALID_ARG;
     }
 
-    //Logger::Log(LOG_LEVEL_INFO, "set mabain log level to %s", LOG_LEVEL[level]);
-    log_level_ = level;
+    if(level > log_level_)
+        log_level_ = level;
 
     return MBError::SUCCESS;
 }

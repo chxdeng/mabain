@@ -44,6 +44,7 @@ const char* MBError::error_str[] = {
     "database closed",
     "buffer discarded", // buffer will be reclaimed by shrink
     "failed to create thread",
+    "rc skipped",
 
     ///////////////////////////////////
     "DB not exist",
