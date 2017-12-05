@@ -40,15 +40,25 @@ static void free_async_node(AsyncNode *node_ptr)
     free(node_ptr);
 }
 
-AsyncWriter::AsyncWriter(DB *db_ptr) : db(db_ptr)
+AsyncWriter::AsyncWriter(DB *db_ptr) : db(db_ptr), queue(NULL), tid(0)
 {
     if(!(db_ptr->GetDBOptions() & CONSTS::ACCESS_MODE_WRITER))
         throw (int) MBError::NOT_ALLOWED;
 
     dict = NULL;
     queue = new MBlsq(NULL);
-    q_mutex = PTHREAD_MUTEX_INITIALIZER;
-    q_cond = PTHREAD_COND_INITIALIZER;
+
+    if(pthread_mutex_init(&q_mutex, NULL) != 0)
+    {
+        Logger::Log(LOG_LEVEL_ERROR, "failed to init mutex");
+        throw (int) MBError::THREAD_FAILED;
+    }
+    if(pthread_cond_init(&q_cond, NULL) != 0)
+    {
+        Logger::Log(LOG_LEVEL_ERROR, "failed to init condition variable");
+        throw (int) MBError::THREAD_FAILED;
+    }
+
     stop_processing = false;
     min_index_rc_size = 0;
     min_data_rc_size = 0;
@@ -71,7 +81,10 @@ AsyncWriter::AsyncWriter(DB *db_ptr) : db(db_ptr)
 
 AsyncWriter::~AsyncWriter()
 {
-    delete queue;
+    pthread_mutex_destroy(&q_mutex);
+    pthread_cond_destroy(&q_cond);
+    if(queue != NULL)
+        delete queue;
 }
 
 void AsyncWriter::StopAsyncThread()
