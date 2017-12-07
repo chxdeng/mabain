@@ -96,7 +96,7 @@ public:
 
     virtual void WriteData(const uint8_t *buff, unsigned len, size_t offset) const = 0;
 
-    inline int ReadData(uint8_t *buff, int len, size_t offset, bool reader_mode = true) const;
+    inline int ReadData(uint8_t *buff, int len, size_t offset) const;
     inline int Reserve(size_t &offset, int size, uint8_t* &ptr);
     inline uint8_t* GetShmPtr(size_t offset, int size) const;
     inline size_t CheckAlignment(size_t offset, int size) const;
@@ -117,9 +117,9 @@ protected:
     FreeList *free_lists;
 };
 
-inline int DRMBase::ReadData(uint8_t *buff, int len, size_t offset, bool reader_mode) const
+inline int DRMBase::ReadData(uint8_t *buff, int len, size_t offset) const
 {
-    return kv_file->RandomRead(buff, len, offset, reader_mode);
+    return kv_file->RandomRead(buff, len, offset);
 }
 
 inline int DRMBase::Reserve(size_t &offset, int size, uint8_t* &ptr)

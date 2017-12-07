@@ -415,7 +415,7 @@ void* RollableFile::NewReaderSlidingMap(int order)
     return sliding_addr;
 }
 
-size_t RollableFile::RandomRead(void *buff, size_t size, off_t offset, bool reader_mode)
+size_t RollableFile::RandomRead(void *buff, size_t size, off_t offset)
 {
     int order = offset / block_size;
     int rval = CheckAndOpenFile(order);
@@ -424,7 +424,7 @@ size_t RollableFile::RandomRead(void *buff, size_t size, off_t offset, bool read
 
     if(sliding_mmap)
     {
-        if(reader_mode)
+        if(!(mode & CONSTS::ACCESS_MODE_WRITER))
             NewReaderSlidingMap(order);
 
         // Check sliding map
