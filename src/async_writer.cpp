@@ -33,9 +33,9 @@ static void free_async_node(AsyncNode *node_ptr)
 {
     if(node_ptr == NULL)
         return;
-    if(node_ptr->key)
+    if(node_ptr->key != NULL)
         free(node_ptr->key);
-    if(node_ptr->data)
+    if(node_ptr->data != NULL)
         free(node_ptr->data);
     free(node_ptr);
 }
@@ -60,8 +60,6 @@ AsyncWriter::AsyncWriter(DB *db_ptr) : db(db_ptr), queue(NULL), tid(0)
     }
 
     stop_processing = false;
-    min_index_rc_size = 0;
-    min_data_rc_size = 0;
 
     if(db == NULL)
         throw (int) MBError::INVALID_ARG;
@@ -91,9 +89,11 @@ void AsyncWriter::StopAsyncThread()
 {
     stop_processing = true;
 
-    pthread_mutex_lock(&q_mutex);
+    if(pthread_mutex_lock(&q_mutex) != 0)
+        Logger::Log(LOG_LEVEL_ERROR, "failed to lock async queue mutex");
     pthread_cond_signal(&q_cond);
-    pthread_mutex_unlock(&q_mutex);
+    if(pthread_mutex_unlock(&q_mutex) != 0)
+        Logger::Log(LOG_LEVEL_ERROR, "failed to unlock async queue mutex");
 
     if(tid != 0)
         pthread_join(tid, NULL);
@@ -117,6 +117,9 @@ int AsyncWriter::Add(const char *key, int key_len, const char *data,
     node_ptr->key_len = key_len;
     node_ptr->data_len = data_len;
     node_ptr->overwrite = overwrite;
+
+    node_ptr->min_index_rc_size = 0;
+    node_ptr->min_data_rc_size = 0;
     node_ptr->type = MABAIN_ASYNC_TYPE_ADD;
 
     return Enqueue(node_ptr);
@@ -155,14 +158,9 @@ int  AsyncWriter::CollectResource(int m_index_rc_size, int m_data_rc_size)
     AsyncNode *node_ptr = (AsyncNode *) calloc(1, sizeof(*node_ptr));
     if(node_ptr == NULL)
         return MBError::NO_MEMORY;
+    node_ptr->min_index_rc_size = m_index_rc_size;
+    node_ptr->min_data_rc_size = m_data_rc_size;
     node_ptr->type = MABAIN_ASYNC_TYPE_RC;
-
-    pthread_mutex_lock(&q_mutex);
-    if(m_index_rc_size < min_index_rc_size)
-        min_index_rc_size = m_index_rc_size;
-    if(m_data_rc_size < min_data_rc_size)
-        min_data_rc_size = m_data_rc_size;
-    pthread_mutex_unlock(&q_mutex);
 
     return Enqueue(node_ptr);
 }
@@ -172,7 +170,13 @@ int AsyncWriter::Enqueue(AsyncNode *node_ptr)
     int rval;
     int64_t queue_cnt;
 
-    pthread_mutex_lock(&q_mutex);
+    if(pthread_mutex_lock(&q_mutex) != 0)
+    {
+        free_async_node(node_ptr);
+        Logger::Log(LOG_LEVEL_ERROR, "failed to lock async queue mutex");
+        throw (int) MBError::MUTEX_ERROR;
+    }
+
     queue_cnt = queue->Count();
     if(queue_cnt > max_num_queue_node)
         pthread_cond_wait(&q_cond, &q_mutex);
@@ -180,7 +184,12 @@ int AsyncWriter::Enqueue(AsyncNode *node_ptr)
     // add to queue
     rval = queue->AddToTail(node_ptr);
     pthread_cond_signal(&q_cond);
-    pthread_mutex_unlock(&q_mutex);
+
+    if(pthread_mutex_unlock(&q_mutex) != 0)
+    {
+        Logger::Log(LOG_LEVEL_ERROR, "failed to unlock async queue mutex");
+        throw (int) MBError::MUTEX_ERROR;
+    }
 
     if(rval != MBError::SUCCESS)
         free_async_node(node_ptr);
@@ -196,7 +205,12 @@ void* AsyncWriter::async_writer_thread()
     Logger::Log(LOG_LEVEL_INFO, "async writer started");
     while(true)
     {
-        pthread_mutex_lock(&q_mutex);
+        if(pthread_mutex_lock(&q_mutex) != 0)
+        {
+            Logger::Log(LOG_LEVEL_ERROR, "failed to lock async queue mutex");
+            throw (int) MBError::MUTEX_ERROR;
+        }
+
         node_ptr = (AsyncNode *) queue->RemoveFromHead(); 
         if(node_ptr == NULL)
         {
@@ -207,7 +221,14 @@ void* AsyncWriter::async_writer_thread()
         {
             pthread_cond_signal(&q_cond);
         }
-        pthread_mutex_unlock(&q_mutex);
+
+        if(pthread_mutex_unlock(&q_mutex) != 0)
+        {
+            if(node_ptr != NULL)
+                free_async_node(node_ptr);
+            Logger::Log(LOG_LEVEL_ERROR, "failed to unock async queue mutex");
+            throw (int) MBError::MUTEX_ERROR;
+        }
 
         if(node_ptr != NULL)
         {
@@ -235,17 +256,11 @@ void* AsyncWriter::async_writer_thread()
                     break;
                 case MABAIN_ASYNC_TYPE_RC:
                     {
-                        int min_rc_index;
-                        int min_rc_data;
-                        pthread_mutex_lock(&q_mutex);
-                        min_rc_index = min_index_rc_size;
-                        min_rc_data = min_data_rc_size;
-                        pthread_mutex_unlock(&q_mutex);
                         try {
                             ResourceCollection rc(*db);
-                            rc.ReclaimResource(min_rc_index, min_rc_data);
+                            rc.ReclaimResource(node_ptr->min_index_rc_size, node_ptr->min_data_rc_size);
                         } catch (int error) {
-                            if(error != MBError::SUCCESS)
+                            if(error != MBError::RC_SKIPPED)
                             {
                                 Logger::Log(LOG_LEVEL_ERROR, "failed to run gc: %s",
                                             MBError::get_error_str(error));

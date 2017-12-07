@@ -40,6 +40,8 @@ typedef struct _AsyncNode
     int data_len;
     bool overwrite;
     char type;
+    int min_index_rc_size;
+    int min_data_rc_size;
 } AsyncNode;
 
 class AsyncWriter
@@ -76,8 +78,6 @@ private:
     pthread_t tid;
 
     bool stop_processing;
-    int min_index_rc_size;
-    int min_data_rc_size;
 };
 
 }
