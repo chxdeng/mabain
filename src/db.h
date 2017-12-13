@@ -118,6 +118,12 @@ public:
     // than min_data_rc_size, rc will be ignored for data segment.
     int CollectResource(int min_index_rc_size = 33554432 , int min_data_rc_size = 33554432);
 
+    // Multi-thread update using async thread
+    // FOR THIS TO WORK, WRITER MUST BE THE LAST ONE TO CLOSE HANDLE.
+    int  SetAsyncWriterPtr(DB *db_writer);
+    int  UnsetAsyncWriterPtr(DB *db_writer);
+    bool AsyncWriterEnabled() const;
+
     // multi-thread or multi-process locking for DB management
     int WrLock();
     int RdLock();

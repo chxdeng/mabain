@@ -159,8 +159,7 @@ int Logger::SetLogLevel(int level)
         return MBError::INVALID_ARG;
     }
 
-    if(level > log_level_)
-        log_level_ = level;
+    log_level_ = level;
 
     return MBError::SUCCESS;
 }

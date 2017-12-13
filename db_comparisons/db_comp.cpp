@@ -136,7 +136,7 @@ static void InitTestDir()
 
 }
 
-static void InitDB()
+static void InitDB(bool writer_mode = true)
 {
 #ifdef LEVEL_DB
     std::string db_dir_tmp = std::string(db_dir) + "/leveldb/";
@@ -167,6 +167,8 @@ static void InitDB()
     if(sync_on_write) {
         options |= mabain::CONSTS::SYNC_ON_WRITE;
     }
+    if(!writer_mode)
+        options = mabain::CONSTS::ReaderOptions();
     db = new mabain::DB(db_dir_tmp, options, (unsigned long long)(0.6666667*memcap),
                                              (unsigned long long)(0.3333333*memcap));
     assert(db->is_open());
@@ -592,7 +594,7 @@ int main(int argc, char *argv[])
     Add(num_kv);
     DestroyDB();
 
-    InitDB();
+    InitDB(false);
     Lookup(num_kv);
     DestroyDB();
 

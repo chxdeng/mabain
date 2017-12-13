@@ -130,6 +130,13 @@ DB::iterator::~iterator()
 // Initialize the iterator, get the very first key-value pair.
 void DB::iterator::init()
 {
+    // Writer in async mode cannot be used for lookup
+    if(db_ref.options & CONSTS::ASYNC_WRITER_MODE)
+    {
+        state = DB_ITER_STATE_DONE;
+        return;
+    }
+
     node_stack = new MBlsq(free_iterator_node);
     kv_per_node = new MBlsq(free_iterator_node);
 

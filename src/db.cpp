@@ -39,17 +39,20 @@ uint16_t version[4] = {1, 1, 0, 0};
 
 DB::~DB()
 {
-    if(async_writer != NULL)
-        delete async_writer;
 }
 
 int DB::Close()
 {
     int rval = MBError::SUCCESS;
 
-    if(async_writer != NULL)
+    if((options & CONSTS::ACCESS_MODE_WRITER) && async_writer != NULL)
     {
-        async_writer->StopAsyncThread();
+        rval = async_writer->StopAsyncThread();
+        if(rval != MBError::SUCCESS)
+            return rval;
+
+        delete async_writer;
+        async_writer = NULL;
     }
 
     if(dict != NULL)
@@ -181,17 +184,7 @@ DB::DB(const std::string &db_path, int db_options, size_t memcap_index, size_t m
     if(db_options & CONSTS::ACCESS_MODE_WRITER)
     {
         if(db_options & CONSTS::ASYNC_WRITER_MODE)
-        {
-            try {
-                async_writer = new AsyncWriter(this);
-            } catch (int error) {
-                if(async_writer != NULL) delete async_writer;
-                async_writer = NULL;
-                Logger::Log(LOG_LEVEL_ERROR, "failed to start async writer thread");
-            }
-        }
-        if(async_writer == NULL)
-            Logger::Log(LOG_LEVEL_INFO, "async writer was disabled");
+            async_writer = new AsyncWriter(this);
     }
 
     Logger::Log(LOG_LEVEL_INFO, "connector %u successfully opened DB %s for %s",
@@ -220,6 +213,9 @@ int DB::Find(const char* key, int len, MBData &mdata) const
 {
     if(status != MBError::SUCCESS)
         return MBError::NOT_INITIALIZED;
+    // Writer in async mode cannot be used for lookup
+    if(options & CONSTS::ASYNC_WRITER_MODE)
+        return MBError::NOT_ALLOWED;
 
     int rval;
     rval = dict->Find(reinterpret_cast<const uint8_t*>(key), len, mdata);
@@ -248,6 +244,9 @@ int DB::FindPrefix(const char* key, int len, MBData &data) const
 {
     if(status != MBError::SUCCESS)
         return MBError::NOT_INITIALIZED;
+    // Writer in async mode cannot be used for lookup
+    if(options & CONSTS::ASYNC_WRITER_MODE)
+        return MBError::NOT_ALLOWED;
 
     if(data.match_len >= len)
         return MBError::OUT_OF_BOUND;
@@ -264,6 +263,9 @@ int DB::FindLongestPrefix(const char* key, int len, MBData &data) const
 {
     if(status != MBError::SUCCESS)
         return MBError::NOT_INITIALIZED;
+    // Writer in async mode cannot be used for lookup
+    if(options & CONSTS::ASYNC_WRITER_MODE)
+        return MBError::NOT_ALLOWED;
 
     data.match_len = 0;
 
@@ -466,6 +468,51 @@ int DB::GetDBOptions() const
 const std::string& DB::GetDBDir() const
 {
     return mb_dir;
+}
+
+int DB::SetAsyncWriterPtr(DB *db_writer)
+{
+    if(db_writer == NULL)
+        return MBError::INVALID_ARG;
+    if(options & CONSTS::ACCESS_MODE_WRITER)
+        return MBError::NOT_ALLOWED;
+    if(db_writer->mb_dir != mb_dir)
+        return MBError::INVALID_ARG;
+    if(!(db_writer->options & CONSTS::ACCESS_MODE_WRITER) ||
+       !(db_writer->options & CONSTS::ASYNC_WRITER_MODE)  ||
+       db_writer->async_writer == NULL)
+    {
+        return MBError::INVALID_ARG;
+    }
+
+   db_writer->async_writer->UpdateNumUsers(1);
+   async_writer = db_writer->async_writer;
+   return MBError::SUCCESS;
+}
+
+int DB::UnsetAsyncWriterPtr(DB *db_writer)
+{
+    if(db_writer == NULL)
+        return MBError::INVALID_ARG;
+    if(options & CONSTS::ACCESS_MODE_WRITER)
+        return MBError::NOT_ALLOWED;
+    if(db_writer->mb_dir != mb_dir)
+        return MBError::INVALID_ARG;
+    if(!(db_writer->options & CONSTS::ACCESS_MODE_WRITER) ||
+       !(db_writer->options & CONSTS::ASYNC_WRITER_MODE)  ||
+       db_writer->async_writer == NULL)
+    {
+        return MBError::INVALID_ARG;
+    }
+
+    db_writer->async_writer->UpdateNumUsers(-1);
+    async_writer = NULL;
+    return MBError::SUCCESS;
+}
+
+bool DB::AsyncWriterEnabled() const
+{
+    return (async_writer != NULL);
 }
 
 } // namespace mabain
