@@ -163,7 +163,7 @@ static void InitDB(bool writer_mode = true)
     mdb_txn_commit(txn);
 #elif MABAIN
     std::string db_dir_tmp = std::string(db_dir) + "/mabain/";
-    int options = mabain::CONSTS::WriterOptions();
+    int options = mabain::CONSTS::WriterOptions() | mabain::CONSTS::ASYNC_WRITER_MODE;
     if(sync_on_write) {
         options |= mabain::CONSTS::SYNC_ON_WRITE;
     }

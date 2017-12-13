@@ -54,15 +54,14 @@ static void* insert_thread(void *arg)
         }
     }
 
-    // Reader handle must unregister the async writer pointer
+    // Reader must unregister the async writer pointer
     assert(db_r->UnsetAsyncWriterPtr((DB *) arg) == MBError::SUCCESS);
     db_r->Close();
     delete db_r;
     return NULL;
 }
 
-// Multiple threads performing DB inseryion/deletion/updating sung the same handle.
-// Async writer mode must be enabled.
+// Multiple threads performing DB insertion/deletion/updating
 int main()
 {
     pthread_t pid[256];
@@ -72,7 +71,9 @@ int main()
     }
 
     write_index.store(0, std::memory_order_release);
-    DB *db = new DB("/var/tmp/mabain_test/", CONSTS::WriterOptions(), 128LL*1024*1024, 128LL*1024*1024);
+    // Writer needs to enable async writer mode.
+    int options = CONSTS::WriterOptions() | CONSTS::ASYNC_WRITER_MODE;
+    DB *db = new DB("/var/tmp/mabain_test/", options, 128LL*1024*1024, 128LL*1024*1024);
     assert(db->is_open());
     db->RemoveAll();
 
