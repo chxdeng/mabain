@@ -19,14 +19,18 @@
 #include <gtest/gtest.h>
 #include <gtest/tap.h>
 
+#include "../db.h"
+
 GTEST_API_ int main(int argc, char **argv)
 {
     testing::InitGoogleTest(&argc, argv);
     testing::TestEventListeners& listeners = testing::UnitTest::GetInstance()->listeners();
     listeners.Append(new tap::TapListener());
 
+    mabain::DB::SetLogFile("/var/tmp/mabain_test/mabain.log");
     int rval = RUN_ALL_TESTS();
 
+    mabain::DB::CloseLogFile();
     return rval;
 }
 

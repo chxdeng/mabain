@@ -72,8 +72,6 @@ int DB::Close()
 
     status = MBError::DB_CLOSED;
     Logger::Log(LOG_LEVEL_INFO, "connector %u disconnected from DB", identifier);
-    if(options & CONSTS::ACCESS_MODE_WRITER)
-        Logger::Close();
     return rval;
 }
 
@@ -122,15 +120,6 @@ DB::DB(const std::string &db_path, int db_options, size_t memcap_index, size_t m
     else
         db_path_tmp = db_path;
 
-    if((db_options & CONSTS::ACCESS_MODE_WRITER))
-    {
-        Logger::InitLogFile(db_path_tmp + "mabain.log");
-        Logger::SetLogLevel(LOG_LEVEL_INFO);
-    }
-    else
-    {
-        Logger::SetLogLevel(LOG_LEVEL_WARN);
-    }
     Logger::Log(LOG_LEVEL_INFO, "connector %u DB options: %d", id, db_options);
 
     // Check if DB exist. This can be done by check existence of the first index file.
@@ -513,6 +502,23 @@ int DB::UnsetAsyncWriterPtr(DB *db_writer)
 bool DB::AsyncWriterEnabled() const
 {
     return (async_writer != NULL);
+}
+
+bool DB::AsyncWriterBusy() const
+{
+    if(async_writer != NULL)
+        return async_writer->Busy();
+    return false;
+}
+
+void DB::SetLogFile(const std::string &log_file)
+{
+    Logger::InitLogFile(log_file);
+}
+
+void DB::CloseLogFile()
+{
+    Logger::Close();
 }
 
 } // namespace mabain

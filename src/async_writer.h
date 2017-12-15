@@ -56,13 +56,13 @@ public:
     AsyncWriter(DB *db_ptr);
     ~AsyncWriter();
 
-    // async add/remove by enqueue
     void UpdateNumUsers(int delta);
     int  Add(const char *key, int key_len, const char *data, int data_len, bool overwrite);
     int  Remove(const char *key, int len);
     int  RemoveAll();
     int  CollectResource(int m_index_rc_size, int m_data_rc_size);
     int  StopAsyncThread();
+    bool Busy() const;
 
 private:
     static void *async_thread_wrapper(void *context);
@@ -77,7 +77,7 @@ private:
     Dict *dict;
     ResourceCollection *rc_async;
 
-    int num_users;
+    std::atomic<int> num_users;
     AsyncNode *queue;
 
     // thread id

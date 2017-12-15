@@ -548,6 +548,9 @@ static void RemoveDB()
 
 int main(int argc, char *argv[])
 {
+#ifdef MABAIN
+    mabain::DB::SetLogFile("/var/tmp/mabain_test/mabain.log");
+#endif
     for(int i = 1; i < argc; i++) {
         if(strcmp(argv[i], "-n") == 0) {
             if(++i >= argc) abort();
@@ -608,5 +611,8 @@ int main(int argc, char *argv[])
     ConcurrencyTest(num_kv, n_reader);
     DestroyDB();
 
+#ifdef MABAIN
+    mabain::DB::CloseLogFile();
+#endif
     return 0;
 }

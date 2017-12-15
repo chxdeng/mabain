@@ -23,7 +23,6 @@
 #include <atomic>
 
 #include <mabain/db.h>
-#include <mabain/logger.h>
 
 #include "test_key.h"
 
@@ -70,6 +69,8 @@ int main()
         abort();
     }
 
+    mabain::DB::SetLogFile("/var/tmp/mabain_test/mabain.log");
+
     write_index.store(0, std::memory_order_release);
     // Writer needs to enable async writer mode.
     int options = CONSTS::WriterOptions() | CONSTS::ASYNC_WRITER_MODE;
@@ -92,8 +93,10 @@ int main()
         pthread_join(pid[i], NULL);
     }
 
-    // Writer handle must be the last to close in the reader handles are used for update.
+    // Writer handle must be the last one to close if reader handles are used for DB update.
     assert(db->Close() == MBError::SUCCESS);
     delete db;
+
+    mabain::DB::CloseLogFile();
     return 0;
 }

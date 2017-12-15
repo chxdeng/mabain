@@ -123,6 +123,7 @@ public:
     int  SetAsyncWriterPtr(DB *db_writer);
     int  UnsetAsyncWriterPtr(DB *db_writer);
     bool AsyncWriterEnabled() const;
+    bool AsyncWriterBusy() const;
 
     // multi-thread or multi-process locking for DB management
     int WrLock();
@@ -137,8 +138,10 @@ public:
     // level 1: error and warn will be logged.
     // level 2: error, warn, and info will be logged. This is the default setting.
     // level 3: error, warn, info and debug will be logged.
+    static void SetLogFile(const std::string &log_file);
     static int  SetLogLevel(int level);
     static void LogDebug();
+    static void CloseLogFile();
 
     // Print database stats
     void PrintStats(std::ostream &out_stream = std::cout) const;

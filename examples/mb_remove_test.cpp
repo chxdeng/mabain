@@ -29,6 +29,7 @@ int main(int argc, char *argv[])
         db_dir = argv[1];
     }
 
+    mabain::DB::SetLogFile("/var/tmp/mabain_test/mabain.log");
     DB db(db_dir, CONSTS::WriterOptions());
     if(!db.is_open()) {
         std::cerr << "failed to open mabain db: " << db.StatusStr() << "\n";
@@ -69,5 +70,6 @@ int main(int argc, char *argv[])
 
     db.PrintStats(std::cout);
     db.Close();
+    mabain::DB::CloseLogFile();
     return 0;
 }
