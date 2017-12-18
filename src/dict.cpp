@@ -316,7 +316,7 @@ int Dict::ReadDataFromEdge(MBData &data, const EdgePtrs &edge_ptrs) const
                != DATA_SIZE_BYTE)
         return MBError::READ_ERROR;
     data_off += DATA_SIZE_BYTE;
-    if(data.buff_len < data_len)
+    if(data.buff_len < data_len + 1)
     {
         if(data.Resize(data_len) != MBError::SUCCESS)
             return MBError::NO_MEMORY;
@@ -401,7 +401,7 @@ int Dict::ReadDataFromNode(MBData &data, const uint8_t *node_ptr) const
         return MBError::READ_ERROR;
     data_off += DATA_SIZE_BYTE;
 
-    if(data.buff_len < data_len)
+    if(data.buff_len < data_len + 1)
     {
         if(data.Resize(data_len) != MBError::SUCCESS)
             return MBError::NO_MEMORY;

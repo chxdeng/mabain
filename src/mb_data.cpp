@@ -40,7 +40,7 @@ MBData::MBData(int size, int match_options)
     buff_len = size;
     buff = NULL;
     if(buff_len > 0)
-        buff = static_cast<uint8_t*>(malloc(buff_len));
+        buff = static_cast<uint8_t*>(malloc(buff_len + 1));
 
     if(buff != NULL)
     {
@@ -78,7 +78,7 @@ int MBData::TransferValueTo(uint8_t* &data, int &dlen)
     }
     else
     {
-        data = (uint8_t *) malloc(data_len);
+        data = (uint8_t *) malloc(data_len + 1);
         if(data == NULL)
             return MBError::NO_MEMORY;
         memcpy(data, buff, data_len);
@@ -133,7 +133,7 @@ int MBData::Resize(int size)
             free_buffer = true;
         }
 
-        buff = static_cast<uint8_t*>(malloc(buff_len));
+        buff = static_cast<uint8_t*>(malloc(buff_len + 1));
         if(buff == NULL)
         {
             buff_len = 0;
