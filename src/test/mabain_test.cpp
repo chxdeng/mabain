@@ -32,6 +32,7 @@
 using namespace mabain;
 
 const std::string MB_DIR = std::string("/var/tmp/mabain_test/");
+static bool debug = false;
 
 static void clean_db_dir()
 {
@@ -89,7 +90,8 @@ static void load_test(std::string &list_file, int64_t memcap, uint32_t db_id,
     gettimeofday(&start, NULL);
     while(std::getline(in, line)) {
         if(line.length() > (unsigned)CONSTS::MAX_KEY_LENGHTH) {
-            std::cout<<line<<"\n";
+            if(debug)
+                std::cout<<line<<"\n";
             continue;
         }
 
@@ -115,7 +117,6 @@ static void load_test(std::string &list_file, int64_t memcap, uint32_t db_id,
     std::cout << "count: " << count << " " << count_existing <<
                  "    time: " << 1.0*tmdiff/count << "\n";
     assert(expected_count == count);
-std::cout<<expected_count<<" "<<db_cnt<<"\n";
     assert(expected_count == db_cnt);
 }
 
@@ -142,7 +143,8 @@ static void lookup_test(std::string &list_file, int64_t memcap, uint32_t db_id,
         if(rval == MBError::SUCCESS) {
             found++;
         } else {
-            //std::cout << "failed: " << line << "\n";
+            if(debug)
+                std::cout << "failed: " << line << "\n";
         }
         count++;
         if(count % 1000000 == 0) std::cout << "Looked up " << count << "\n";
@@ -298,7 +300,7 @@ static void delete_test(std::string &list_file, int64_t memcap, uint32_t db_id,
         rval = db.Remove(line);
         if(rval == MBError::SUCCESS) {
             nfound++;
-        } else {
+        } else if(debug) {
             std::cerr << "failed to remove " << line << ": " <<
                          MBError::get_error_str(rval) << "\n";
         }
@@ -360,6 +362,49 @@ static void iterator_test(int64_t memcap, uint32_t db_id, int64_t expected_count
     assert(expected_count == count);
 }
 
+static void prune_test(int64_t memcap, uint32_t db_id, int64_t expected_count)
+{
+    int options = CONSTS::WriterOptions() | CONSTS::ASYNC_WRITER_MODE;
+    DB db_w(MB_DIR, options, memcap, memcap, 0, db_id);
+    assert(db_w.is_open());
+
+    // Use reader for iteration
+    DB db_r(MB_DIR, CONSTS::ReaderOptions(), memcap, memcap, 0, db_id+1000000);
+    assert(db_r.is_open());
+    assert(db_r.SetAsyncWriterPtr(&db_w) == MBError::SUCCESS);
+    assert(db_r.AsyncWriterEnabled());
+
+    int count = 0;
+    struct timeval start, stop;
+    gettimeofday(&start, NULL);
+    // Delete one-third of the DB
+    for(DB::iterator iter = db_r.begin(); iter != db_r.end(); ++iter) {
+        count++;
+        if(count % 3 == 0) {
+            db_r.Remove(iter.key);    
+        }
+        if(count % 1000000 == 0) {
+            std::cout << "iterated " << count << "\n";
+        }
+    }
+    
+    assert(db_r.UnsetAsyncWriterPtr(&db_w) == MBError::SUCCESS);
+    assert(db_r.Close() == MBError::SUCCESS);
+
+    // wait until all deletions are complete
+    while(db_w.AsyncWriterBusy()) {
+        usleep(10);
+    }
+    int64_t db_cnt = db_w.Count();
+    db_w.PrintStats();
+    assert(db_w.Close() == MBError::SUCCESS);
+
+    gettimeofday(&stop, NULL);
+    assert(expected_count == db_cnt);
+    int64_t tmdiff = (stop.tv_sec-start.tv_sec)*1000000 + (stop.tv_usec-start.tv_usec);
+    std::cout << "count: " << count << "   time: " << 1.0*tmdiff/count << "\n";
+}
+
 int main(int argc, char *argv[])
 {
     clean_db_dir();
@@ -368,6 +413,8 @@ int main(int argc, char *argv[])
     if(argc == 2) {
         test_list_file = argv[1];
     }
+
+    DB::SetLogFile("/var/tmp/mabain_test/mabain.log");
     std::ifstream test_in(test_list_file);
     assert(test_in.is_open());
     std::string file;
@@ -405,6 +452,8 @@ int main(int argc, char *argv[])
             delete_odd_test(file, memcap, db_id, expected_count);
         } else if(mode.compare("shrink") == 0) {
             shrink_test(file, memcap, db_id, expected_count);
+        } else if(mode.compare("prune") == 0) {
+            prune_test(memcap, db_id, expected_count);
         } else {
             std::cerr << "Unknown test\n";
             abort();
@@ -415,6 +464,8 @@ int main(int argc, char *argv[])
         }
         db_id++;
     }
+
     test_in.close();
+    DB::CloseLogFile();
     return 0;
 }

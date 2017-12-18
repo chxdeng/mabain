@@ -355,6 +355,7 @@ int main(int argc, char *argv[])
     test_type = -1;
     srand(time(NULL));
 
+    mabain::DB::SetLogFile("/var/tmp/mabain_test/mabain.log");
     if(argc >= 4) {
         const char *test_tp = argv[1];
         if(strcmp(test_tp, "add") == 0)
@@ -474,5 +475,6 @@ int main(int argc, char *argv[])
         }
     }
 
+    mabain::DB::CloseLogFile();
     return 0;
 }

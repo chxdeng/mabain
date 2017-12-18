@@ -182,7 +182,7 @@ int DB::iterator::get_node_offset(const std::string &node_key,
     value.options |= CONSTS::OPTION_FIND_AND_STORE_PARENT;
     while(true)
     {
-        rval = db_ref.dict->Find((const uint8_t *)node_key.c_str(),
+        rval = db_ref.dict->Find((const uint8_t *)node_key.data(),
                                  node_key.size(), value);
         if(rval != MBError::TRY_AGAIN)
             break;

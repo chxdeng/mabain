@@ -99,12 +99,15 @@ AsyncWriter::~AsyncWriter()
 
 void AsyncWriter::UpdateNumUsers(int delta)
 {
-    num_users += delta;
+    if(delta > 0)
+        num_users.fetch_add(1, std::memory_order_release);
+    else if(delta < 0)
+        num_users.fetch_sub(1, std::memory_order_release);
 }
 
 int AsyncWriter::StopAsyncThread()
 {
-    if(num_users > 0)
+    if(num_users.load(std::memory_order_consume) > 0)
     {
         Logger::Log(LOG_LEVEL_ERROR, "still being used, cannot shutdown async thread");
         return MBError::NOT_ALLOWED;
@@ -135,6 +138,21 @@ int AsyncWriter::StopAsyncThread()
         delete [] queue;
 
     return MBError::SUCCESS;
+}
+
+// Check if async tasks (not including rc) are completed.
+bool AsyncWriter::Busy() const
+{
+    uint32_t index = queue_index.load(std::memory_order_consume);
+    AsyncNode *node_ptr = queue + (index % max_num_queue_node);
+
+    if(node_ptr->in_use.load(std::memory_order_consume) &&
+       node_ptr->type != MABAIN_ASYNC_TYPE_RC)
+    {
+        return true;
+    }
+
+    return false;
 }
 
 AsyncNode* AsyncWriter::AcquireSlot()
@@ -298,8 +316,7 @@ void* AsyncWriter::async_writer_thread()
             case MABAIN_ASYNC_TYPE_RC:
                 rval = MBError::SUCCESS;
                 try {
-                    ResourceCollection rc(*db);
-                    rc.ReclaimResource(node_ptr->min_index_rc_size, node_ptr->min_data_rc_size);
+                    rc_async->ReclaimResource(node_ptr->min_index_rc_size, node_ptr->min_data_rc_size);
                 } catch (int error) {
                     if(error != MBError::RC_SKIPPED)
                         rval = error;

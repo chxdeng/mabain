@@ -1256,7 +1256,15 @@ int Dict::ExceptionRecovery()
     Logger::Log(LOG_LEVEL_INFO, "writer was not shutdown gracefully with exception status %d",
                 header->excep_updating_status);
     // Dumper header before running recover
-    PrintHeader(*Logger::GetLogStream());
+    std::ofstream *logstream = Logger::GetLogStream();
+    if(logstream != NULL)
+    {
+        PrintHeader(*logstream);
+    }
+    else
+    {
+        PrintHeader(std::cout);
+    }
 
     switch(header->excep_updating_status)
     {

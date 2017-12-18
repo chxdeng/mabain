@@ -66,6 +66,7 @@ void Logger::InitLogFile(const std::string &logfile)
     if(!logfile.empty())
     {
         log_file = logfile;
+        log_level_ = LOG_LEVEL_INFO;
         log_stream = new std::ofstream();
         log_stream->open(log_file.c_str(), std::ios::out | std::ios::app);
     }
@@ -113,18 +114,18 @@ void Logger::Log(int level, const std::string &message)
     if(level > log_level_)
         return;
 
-    char buffer[80];
-    FillDateTime(buffer, sizeof(buffer));
     if(log_stream != NULL)
     {
+        char buffer[80];
+        FillDateTime(buffer, sizeof(buffer));
         *log_stream << buffer << LOG_LEVEL[level] << message << std::endl;
         if(log_stream->tellp() > roll_size)
             Logger::Rotate();
     }
     else if(level < LOG_LEVEL_INFO)
-        std::cerr << buffer << ": " << message << std::endl;
+        std::cerr << message << std::endl;
     else
-        std::cout << buffer << ": " << message << std::endl;
+        std::cout << message << std::endl;
 }
 
 void Logger::Log(int level, const char *format, ... )
@@ -133,21 +134,21 @@ void Logger::Log(int level, const char *format, ... )
         return;
 
     char message[256];
-    char buffer[64];
-    FillDateTime(buffer, sizeof(buffer));
     va_list args;
     va_start(args, format);
     vsprintf(message, format, args);
     if(log_stream != NULL)
     {
+        char buffer[64];
+        FillDateTime(buffer, sizeof(buffer));
         *log_stream << buffer << LOG_LEVEL[level] << message << std::endl;
         if(log_stream->tellp() > roll_size)
             Logger::Rotate();
     }
     else if(level < LOG_LEVEL_INFO)
-        std::cerr << buffer << ": " << message << std::endl;
+        std::cerr << message << std::endl;
     else
-        std::cout << buffer << ": " << message << std::endl;
+        std::cout << message << std::endl;
     va_end(args);
 }
 
