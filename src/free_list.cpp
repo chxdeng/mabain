@@ -97,7 +97,9 @@ int FreeList::AddBuffer(size_t offset, int size)
     int rval = MBError::SUCCESS;
 
     int buf_index = GetBufferIndex(size);
+#ifdef __DEBUG__
     assert(buf_index < max_num_buffer);
+#endif
 
     if(buffer_free_list[buf_index]->Count() > (unsigned)max_buffer_per_list)
     {

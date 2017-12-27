@@ -44,22 +44,25 @@ namespace {
 class ResourceCollectionTest : public ::testing::Test
 {
 public:
-    ResourceCollectionTest() : db(DB(DB_DIR, CONSTS::ACCESS_MODE_WRITER, 128ULL*1024*1024, 128ULL*1024*1024)) {
-        if(!db.is_open()) {
-            std::cerr << "failed to open mabain db: " << db.StatusStr() << "\n";
-            abort();
-        }
-
+    ResourceCollectionTest() : db(NULL) {
         key_type = MABAIN_TEST_KEY_TYPE_INT;
         srand(time(NULL));
     }
     virtual ~ResourceCollectionTest() {
-        db.Close();
+        if(db != NULL) delete db;
     }
     virtual void SetUp() {
-        db.RemoveAll();
+        std::string cmd = std::string("rm ") + DB_DIR + "_mabain_*";
+        if(system(cmd.c_str()) != 0) {
+        }
+        db = new DB(DB_DIR, CONSTS::ACCESS_MODE_WRITER, 128ULL*1024*1024, 128ULL*1024*1024);
+        if(!db->is_open()) {
+            std::cerr << "failed to open mabain db: " << db->StatusStr() << "\n";
+            abort();
+        }
     }
     virtual void TearDown() {
+        db->Close();
     }
 
     void Populate(long num, bool *exist) {
@@ -67,7 +70,7 @@ public:
         for(long i = 0; i < num; i++) {
             std::string key = tkey.get_key(i);
             std::string value = key;
-            int rval = db.Add(key.c_str(), key.length(), value.c_str(), value.length());
+            int rval = db->Add(key.c_str(), key.length(), value.c_str(), value.length());
             assert(rval == MBError::SUCCESS);
             exist[i] = true;
         }
@@ -75,12 +78,12 @@ public:
 
     void DeleteRandom(long num, bool *exist) {
         long count = 0;
-        int64_t tot_count = db.Count();
+        int64_t tot_count = db->Count();
         TestKey tkey = TestKey(key_type);
         while(true) {
             long ikey = rand() % tot_count;
             std::string key = tkey.get_key(ikey);
-            int rval = db.Remove(key.c_str(), key.length());
+            int rval = db->Remove(key.c_str(), key.length());
             if(rval == MBError::SUCCESS) {
                 exist[ikey] = false;
                 count++;
@@ -95,7 +98,7 @@ public:
             if(i % 2 == 0) continue;
             std::string key = tkey.get_key(i);
             std::string value = key;
-            db.Remove(key.c_str(), key.length());
+            db->Remove(key.c_str(), key.length());
             exist[i] = false;
         }
     }
@@ -105,7 +108,7 @@ public:
         for(long i = start; i < end; i++) {
             std::string key = tkey.get_key(i);
             std::string value = key;
-            db.Remove(key.c_str(), key.length());
+            db->Remove(key.c_str(), key.length());
             exist[i] = false;
        }
    }
@@ -115,7 +118,7 @@ public:
        std::string key = tkey.get_key(ikey);
        std::string value = key;
        MBData mbd;
-       int rval = db.Find(key.c_str(), key.length(), mbd);
+       int rval = db->Find(key.c_str(), key.length(), mbd);
        if(found) {
            EXPECT_EQ(rval, MBError::SUCCESS);
            EXPECT_TRUE(value == std::string(reinterpret_cast<char*>(mbd.buff), mbd.data_len));
@@ -125,19 +128,19 @@ public:
    }
 
 protected:
-    DB db;
+    DB *db;
     int key_type;
 };
 
 TEST_F(ResourceCollectionTest, RC_reorder_index_test)
 {
     key_type = KEY_TYPE_INT;
-    ResourceCollection rc(db, RESOURCE_COLLECTION_TYPE_INDEX);
+    ResourceCollection rc(*db, RESOURCE_COLLECTION_TYPE_INDEX);
 
     long tot = 53245;
     bool *exist = new bool[tot];
     Populate(tot, exist);
-    rc.ReclaimResource(0, 0);
+    rc.ReclaimResource(0, 0, 10000000000LL, 10000000000LL);
     for(long i = 0; i < tot; i++) {
         VerifyKeyValue(i, exist[i]);
     }
@@ -148,12 +151,12 @@ TEST_F(ResourceCollectionTest, RC_reorder_index_test)
 TEST_F(ResourceCollectionTest, RC_reorder_data_test)
 {
     key_type = MABAIN_TEST_KEY_TYPE_SHA_128;
-    ResourceCollection rc(db, RESOURCE_COLLECTION_TYPE_DATA);
+    ResourceCollection rc(*db, RESOURCE_COLLECTION_TYPE_DATA);
 
     long tot = 35275;
     bool *exist = new bool[tot];
     Populate(tot, exist);
-    rc.ReclaimResource(0, 0);
+    rc.ReclaimResource(0, 0, 10000000000LL, 10000000000LL);
     for(long i = 0; i < tot; i++) {
         VerifyKeyValue(i, exist[i]);
     }
@@ -164,13 +167,13 @@ TEST_F(ResourceCollectionTest, RC_reorder_data_test)
 TEST_F(ResourceCollectionTest, RC_reorder_index_data_test)
 {
     key_type = MABAIN_TEST_KEY_TYPE_SHA_256;
-    ResourceCollection rc(db, RESOURCE_COLLECTION_TYPE_INDEX |
-                              RESOURCE_COLLECTION_TYPE_DATA);
+    ResourceCollection rc(*db, RESOURCE_COLLECTION_TYPE_INDEX |
+                               RESOURCE_COLLECTION_TYPE_DATA);
 
     long tot = 35275;
     bool *exist = new bool[tot];
     Populate(tot, exist);
-    rc.ReclaimResource(0, 0);
+    rc.ReclaimResource(0, 0, 10000000000LL, 10000000000LL);
     for(long i = 0; i < tot; i++) {
         VerifyKeyValue(i, exist[i]);
     }
@@ -181,13 +184,13 @@ TEST_F(ResourceCollectionTest, RC_reorder_index_data_test)
 TEST_F(ResourceCollectionTest, RC_delete_odd_collect_index_test)
 {
     key_type = MABAIN_TEST_KEY_TYPE_INT;
-    ResourceCollection rc(db, RESOURCE_COLLECTION_TYPE_INDEX);
+    ResourceCollection rc(*db, RESOURCE_COLLECTION_TYPE_INDEX);
 
     long tot = 128471;
     bool *exist = new bool[tot];
     Populate(tot, exist);
     DeleteOdd(tot, exist);
-    rc.ReclaimResource(0, 0);
+    rc.ReclaimResource(0, 0, 10000000000LL, 10000000000LL);
     for(long i = 0; i < tot; i++) {
         VerifyKeyValue(i, exist[i]);
     }
@@ -198,13 +201,13 @@ TEST_F(ResourceCollectionTest, RC_delete_odd_collect_index_test)
 TEST_F(ResourceCollectionTest, RC_delete_random_collect_data_test)
 {
     key_type = MABAIN_TEST_KEY_TYPE_SHA_128;
-    ResourceCollection rc(db, RESOURCE_COLLECTION_TYPE_DATA);
+    ResourceCollection rc(*db, RESOURCE_COLLECTION_TYPE_DATA);
 
     long tot = 34521;
     bool *exist = new bool[tot];
     Populate(tot, exist);
     DeleteRandom(tot, exist);
-    rc.ReclaimResource(0, 0);
+    rc.ReclaimResource(0, 0, 10000000000LL, 10000000000LL);
     for(long i = 0; i < tot; i++) {
         VerifyKeyValue(i, exist[i]);
     }
@@ -215,14 +218,14 @@ TEST_F(ResourceCollectionTest, RC_delete_random_collect_data_test)
 TEST_F(ResourceCollectionTest, RC_delete_random_collect_index_data_test)
 {
     key_type = MABAIN_TEST_KEY_TYPE_SHA_256;
-    ResourceCollection rc(db, RESOURCE_COLLECTION_TYPE_INDEX |
-                              RESOURCE_COLLECTION_TYPE_DATA);
+    ResourceCollection rc(*db, RESOURCE_COLLECTION_TYPE_INDEX |
+                               RESOURCE_COLLECTION_TYPE_DATA);
 
     long tot = 34521;
     bool *exist = new bool[tot];
     Populate(tot, exist);
     DeleteRandom(tot, exist);
-    rc.ReclaimResource(0, 0);
+    rc.ReclaimResource(0, 0, 10000000000LL, 10000000000LL);
     for(long i = 0; i < tot; i++) {
         VerifyKeyValue(i, exist[i]);
     }
@@ -233,8 +236,8 @@ TEST_F(ResourceCollectionTest, RC_delete_random_collect_index_data_test)
 TEST_F(ResourceCollectionTest, RC_delete_range_collect_index_data_test)
 {
     key_type = MABAIN_TEST_KEY_TYPE_SHA_256;
-    ResourceCollection rc(db, RESOURCE_COLLECTION_TYPE_INDEX |
-                              RESOURCE_COLLECTION_TYPE_DATA);
+    ResourceCollection rc(*db, RESOURCE_COLLECTION_TYPE_INDEX |
+                               RESOURCE_COLLECTION_TYPE_DATA);
 
     long tot = 34521;
     bool *exist = new bool[tot];
@@ -242,7 +245,7 @@ TEST_F(ResourceCollectionTest, RC_delete_range_collect_index_data_test)
     DeleteRange(0, 23, exist);
     DeleteRange(1110, 1118, exist);
     DeleteRange(29110, 29301, exist);
-    rc.ReclaimResource(0, 0);
+    rc.ReclaimResource(0, 0, 10000000000LL, 10000000000LL);
     for(long i = 0; i < tot; i++) {
         VerifyKeyValue(i, exist[i]);
     }
@@ -253,22 +256,23 @@ TEST_F(ResourceCollectionTest, RC_delete_range_collect_index_data_test)
 TEST_F(ResourceCollectionTest, RC_delete_random_collect_index_data_add_test)
 {
     key_type = MABAIN_TEST_KEY_TYPE_SHA_128;
-    ResourceCollection rc(db, RESOURCE_COLLECTION_TYPE_INDEX |
-                              RESOURCE_COLLECTION_TYPE_DATA);
+    ResourceCollection rc(*db, RESOURCE_COLLECTION_TYPE_INDEX |
+                               RESOURCE_COLLECTION_TYPE_DATA);
 
     long tot = 55569;
     bool *exist = new bool[tot];
     Populate(tot, exist);
     DeleteRandom(tot, exist);
-    rc.ReclaimResource(0, 0);
+    rc.ReclaimResource(0, 0, 10000000000LL, 10000000000LL);
     for(long i = 0; i < tot; i++) {
         VerifyKeyValue(i, exist[i]);
     }
 
-    db.Close();
+    db->Close();
+    delete db;
 
-    db = DB(DB_DIR, CONSTS::ACCESS_MODE_WRITER, 128ULL*1024*1024, 128ULL*1024*1024);
-    if(!db.is_open()) {
+    db = new DB(DB_DIR, CONSTS::ACCESS_MODE_WRITER, 128ULL*1024*1024, 128ULL*1024*1024);
+    if(!db->is_open()) {
         std::cerr << "failed top open db\n";
         exit(0);
     }

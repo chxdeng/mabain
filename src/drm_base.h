@@ -24,6 +24,7 @@
 
 #define DATA_BUFFER_ALIGNMENT      1
 #define DATA_SIZE_BYTE             2
+#define DATA_HDR_BYTE              4
 #define OFFSET_SIZE                6
 #define EDGE_SIZE                  13
 #define EDGE_LEN_POS               5
@@ -71,6 +72,16 @@ typedef struct _IndexHeader
 
     // read/write lock
     pthread_rwlock_t mb_rw_lock;
+
+    // block size
+    uint32_t index_block_size;
+    uint32_t data_block_size;
+    // number of entry per bucket for eviction
+    int64_t  entry_per_bucket;
+    // number of DB insertions and updates
+    // used for assigning bucket
+    int64_t  num_update;
+    uint16_t eviction_bucket_index;
 
     // temp variables used for abnormal writer terminations
     int     excep_updating_status;

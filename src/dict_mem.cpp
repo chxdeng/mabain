@@ -62,7 +62,8 @@ namespace mabain {
 /////////////////////////////////////////////////////////////////////////////////////
 
 
-DictMem::DictMem(const std::string &mbdir, bool init_header, size_t memsize, int mode)
+DictMem::DictMem(const std::string &mbdir, bool init_header, size_t memsize,
+                 int mode, uint32_t block_size, int max_num_blk)
                : is_valid(false)
 {
     root_offset = 0;
@@ -83,8 +84,21 @@ DictMem::DictMem(const std::string &mbdir, bool init_header, size_t memsize, int
     }
 
     // Both reader and writer need to open the mmapped file.
-    kv_file = new RollableFile(mbdir + "_mabain_i", static_cast<size_t>(INDEX_BLOCK_SIZE),
-                               memsize, mode);
+    if(!init_header)
+    {
+        if(block_size != 0 && header->index_block_size != block_size)
+        {
+            std::cerr << "mabain index block size not match\n";
+            throw (int) MBError::INVALID_SIZE;
+        }
+    }
+    else
+    {
+        header->index_block_size = block_size;
+    }
+    kv_file = new RollableFile(mbdir + "_mabain_i",
+                               static_cast<size_t>(header->index_block_size),
+                               memsize, mode, max_num_blk);
 
     kv_file->InitShmSlidingAddr(&header->shm_index_sliding_start);
 
@@ -134,14 +148,18 @@ const uint8_t DictMem::empty_edge[] = {0};
 
 void DictMem::InitRootNode()
 {
+#ifdef __DEBUG__
     assert(header != NULL);
+#endif
     header->m_index_offset = 0;
 
     bool node_move;
     uint8_t *root_node;
 
     node_move = ReserveNode(NUM_ALPHABET-1, root_offset, root_node);
+#ifdef __DEBUG__
     assert(root_offset == 0);
+#endif
 
     root_node[0] = FLAG_NODE_NONE;
     root_node[1] = NUM_ALPHABET-1;
@@ -456,7 +474,9 @@ int DictMem::UpdateNode(EdgePtrs &edge_ptrs, const uint8_t *key, int key_len,
     }
     else
     {
+#ifdef __DEBUG__
         assert(nt > 0);
+#endif
 
         // Copy old node
         int copy_size = NODE_EDGE_KEY_FIRST + nt;
@@ -583,7 +603,9 @@ bool DictMem::FindNext(const unsigned char *key, int keylen, int &match_len,
 // The allocated in-memory buffer must be initialized to zero.
 bool DictMem::ReserveNode(int nt, size_t &offset, uint8_t* &ptr)
 {
+#ifdef __DEBUG__
     assert(nt >= 0 && nt < 256);
+#endif
 
     int buf_size = free_lists->GetAlignmentSize(node_size[nt]);
     int buf_index = free_lists->GetBufferIndex(buf_size);
@@ -995,6 +1017,7 @@ void DictMem::PrintStats(std::ostream &out_stream) const
 
     out_stream << "Dict Memory Stats:" << std::endl;
     out_stream << "\tIndex size: " << header->m_index_offset << std::endl;
+    out_stream << "\tIndex block size: " << header->index_block_size << std::endl;
     out_stream << "\tNumber of edges: " << header->n_edges << std::endl;
     out_stream << "\tNumber of nodes: " << header->n_states << std::endl;
     out_stream << "\tEdge string size: " << header->edge_str_size << std::endl;

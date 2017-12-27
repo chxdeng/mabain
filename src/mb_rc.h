@@ -22,6 +22,7 @@
 #include "db.h"
 #include "dict.h"
 #include "mbt_base.h"
+#include "async_writer.h"
 
 #define RESOURCE_COLLECTION_TYPE_INDEX            0x01
 #define RESOURCE_COLLECTION_TYPE_DATA             0x02
@@ -39,16 +40,19 @@ public:
                   RESOURCE_COLLECTION_TYPE_DATA);
     virtual ~ResourceCollection();
 
-    void ReclaimResource(int min_index_size, int min_data_size);
+    void ReclaimResource(int64_t min_index_size, int64_t min_data_size,
+                         int64_t max_dbsz, int64_t max_dbcnt,
+                         AsyncWriter *awr = NULL);
 
 private:
     void DoTask(int phase, DBTraverseNode &dbt_node);
-    void Prepare(int min_index_size, int min_data_size);
+    void Prepare(int64_t min_index_size, int64_t min_data_size);
     void CollectBuffers();
     void ReorderBuffers();
     void Finish();
     bool MoveIndexBuffer(int phase, size_t &offset_src, int size);
     bool MoveDataBuffer(int phase, size_t &offset_src, int size);
+    int  LRUEviction();
 
     int      rc_type;
     int      index_rc_status;
@@ -61,6 +65,9 @@ private:
     int64_t  data_reorder_cnt;
     size_t   m_index_off_pre;
     size_t   m_data_off_pre;
+
+    // Async writer pointer
+    AsyncWriter *async_writer_ptr;
 };
 
 }

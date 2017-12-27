@@ -42,7 +42,7 @@ public:
         unlink((db_dir + "/_mabain_h").c_str());
         unlink((db_dir + "/_dbfl").c_str());
         unlink((db_dir + "/_ibfl").c_str());
-        db = new DB(db_dir, CONSTS::ACCESS_MODE_WRITER);
+        db = new DB(db_dir.c_str(), CONSTS::ACCESS_MODE_WRITER);
         if(!db->is_open()) {
             std::cerr << "failed to open db: " << db_dir << " " << db->StatusStr() << "\n";
             exit(0);

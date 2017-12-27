@@ -31,38 +31,21 @@
 
 using namespace mabain;
 
-const std::string MB_DIR = std::string("/var/tmp/mabain_test/");
+static const char* MB_DIR = "/var/tmp/mabain_test/";
 static bool debug = false;
 
 static void clean_db_dir()
 {
-    std::string cmd = std::string("rm -rf ") + MB_DIR + "*";
+    std::string cmd = std::string("rm -rf ") + MB_DIR + "_mabain_*";
     if(system(cmd.c_str()) != 0) {
     }
 }
 
-static void clear_mabain_db()
-{
-    int option = CONSTS::WriterOptions();
-    option &= ~CONSTS::ASYNC_WRITER_MODE;
-    DB db(MB_DIR, option, 0, 0);
-    if(db.Status() != MBError::SUCCESS) {
-        std::cout << "DB error: " << MBError::get_error_str(db.Status()) << "\n";
-        exit(1);
-    }
-    db.RemoveAll();
-    db.Close();
-    std::cout << "All entries in db were removed\n";
-}
-
 #define VALUE_LENGTH 16
-static void load_test(std::string &list_file, int64_t memcap, uint32_t db_id,
-               int64_t expected_count)
+static void load_test(std::string &list_file, MBConfig &mbconf, int64_t expected_count)
 {
     std::cout << "Loading " << list_file << "\n";
-    int option = CONSTS::WriterOptions();
-    option &= ~CONSTS::ASYNC_WRITER_MODE;
-    DB db(MB_DIR, option, memcap, 0, 10, db_id);
+    DB db(mbconf);
     if(db.Status() != MBError::SUCCESS) {
         std::cout << "DB error: " << MBError::get_error_str(db.Status()) << "\n";
         exit(1);
@@ -120,11 +103,52 @@ static void load_test(std::string &list_file, int64_t memcap, uint32_t db_id,
     assert(expected_count == db_cnt);
 }
 
-static void lookup_test(std::string &list_file, int64_t memcap, uint32_t db_id,
-                 int64_t expected_count)
+static void update_test(std::string &list_file, MBConfig &mbconf, int64_t expected_count)
+{
+    std::cout << "Updating " << list_file << "\n";
+    DB db(mbconf);
+    if(db.Status() != MBError::SUCCESS) {
+        std::cout << "DB error: " << MBError::get_error_str(db.Status()) << "\n";
+        exit(1);
+    }
+    std::ifstream in(list_file.c_str());
+    if(!in.is_open()) {
+        std::cerr << "cannot open file " << list_file << "\n";
+        in.close();
+        return;
+    }
+
+    struct timeval start, stop;
+    int64_t count = 0;
+    std::string line;
+    int rval;
+    gettimeofday(&start, NULL);
+    while(std::getline(in, line)) {
+        if(line.length() > (unsigned)CONSTS::MAX_KEY_LENGHTH) {
+            if(debug)
+                std::cout<<line<<"\n";
+            continue;
+        }
+
+        rval = db.Add(line, line, true);
+        assert(rval == MBError::SUCCESS);
+        count++;
+        if(count % 1000000 == 0) std::cout << "Added " << count << "\n";
+    }
+    in.close();
+    gettimeofday(&stop, NULL);
+    db.PrintStats();
+    int64_t db_cnt = db.Count();
+    db.Close();
+    int64_t tmdiff = (stop.tv_sec-start.tv_sec)*1000000 + (stop.tv_usec-start.tv_usec);
+    std::cout << "count: " << count << "    time: " << 1.0*tmdiff/db_cnt << "\n";
+    assert(expected_count == db_cnt);
+}
+
+static void lookup_test(std::string &list_file, MBConfig &mbconf, int64_t expected_count)
 {
     std::cout << "Lookup test: " << list_file << "\n";
-    DB db(MB_DIR, CONSTS::ReaderOptions(), memcap, 0, 0, db_id);
+    DB db(mbconf);
     assert(db.Status() == MBError::SUCCESS);
     std::ifstream in(list_file.c_str());
     assert(in.is_open());
@@ -158,11 +182,10 @@ static void lookup_test(std::string &list_file, int64_t memcap, uint32_t db_id,
     assert(found == expected_count);
 }
 
-static void prefix_lookup_test(std::string &list_file, int64_t memcap,
-                        uint32_t db_id, int64_t expected_count)
+static void prefix_lookup_test(std::string &list_file, MBConfig &mbconf, int64_t expected_count)
 {
     std::cout << "Lookup test: " << list_file << "\n";
-    DB db(MB_DIR, CONSTS::ReaderOptions(), memcap, 0, 0, db_id);
+    DB db(mbconf);
     assert(db.Status() == MBError::SUCCESS);
     std::ifstream in(list_file.c_str());
     assert(in.is_open());
@@ -195,11 +218,11 @@ static void prefix_lookup_test(std::string &list_file, int64_t memcap,
     assert(expected_count == nfound);
 }
 
-static void longest_prefix_lookup_test(std::string &list_file, int64_t memcap,
-                                uint32_t db_id, int64_t expected_count)
+static void longest_prefix_lookup_test(std::string &list_file, MBConfig &mbconf,
+                                       int64_t expected_count)
 {
     std::cout << "Lookup test: " << list_file << "\n";
-    DB db(MB_DIR, CONSTS::ReaderOptions(), memcap, 0, 0, db_id);
+    DB db(mbconf);
     assert(db.Status() == MBError::SUCCESS);
     std::ifstream in(list_file.c_str());
     assert(in.is_open());
@@ -232,13 +255,10 @@ static void longest_prefix_lookup_test(std::string &list_file, int64_t memcap,
     assert(expected_count == nfound);
 }
 
-static void delete_odd_test(std::string &list_file, int64_t memcap, uint32_t db_id,
-                 int64_t expected_count)
+static void delete_odd_test(std::string &list_file, MBConfig &mbconf, int64_t expected_count)
 {
     std::cout << "deletion odd-entry test: " << list_file << "\n";
-    int option = CONSTS::WriterOptions();
-    option &= ~CONSTS::ASYNC_WRITER_MODE;
-    DB db(MB_DIR, option, memcap, 0, 0, db_id);
+    DB db(mbconf);
     assert(db.Status() == MBError::SUCCESS);
     std::ifstream in(list_file.c_str());
     assert(in.is_open());
@@ -276,13 +296,10 @@ static void delete_odd_test(std::string &list_file, int64_t memcap, uint32_t db_
     assert(expected_count == nfound);
 }
 
-static void delete_test(std::string &list_file, int64_t memcap, uint32_t db_id,
-                 int64_t expected_count)
+static void delete_test(std::string &list_file, MBConfig &mbconf, int64_t expected_count)
 {
     std::cout << "deletion test: " << list_file << "\n";
-    int option = CONSTS::WriterOptions();
-    option &= ~CONSTS::ASYNC_WRITER_MODE;
-    DB db(MB_DIR, option, memcap, 0, 0, db_id);
+    DB db(mbconf);
     assert(db.Status() == MBError::SUCCESS);
     std::ifstream in(list_file.c_str());
     assert(in.is_open());
@@ -317,18 +334,16 @@ static void delete_test(std::string &list_file, int64_t memcap, uint32_t db_id,
     assert(expected_count == nfound);
 }
 
-static void shrink_test(std::string &list_file, int64_t memcap, uint32_t db_id,
+static void shrink_test(std::string &list_file, MBConfig &mbconf,
                  int64_t expected_count)
 {
     std::cout << "shrink test: " << list_file << "\n";
-    int option = CONSTS::WriterOptions();
-    option &= ~CONSTS::ASYNC_WRITER_MODE;
-    DB db(MB_DIR, option, memcap, 0, 0, db_id);
+    DB db(mbconf);
     assert(db.Status() == MBError::SUCCESS);
     struct timeval start, stop;
 
     gettimeofday(&start, NULL);
-    int rval = db.CollectResource(0, 0);
+    int rval = db.CollectResource(1024, 1024, 0xFFFFFFFFFFFFF, 0xFFFFFFFFFFFF);
     gettimeofday(&stop, NULL);
     assert(rval == MBError::SUCCESS);
 
@@ -338,9 +353,9 @@ static void shrink_test(std::string &list_file, int64_t memcap, uint32_t db_id,
     std::cout << "shrink time: " << tmdiff/1000000. << "\n";
 }
 
-static void iterator_test(int64_t memcap, uint32_t db_id, int64_t expected_count)
+static void iterator_test(MBConfig &mbconf, int64_t expected_count)
 {
-    DB db(MB_DIR, CONSTS::ReaderOptions(), memcap, 0, 0, db_id);
+    DB db(mbconf);
     assert(db.Status() == MBError::SUCCESS);
  
     int count = 0;
@@ -362,47 +377,94 @@ static void iterator_test(int64_t memcap, uint32_t db_id, int64_t expected_count
     assert(expected_count == count);
 }
 
-static void prune_test(int64_t memcap, uint32_t db_id, int64_t expected_count)
+static void prune_test(MBConfig &mbconf, int64_t expected_count)
 {
-    int options = CONSTS::WriterOptions() | CONSTS::ASYNC_WRITER_MODE;
-    DB db_w(MB_DIR, options, memcap, memcap, 0, db_id);
-    assert(db_w.is_open());
-
-    // Use reader for iteration
-    DB db_r(MB_DIR, CONSTS::ReaderOptions(), memcap, memcap, 0, db_id+1000000);
-    assert(db_r.is_open());
-    assert(db_r.SetAsyncWriterPtr(&db_w) == MBError::SUCCESS);
-    assert(db_r.AsyncWriterEnabled());
+    DB db(mbconf);
+    assert(db.is_open());
 
     int count = 0;
     struct timeval start, stop;
     gettimeofday(&start, NULL);
     // Delete one-third of the DB
-    for(DB::iterator iter = db_r.begin(); iter != db_r.end(); ++iter) {
+    for(DB::iterator iter = db.begin(); iter != db.end(); ++iter) {
         count++;
         if(count % 3 == 0) {
-            db_r.Remove(iter.key);    
+            db.Remove(iter.key);    
         }
         if(count % 1000000 == 0) {
             std::cout << "iterated " << count << "\n";
         }
     }
     
-    assert(db_r.UnsetAsyncWriterPtr(&db_w) == MBError::SUCCESS);
-    assert(db_r.Close() == MBError::SUCCESS);
-
-    // wait until all deletions are complete
-    while(db_w.AsyncWriterBusy()) {
-        usleep(10);
-    }
-    int64_t db_cnt = db_w.Count();
-    db_w.PrintStats();
-    assert(db_w.Close() == MBError::SUCCESS);
+    int64_t db_cnt = db.Count();
+    db.PrintStats();
+    assert(db.Close() == MBError::SUCCESS);
 
     gettimeofday(&stop, NULL);
     assert(expected_count == db_cnt);
     int64_t tmdiff = (stop.tv_sec-start.tv_sec)*1000000 + (stop.tv_usec-start.tv_usec);
     std::cout << "count: " << count << "   time: " << 1.0*tmdiff/count << "\n";
+}
+
+static void async_eviction_test(std::string &list_file, MBConfig &mbconf, int64_t expected_count)
+{
+    // Set up writer
+    mbconf.options = CONSTS::ACCESS_MODE_WRITER | CONSTS::USE_SLIDING_WINDOW |
+	             CONSTS::ASYNC_WRITER_MODE;
+    // Use a small size so that we can test eviction
+    DB db_async(mbconf);
+    assert(db_async.is_open());
+
+    mbconf.options = CONSTS::ACCESS_MODE_READER | CONSTS::USE_SLIDING_WINDOW;
+    DB db(mbconf);
+    assert(db_async.is_open());
+    assert(db.SetAsyncWriterPtr(&db_async) == MBError::SUCCESS);
+    assert(db.AsyncWriterEnabled());
+
+    std::string line;
+    std::ifstream in(list_file.c_str());
+    assert(in.is_open());
+    struct timeval start, stop;
+    int64_t count = 0;
+    gettimeofday(&start, NULL);
+    int check_eviction_count = 3333;
+    if(expected_count > 1000000) {
+        check_eviction_count = 3333333;
+    } else if(expected_count > 100000) {
+        check_eviction_count = 333333;
+    } else if(expected_count > 10000) {
+        check_eviction_count = 33333;
+    }
+    while(std::getline(in, line)) {
+        if(line.length() > (unsigned) CONSTS::MAX_KEY_LENGHTH) {
+            continue;
+        }
+
+        assert(db.Add(line, line) == MBError::SUCCESS);
+        count++;
+
+        if(count % 1000000 == 0) {
+            std::cout << "added " << count << "\n";
+        }
+        if(count % check_eviction_count == 0) {
+            // Prune by total count
+            assert(db.CollectResource(0xFFFFFFFFFFFF, 0xFFFFFFFFFFFF, 0xFFFFFFFFFFFF, 100) == MBError::SUCCESS);
+        } 
+    }
+    gettimeofday(&stop, NULL);
+    in.close();
+
+    assert(db.UnsetAsyncWriterPtr(&db_async) == MBError::SUCCESS);
+    db.Close();
+
+    while(db_async.AsyncWriterBusy()) {
+        usleep(50);
+    }
+    db_async.PrintStats();
+    assert(db_async.Count() == expected_count);
+    db_async.Close();
+    int64_t tmdiff = (stop.tv_sec-start.tv_sec)*1000000 + (stop.tv_usec-start.tv_usec);
+    std::cout << "count: " << count << "   time: " << 1.0*tmdiff/expected_count << "\n";
 }
 
 int main(int argc, char *argv[])
@@ -424,6 +486,13 @@ int main(int argc, char *argv[])
     int64_t expected_count;
     bool remove_db;
     uint32_t db_id = 1;
+    MBConfig mbconf;
+    memset(&mbconf, 0, sizeof(mbconf));
+
+    mbconf.mbdir = MB_DIR;
+    mbconf.block_size_index = BLOCK_SIZE_ALIGN;
+    mbconf.block_size_data = 2*BLOCK_SIZE_ALIGN;
+    mbconf.num_entry_per_bucket = 512;
     while(test_in >> file >> mode >> memcap >> remove >> expected_count) {
         if(file[0] == '#') {
             std::cout << file << "\n";
@@ -431,36 +500,56 @@ int main(int argc, char *argv[])
         }
         std::cout << "============================================\n";
         std::cout << file << " " << mode << " " << memcap << " " << remove << " " << expected_count << "\n";
+        mbconf.connect_id = db_id;
+        mbconf.memcap_index = memcap;
+        mbconf.memcap_data = memcap;
+
         if(remove.compare("remove") == 0) {
             remove_db = true;
         } else {
             remove_db = false;
         }
         if(mode.compare("load") == 0) {
-            load_test(file, memcap, db_id, expected_count);
+            mbconf.options = CONSTS::ACCESS_MODE_WRITER | CONSTS::USE_SLIDING_WINDOW;
+            load_test(file, mbconf, expected_count);
+        } else if(mode.compare("update") == 0) {
+            mbconf.options = CONSTS::ACCESS_MODE_WRITER | CONSTS::USE_SLIDING_WINDOW;
+            update_test(file, mbconf, expected_count);
         } else if(mode.compare("lookup") == 0) {
-            lookup_test(file, memcap, db_id, expected_count);
+            mbconf.options = CONSTS::ACCESS_MODE_READER | CONSTS::USE_SLIDING_WINDOW;
+            lookup_test(file, mbconf, expected_count);
         } else if(mode.compare("prefix") == 0) {
-            prefix_lookup_test(file, memcap, db_id, expected_count);
+            mbconf.options = CONSTS::ACCESS_MODE_READER | CONSTS::USE_SLIDING_WINDOW;
+            prefix_lookup_test(file, mbconf, expected_count);
         } else if(mode.compare("longest_prefix") == 0) {
-            longest_prefix_lookup_test(file, memcap, db_id, expected_count);
+            mbconf.options = CONSTS::ACCESS_MODE_READER;
+            longest_prefix_lookup_test(file, mbconf, expected_count);
         } else if(mode.compare("iterator") == 0) {
-            iterator_test(memcap, db_id, expected_count);
+            mbconf.options = CONSTS::ACCESS_MODE_READER;
+            iterator_test(mbconf, expected_count);
         } else if(mode.compare("delete") == 0) {
-            delete_test(file, memcap, db_id, expected_count);
+            mbconf.options = CONSTS::ACCESS_MODE_WRITER;
+            delete_test(file, mbconf, expected_count);
         } else if(mode.compare("delete_odd") == 0) {
-            delete_odd_test(file, memcap, db_id, expected_count);
+            mbconf.options = CONSTS::ACCESS_MODE_WRITER | CONSTS::USE_SLIDING_WINDOW;
+            delete_odd_test(file, mbconf, expected_count);
         } else if(mode.compare("shrink") == 0) {
-            shrink_test(file, memcap, db_id, expected_count);
+            mbconf.options = CONSTS::ACCESS_MODE_WRITER | CONSTS::USE_SLIDING_WINDOW;
+            shrink_test(file, mbconf, expected_count);
         } else if(mode.compare("prune") == 0) {
-            prune_test(memcap, db_id, expected_count);
+            mbconf.options = CONSTS::ACCESS_MODE_WRITER | CONSTS::USE_SLIDING_WINDOW;
+            prune_test(mbconf, expected_count);
+        } else if(mode.compare("eviction") == 0) {
+            async_eviction_test(file, mbconf, expected_count);
         } else {
             std::cerr << "Unknown test\n";
             abort();
         }
        
         if(remove_db) {
-            clear_mabain_db();
+            clean_db_dir();
+            mbconf.block_size_index += BLOCK_SIZE_ALIGN;
+            mbconf.block_size_data  += BLOCK_SIZE_ALIGN;
         }
         db_id++;
     }

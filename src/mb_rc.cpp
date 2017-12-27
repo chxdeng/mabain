@@ -23,47 +23,147 @@
 #include "dict_mem.h"
 #include "integer_4b_5b.h"
 
+#define PRUNE_TASK_CHECK     100
+#define MAX_PRUNE_COUNT      3
+
 namespace mabain {
 
 ResourceCollection::ResourceCollection(const DB &db, int rct)
                    : DBTraverseBase(db), rc_type(rct)
 {
+    async_writer_ptr = NULL;
 }
 
 ResourceCollection::~ResourceCollection()
 {
 }
 
-void ResourceCollection::ReclaimResource(int min_index_size, int min_data_size)
+#define CIRCULAR_INDEX_DIFF(x, y) ((x)>(y) ? ((x)-(y)) : (0xFFFF-(y)+(x)))
+#define CIRCULAR_PRUNE_DIFF(x, y) ((x)>=(y) ? ((x)-(y)) : (0xFFFF-(y)+(x)))
+int ResourceCollection::LRUEviction()
+{
+    int64_t pruned = 0;
+    int64_t count = 0;
+    int rval = MBError::SUCCESS;
+
+    Logger::Log(LOG_LEVEL_INFO, "running LRU eviction for bucket %u", header->eviction_bucket_index);
+
+    uint16_t index_diff = CIRCULAR_INDEX_DIFF(header->eviction_bucket_index,
+                              (header->num_update/header->entry_per_bucket) % 0xFFFF);
+    uint16_t prune_diff = 0xFFFF - index_diff;
+    if(index_diff < 655)
+        prune_diff = uint16_t(prune_diff * 0.35); // prune 35%
+    else if(index_diff < 3276)
+        prune_diff = uint16_t(prune_diff * 0.25); // prune 25%
+    else if(index_diff < 6554)
+        prune_diff = uint16_t(prune_diff * 0.15); // prune 15%
+    else if(index_diff < 9830)
+        prune_diff = uint16_t(prune_diff * 0.10); // prune 10%
+    else
+        prune_diff = uint16_t(prune_diff * 0.05); // prune 5%
+    if(prune_diff == 0)
+        prune_diff = 1;
+
+    for(DB::iterator iter = db_ref.begin(false); iter != db_ref.end(); ++iter)
+    {
+        if(CIRCULAR_PRUNE_DIFF(iter.value.bucket_index, header->eviction_bucket_index) < prune_diff)
+        {
+            rval = dict->Remove((const uint8_t *)iter.key.data(), iter.key.size());
+            if(rval != MBError::SUCCESS)
+                Logger::Log(LOG_LEVEL_DEBUG, "failed to run eviction %s", MBError::get_error_str(rval));
+            else
+                pruned++;
+        }
+
+        count++;
+        if(async_writer_ptr != NULL && (count % PRUNE_TASK_CHECK == 0))
+        {
+            rval = async_writer_ptr->ProcessTask(1);
+            if(rval == MBError::RC_SKIPPED)
+                break;
+        }
+    }
+
+    if(rval != MBError::RC_SKIPPED)
+    {
+        // It is expected that eviction_bucket_index can overflow since we are only
+        // interested in circular difference.
+        header->eviction_bucket_index += prune_diff;
+        // If not enough pruned, need to retry.
+        if(pruned < int64_t(prune_diff * header->entry_per_bucket * 0.75))
+            rval = MBError::TRY_AGAIN;
+        Logger::Log(LOG_LEVEL_INFO, "LRU eviction done %d pruned, current bucket index %u",
+                    pruned, header->eviction_bucket_index);
+    }
+    else
+    {
+        Logger::Log(LOG_LEVEL_INFO, "LRU eviction skipped %d pruned", pruned);
+    }
+
+    return rval;
+}
+
+void ResourceCollection::ReclaimResource(int64_t min_index_size,
+                                         int64_t min_data_size,
+                                         int64_t max_dbsz,
+                                         int64_t max_dbcnt,
+                                         AsyncWriter *awr)
 {
     if(!db_ref.is_open())
         throw db_ref.Status();
 
-    Prepare(min_index_size, min_data_size);
-
+    async_writer_ptr = awr;
     timeval start, stop;
-    Logger::Log(LOG_LEVEL_INFO, "ResourceCollection started");
+    uint64_t timediff;
 
-    gettimeofday(&start,NULL);
-
-    ReorderBuffers();
-    CollectBuffers();
-    Finish();
-
-    gettimeofday(&stop,NULL);
-
-    uint64_t timediff = (stop.tv_sec - start.tv_sec)*1000000 + (stop.tv_usec - start.tv_usec);
-    if(timediff > 1000000)
+    // Check LRU eviction first
+    if(header->m_data_offset + header->m_index_offset > (size_t) max_dbsz ||
+       header->count > max_dbcnt)
     {
-        Logger::Log(LOG_LEVEL_INFO, "ResourceCollection finished in %lf seconds",
+        int cnt = 0;
+        gettimeofday(&start,NULL);
+        while(cnt < MAX_PRUNE_COUNT) {
+            if(LRUEviction() != MBError::TRY_AGAIN)
+                break;
+            cnt++;
+        }
+        gettimeofday(&stop,NULL);
+        timediff = (stop.tv_sec - start.tv_sec)*1000000 + (stop.tv_usec - start.tv_usec);
+        if(timediff > 1000000)
+        {
+            Logger::Log(LOG_LEVEL_INFO, "LRU eviction finished in %lf seconds",
                     timediff/1000000.);
-        std::cout << "resourceCollection finished in " << timediff/1000000. << " seconds\n";
-    }
-    else
-    {
-        Logger::Log(LOG_LEVEL_INFO, "ResourceCollection finished in %lf milliseconds",
+        }
+        else
+        {
+            Logger::Log(LOG_LEVEL_INFO, "LRU eviction finished in %lf milliseconds",
                     timediff/1000.);
-        std::cout << "resourceCollection finished in " << timediff/1000. << " milliseconds\n";
+        } 
+    }
+
+    if(min_index_size > 0 || min_data_size > 0)
+    {
+        Prepare(min_index_size, min_data_size);
+        Logger::Log(LOG_LEVEL_INFO, "defragmentation started");
+        gettimeofday(&start,NULL);
+
+        ReorderBuffers();
+        CollectBuffers();
+        Finish();
+
+        gettimeofday(&stop,NULL);
+        async_writer_ptr = NULL;
+        timediff = (stop.tv_sec - start.tv_sec)*1000000 + (stop.tv_usec - start.tv_usec);
+        if(timediff > 1000000)
+        {
+            Logger::Log(LOG_LEVEL_INFO, "defragmentation finished in %lf seconds",
+                    timediff/1000000.);
+        }
+        else
+        {
+            Logger::Log(LOG_LEVEL_INFO, "defragmentation finished in %lf milliseconds",
+                    timediff/1000.);
+        }
     }
 }
 
@@ -71,7 +171,7 @@ void ResourceCollection::ReclaimResource(int min_index_size, int min_data_size)
 ////////////////// Private Methods //////////////////////
 /////////////////////////////////////////////////////////
 
-void ResourceCollection::Prepare(int min_index_size, int min_data_size)
+void ResourceCollection::Prepare(int64_t min_index_size, int64_t min_data_size)
 {
     if(header->pending_index_buff_size < min_index_size)
     {
@@ -83,7 +183,7 @@ void ResourceCollection::Prepare(int min_index_size, int min_data_size)
     }
     if(rc_type == 0)
     {
-        Logger::Log(LOG_LEVEL_INFO, "garbage collection skipped since pending "
+        Logger::Log(LOG_LEVEL_DEBUG, "garbage collection skipped since pending "
                                     "sizes smaller than required");
         throw (int) MBError::RC_SKIPPED;
     }
@@ -166,7 +266,9 @@ bool ResourceCollection::MoveIndexBuffer(int phase, size_t &offset_src, int size
     }
     else
     {
+#ifdef __DEBUG__
         assert(index_size + size <= offset_src);
+#endif
         offset_dst = index_size;
         ptr_dst = dmm->GetShmPtr(offset_dst, size);
     }
@@ -203,7 +305,9 @@ bool ResourceCollection::MoveDataBuffer(int phase, size_t &offset_src, int size)
     }
     else
     {
+#ifdef __DEBUG__
         assert(data_size + size <= offset_src);
+#endif
         offset_dst = data_size;
         ptr_dst = dict->GetShmPtr(offset_dst, size);
     }

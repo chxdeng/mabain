@@ -50,7 +50,8 @@ typedef struct _NodePtrs
 class DictMem : public DRMBase
 {
 public:
-    DictMem(const std::string &mbdir, bool init_header, size_t memsize, int mode);
+    DictMem(const std::string &mbdir, bool init_header, size_t memsize,
+            int mode, uint32_t block_size, int max_num_blk);
     void Destroy();
     virtual ~DictMem();
 

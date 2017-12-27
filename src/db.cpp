@@ -34,7 +34,7 @@
 
 namespace mabain {
 
-// Current mabain version 1.0.0
+// Current mabain version 1.1.0
 uint16_t version[4] = {1, 1, 0, 0};
 
 DB::~DB()
@@ -92,35 +92,101 @@ int DB::UpdateNumHandlers(int mode, int delta)
 }
 
 // Constructor for initializing DB handle
-DB::DB(const std::string &db_path, int db_options, size_t memcap_index, size_t memcap_data,
-       int data_size, uint32_t id) : mb_dir(db_path), options(db_options)
+DB::DB(const char *db_path,
+       int db_options,
+       size_t memcap_index,
+       size_t memcap_data,
+       uint32_t id) : status(MBError::NOT_INITIALIZED)
 {
-    status = MBError::NOT_INITIALIZED;
+    MBConfig config;
+    memset(&config, 0, sizeof(config));
+    config.mbdir = db_path;
+    config.options = db_options;
+    config.memcap_index = memcap_index;
+    config.memcap_data = memcap_data;
+    config.connect_id = id; 
+
+    InitDB(config);
+}
+
+DB::DB(MBConfig &config) : status(MBError::NOT_INITIALIZED)
+{
+    InitDB(config);
+}
+
+int DB::ValidateConfig(MBConfig &config)
+{
+    if(config.mbdir == NULL)
+        return MBError::INVALID_ARG;
+
+    if(config.memcap_index == 0)
+        config.memcap_index = 2*config.block_size_index;
+    if(config.memcap_data == 0)
+        config.memcap_data = 2*config.block_size_data;
+
+    if(config.options & CONSTS::ACCESS_MODE_WRITER)
+    {
+        if(config.block_size_index == 0)
+            config.block_size_index = INDEX_BLOCK_SIZE_DEFAULT;
+        if(config.block_size_data == 0)
+            config.block_size_data = DATA_BLOCK_SIZE_DEFAULT;
+        if(config.num_entry_per_bucket <= 0)
+            config.num_entry_per_bucket = 1000;
+        if(config.num_entry_per_bucket < 8)
+        {
+            std::cerr << "count in eviction bucket must be greater than 7\n";
+            return MBError::INVALID_ARG; 
+        }
+    }
+
+    if(config.block_size_index != 0 && (config.block_size_index % BLOCK_SIZE_ALIGN != 0))
+    {
+        std::cerr << "block size must be multiple of " << BLOCK_SIZE_ALIGN << "\n";
+        return MBError::INVALID_ARG;
+    }
+    if(config.block_size_data != 0 && (config.block_size_data % BLOCK_SIZE_ALIGN != 0))
+    {
+        std::cerr << "block size must be multiple of " << BLOCK_SIZE_ALIGN << "\n";
+        return MBError::INVALID_ARG;
+    }
+
+    if(config.max_num_index_block == 0)
+        config.max_num_index_block = 1024;
+    if(config.max_num_data_block == 0)
+        config.max_num_data_block = 1024;
+
+    return MBError::SUCCESS;
+}
+
+void DB::InitDB(MBConfig &config)
+{
     dict = NULL;
     async_writer = NULL;
 
+    if(ValidateConfig(config) != MBError::SUCCESS)
+        return;
+
     // If id not given, use thread ID
-    if(id == 0)
-        id = static_cast<uint32_t>(syscall(SYS_gettid));
-    identifier = id;
+    if(config.connect_id == 0)
+        config.connect_id = static_cast<uint32_t>(syscall(SYS_gettid));
+    identifier = config.connect_id;
+    mb_dir = std::string(config.mbdir);
+    if(mb_dir[mb_dir.length()-1] != '/')
+        mb_dir += "/";
+    options = config.options;
 
     // Check if the DB directory exist with proper permission
-    if(access(db_path.c_str(), F_OK))
+    if(access(mb_dir.c_str(), F_OK))
     {
         char err_buf[32];
-        std::cerr << "database directory check for " + db_path + " failed: " +
+        std::cerr << "database directory check for " + mb_dir + " failed: " +
                      strerror_r(errno, err_buf, sizeof(err_buf)) << std::endl;
         status = MBError::NO_DB;
         return;
     }
 
-    std::string db_path_tmp;
-    if(db_path[db_path.length()-1] != '/')
-        db_path_tmp = db_path + "/";
-    else
-        db_path_tmp = db_path;
-
-    Logger::Log(LOG_LEVEL_INFO, "connector %u DB options: %d", id, db_options);
+    Logger::Log(LOG_LEVEL_INFO, "connector %u DB options: %d",
+                config.connect_id, config.options);
 
     // Check if DB exist. This can be done by check existence of the first index file.
     // If this is the first time the DB is opened and it is in writer mode, then we
@@ -128,26 +194,30 @@ DB::DB(const std::string &db_path, int db_options, size_t memcap_index, size_t m
     // required and the file does not exist, we should bail here and the DB open will
     // not be successful.
     bool init_header = false;
-    std::string header_file = db_path_tmp + "_mabain_h";
+    std::string header_file = mb_dir + "_mabain_h";
     if(access(header_file.c_str(), R_OK))
     {
-        if(db_options & CONSTS::ACCESS_MODE_WRITER)
+        if(config.options & CONSTS::ACCESS_MODE_WRITER)
         {
             init_header = true;
         }
         else
         {
-            Logger::Log(LOG_LEVEL_ERROR, "database check " + db_path + " failed");
+            Logger::Log(LOG_LEVEL_ERROR, "database " + mb_dir + ": check failed");
             status = MBError::NO_DB;
             return;
         }
     }
 
-    dict = new Dict(db_path_tmp, init_header, data_size, db_options, memcap_index, memcap_data);
+    dict = new Dict(mb_dir, init_header, config.data_size, config.options,
+                    config.memcap_index, config.memcap_data,
+                    config.block_size_index, config.block_size_data,
+                    config.max_num_index_block, config.max_num_data_block,
+                    config.num_entry_per_bucket);
 
-    if((db_options & CONSTS::ACCESS_MODE_WRITER) && init_header)
+    if((config.options & CONSTS::ACCESS_MODE_WRITER) && init_header)
     {
-        Logger::Log(LOG_LEVEL_INFO, "open a new db %s", db_path_tmp.c_str());
+        Logger::Log(LOG_LEVEL_INFO, "open a new db %s", mb_dir.c_str());
         dict->Init(identifier);
 #ifdef __SHM_LOCK__
         dict->InitShmMutex();
@@ -162,7 +232,7 @@ DB::DB(const std::string &db_path, int db_options, size_t memcap_index, size_t m
     }
 
     lock.Init(dict->GetShmLockPtrs());
-    status = UpdateNumHandlers(db_options, 1);
+    status = UpdateNumHandlers(config.options, 1);
     if(status != MBError::SUCCESS)
     {
         Logger::Log(LOG_LEVEL_ERROR, "failed to initialize db: %s",
@@ -170,15 +240,15 @@ DB::DB(const std::string &db_path, int db_options, size_t memcap_index, size_t m
         return;
     }
 
-    if(db_options & CONSTS::ACCESS_MODE_WRITER)
+    if(config.options & CONSTS::ACCESS_MODE_WRITER)
     {
-        if(db_options & CONSTS::ASYNC_WRITER_MODE)
+        if(config.options & CONSTS::ASYNC_WRITER_MODE)
             async_writer = new AsyncWriter(this);
     }
 
     Logger::Log(LOG_LEVEL_INFO, "connector %u successfully opened DB %s for %s",
-                identifier, db_path.c_str(),
-                (db_options & CONSTS::ACCESS_MODE_WRITER) ? "writing":"reading");
+                identifier, mb_dir.c_str(),
+                (config.options & CONSTS::ACCESS_MODE_WRITER) ? "writing":"reading");
     status = MBError::SUCCESS;
 }
 
@@ -356,17 +426,19 @@ void DB::Flush() const
     dict->Flush();
 }
 
-int DB::CollectResource(int min_index_rc_size, int min_data_rc_size)
+int DB::CollectResource(int64_t min_index_rc_size, int64_t min_data_rc_size,
+                        int64_t max_dbsz, int64_t max_dbcnt)
 {
     if(status != MBError::SUCCESS)
         return status;
 
     if(async_writer != NULL)
-        return async_writer->CollectResource(min_index_rc_size, min_data_rc_size);
+        return async_writer->CollectResource(min_index_rc_size, min_data_rc_size,
+                                             max_dbsz, max_dbcnt);
 
     try {
         ResourceCollection rc(*this);
-        rc.ReclaimResource(min_index_rc_size, min_data_rc_size);
+        rc.ReclaimResource(min_index_rc_size, min_data_rc_size, max_dbsz, max_dbcnt);
     } catch (int error) {
         if(error != MBError::RC_SKIPPED)
         {
@@ -391,7 +463,6 @@ void DB::PrintStats(std::ostream &out_stream) const
     if(status != MBError::SUCCESS)
         return;
 
-    Logger::Log(LOG_LEVEL_INFO, "printing DB stats");
     dict->PrintStats(out_stream);
 }
 

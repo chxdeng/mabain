@@ -93,11 +93,11 @@ void DBTraverseBase::GetAlignmentSize(DBTraverseNode &dbt_node) const
 
     if(dbt_node.buffer_type & BUFFER_TYPE_DATA)
     {
-        uint16_t data_size;
-        if(dict->ReadData((uint8_t *)&data_size, DATA_SIZE_BYTE, dbt_node.data_offset)
-                 != DATA_SIZE_BYTE)
+        uint16_t data_size[2];
+        if(dict->ReadData((uint8_t *)&data_size[0], DATA_HDR_BYTE, dbt_node.data_offset)
+                 != DATA_HDR_BYTE)
             throw (int) MBError::READ_ERROR;
-        dbt_node.data_size = data_free_lists->GetAlignmentSize(data_size + DATA_SIZE_BYTE);
+        dbt_node.data_size = data_free_lists->GetAlignmentSize(data_size[0] + DATA_HDR_BYTE);
     }
 }
 

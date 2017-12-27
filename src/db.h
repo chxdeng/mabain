@@ -34,6 +34,25 @@ class LockFree;
 class AsyncWriter;
 struct _DBTraverseNode;
 
+typedef struct _MBConfig
+{
+    const char *mbdir;
+    int options;
+    size_t memcap_index;
+    size_t memcap_data;
+    int data_size;    
+    uint32_t connect_id;
+    uint32_t block_size_index;
+    uint32_t block_size_data;
+    int max_num_data_block;
+    int max_num_index_block;
+
+    // For automatic eviction
+    // All entries in the oldest bucket will be pruned.
+    // If no automatic eviction is wanted, set num_kv_per_bucket to zero.
+    int num_entry_per_bucket;
+} MBConfig;
+
 // Database handle class
 class DB
 {
@@ -51,7 +70,7 @@ public:
         iterator(const DB &db, int iter_state);
         // Copy constructor
         iterator(const iterator &rhs);
-        void init();
+        void init(bool check_async_mode = true);
         int init_no_next();
         ~iterator();
 
@@ -86,8 +105,9 @@ public:
     // memcap_data: maximum memory size for data file mapping
     // data_size: the value size; if zero, the value size will be variable.
     // id: the connector id
-    DB(const std::string &db_path, int db_options, size_t memcap_index = 64*1024*1024LL,
-       size_t memcap_data = 0, int data_size = 0, uint32_t  id = 0);
+    DB(const char *db_path, int db_options, size_t memcap_index = 64*1024*1024LL,
+       size_t memcap_data = 64*1024*1024LL, uint32_t  id = 0);
+    DB(MBConfig &config);
     ~DB();
 
     // Add a key-value pair
@@ -116,7 +136,10 @@ public:
     // collector. If the pending index buffer size is less than min_index_rc_size,
     // rc will be ignored for index segment. If the pending data buffer size is less
     // than min_data_rc_size, rc will be ignored for data segment.
-    int CollectResource(int min_index_rc_size = 33554432 , int min_data_rc_size = 33554432);
+    // eviction will be ignored if db size is less than 0xFFFFFFFFFFFF and db count is
+    // less than 0xFFFFFFFFFFFF.
+    int CollectResource(int64_t min_index_rc_size = 33554432 , int64_t min_data_rc_size = 33554432,
+                        int64_t max_dbsiz = 0xFFFFFFFFFFFF, int64_t max_dbcnt = 0xFFFFFFFFFFFF);
 
     // Multi-thread update using async thread
     // FOR THIS TO WORK, WRITER MUST BE THE LAST ONE TO CLOSE HANDLE.
@@ -160,10 +183,13 @@ public:
     const std::string& GetDBDir() const;
 
     //iterator
-    const iterator begin() const;
+    const iterator begin(bool check_async_mode = true) const;
     const iterator end() const;
 
 private:
+    void InitDB(MBConfig &config);
+    static int ValidateConfig(MBConfig &config);
+
     // DB directory
     std::string mb_dir;
     int options;

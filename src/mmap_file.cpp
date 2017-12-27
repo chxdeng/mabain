@@ -44,10 +44,7 @@ MmapFileIO::MmapFileIO(const std::string &fpath, int mode, off_t filesize, bool 
     max_offset = 0;
     curr_offset = 0;
 
-    if(mode | O_CREAT)
-        Logger::Log(LOG_LEVEL_INFO, "Opening file " + fpath);
-    else
-        Logger::Log(LOG_LEVEL_DEBUG, "Opening file " + fpath);
+    Logger::Log(LOG_LEVEL_DEBUG, "opening file " + fpath);
 
     int fd = Open();
     if(fd < 0)
@@ -62,11 +59,6 @@ MmapFileIO::MmapFileIO(const std::string &fpath, int mode, off_t filesize, bool 
         if(TruncateFile(filesize) != 0)
         {
             Logger::Log(LOG_LEVEL_ERROR, "failed to truncate file %s with size %d",
-                    fpath.c_str(), static_cast<int>(filesize));
-        }
-        else
-        {
-            Logger::Log(LOG_LEVEL_INFO, "truncate file %s with size %d",
                     fpath.c_str(), static_cast<int>(filesize));
         }
     }
@@ -100,11 +92,6 @@ uint8_t* MmapFileIO::MapFile(size_t size, off_t offset, bool sliding)
     }
 
     if(mode | PROT_WRITE)
-    {
-        Logger::Log(LOG_LEVEL_INFO, "mmap file %s, sliding=%d, size=%d, offset=%d",
-                path.c_str(), sliding, size, offset);
-    }
-    else
     {
         Logger::Log(LOG_LEVEL_DEBUG, "mmap file %s, sliding=%d, size=%d, offset=%d",
                 path.c_str(), sliding, size, offset);

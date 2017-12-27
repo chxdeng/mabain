@@ -23,6 +23,7 @@
 #include "error.h"
 #include "logger.h"
 #include "mb_data.h"
+#include "mb_rc.h"
 
 namespace mabain {
 
@@ -47,14 +48,14 @@ static void free_async_node(AsyncNode *node_ptr)
     node_ptr->type = MABAIN_ASYNC_TYPE_NONE;
 }
 
-AsyncWriter::AsyncWriter(DB *db_ptr) : db(db_ptr),
-                                       rc_async(NULL),
-                                       num_users(0),
-                                       queue(NULL),
-                                       tid(0),
-                                       stop_processing(false),
-                                       queue_index(0),
-                                       writer_index(0)
+AsyncWriter::AsyncWriter(DB *db_ptr)
+                       : db(db_ptr),
+                         num_users(0),
+                         queue(NULL),
+                         tid(0),
+                         stop_processing(false),
+                         queue_index(0),
+                         writer_index(0)
 {
     dict = NULL;
     if(!(db_ptr->GetDBOptions() & CONSTS::ACCESS_MODE_WRITER))
@@ -64,7 +65,6 @@ AsyncWriter::AsyncWriter(DB *db_ptr) : db(db_ptr),
     dict = db->GetDictPtr();
     if(dict == NULL) 
         throw (int) MBError::NOT_INITIALIZED;
-    rc_async = new ResourceCollection(*db);
 
     queue = new AsyncNode[max_num_queue_node];
     memset(queue, 0, max_num_queue_node * sizeof(AsyncNode));
@@ -83,6 +83,7 @@ AsyncWriter::AsyncWriter(DB *db_ptr) : db(db_ptr),
         }
     }
 
+    is_rc_running = false;
     // start the thread
     if(pthread_create(&tid, NULL, async_thread_wrapper, this) != 0)
     {
@@ -132,27 +133,17 @@ int AsyncWriter::StopAsyncThread()
         pthread_cond_destroy(&queue[i].cond);
     }
 
-    if(rc_async != NULL)
-        delete rc_async;
     if(queue != NULL)
         delete [] queue;
 
     return MBError::SUCCESS;
 }
 
-// Check if async tasks (not including rc) are completed.
+// Check if async tasks are completed.
 bool AsyncWriter::Busy() const
 {
     uint32_t index = queue_index.load(std::memory_order_consume);
-    AsyncNode *node_ptr = queue + (index % max_num_queue_node);
-
-    if(node_ptr->in_use.load(std::memory_order_consume) &&
-       node_ptr->type != MABAIN_ASYNC_TYPE_RC)
-    {
-        return true;
-    }
-
-    return false;
+    return index != writer_index || is_rc_running;
 }
 
 AsyncNode* AsyncWriter::AcquireSlot()
@@ -207,8 +198,6 @@ int AsyncWriter::Add(const char *key, int key_len, const char *data,
     node_ptr->data_len = data_len;
     node_ptr->overwrite = overwrite;
 
-    node_ptr->min_index_rc_size = 0;
-    node_ptr->min_data_rc_size = 0;
     node_ptr->type = MABAIN_ASYNC_TYPE_ADD;
 
 
@@ -252,7 +241,8 @@ int AsyncWriter::RemoveAll()
     return PrepareSlot(node_ptr);
 }
 
-int  AsyncWriter::CollectResource(int m_index_rc_size, int m_data_rc_size)
+int  AsyncWriter::CollectResource(int64_t m_index_rc_size, int64_t m_data_rc_size,
+                                  int64_t max_dbsz, int64_t max_dbcnt)
 {
     if(stop_processing)
         return MBError::DB_CLOSED;
@@ -261,11 +251,93 @@ int  AsyncWriter::CollectResource(int m_index_rc_size, int m_data_rc_size)
     if(node_ptr == NULL)
         return MBError::MUTEX_ERROR;
 
-    node_ptr->min_index_rc_size = m_index_rc_size;
-    node_ptr->min_data_rc_size = m_data_rc_size;
+    int64_t *data_ptr = (int64_t *) calloc(4, sizeof(int64_t));
+    node_ptr->data = data_ptr;
+    node_ptr->data_len = sizeof(int64_t)*4;
+    data_ptr[0] = m_index_rc_size;
+    data_ptr[1] = m_data_rc_size;
+    data_ptr[2] = max_dbsz;
+    data_ptr[3] = max_dbcnt;
     node_ptr->type = MABAIN_ASYNC_TYPE_RC;
 
     return PrepareSlot(node_ptr);
+}
+
+// Run a given number of tasks if they are available.
+// This function should only be called by rc or pruner.
+int AsyncWriter::ProcessTask(int ntasks)
+{
+    AsyncNode *node_ptr;
+    MBData mbd;
+    int rval = MBError::SUCCESS;
+    int count = 0;
+
+    while(count < ntasks)
+    {
+        node_ptr = &queue[writer_index % max_num_queue_node]; 
+        if(pthread_mutex_lock(&node_ptr->mutex) != 0)
+        {
+            Logger::Log(LOG_LEVEL_ERROR, "failed to lock mutex");
+            throw (int) MBError::MUTEX_ERROR;
+        }
+
+        if(node_ptr->in_use.load(std::memory_order_consume))
+        {
+            switch(node_ptr->type)
+            {
+                case MABAIN_ASYNC_TYPE_ADD:
+                    mbd.buff = (uint8_t *) node_ptr->data;
+                    mbd.data_len = node_ptr->data_len;
+                    rval = dict->Add((uint8_t *)node_ptr->key, node_ptr->key_len, mbd, node_ptr->overwrite);
+                    break;
+                case MABAIN_ASYNC_TYPE_REMOVE:
+                    mbd.options |= CONSTS::OPTION_FIND_AND_STORE_PARENT;
+                    rval = dict->Remove((uint8_t *)node_ptr->key, node_ptr->key_len, mbd);
+                    mbd.options &= ~CONSTS::OPTION_FIND_AND_STORE_PARENT;
+                    break;
+                case MABAIN_ASYNC_TYPE_REMOVE_ALL:
+                    rval = dict->RemoveAll();
+                    break;
+                case MABAIN_ASYNC_TYPE_RC:
+                    // ignore rc task since it is running already.
+                    rval = MBError::RC_SKIPPED;
+                case MABAIN_ASYNC_TYPE_NONE:
+                    rval = MBError::SUCCESS;
+                    break;
+                default:
+                    rval = MBError::INVALID_ARG;
+                    break;
+            }
+
+            free_async_node(node_ptr);
+            node_ptr->in_use.store(false, std::memory_order_release);
+            pthread_cond_signal(&node_ptr->cond);
+            writer_index++;
+            mbd.Clear();
+            count++;
+        }
+        else
+        {
+            // done processing
+            count = ntasks;
+        }
+
+        if(pthread_mutex_unlock(&node_ptr->mutex) != 0)
+        {
+            Logger::Log(LOG_LEVEL_ERROR, "failed to unlock mutex");
+            throw (int) MBError::MUTEX_ERROR;
+        }
+
+        if(rval != MBError::SUCCESS)
+        {
+            Logger::Log(LOG_LEVEL_DEBUG, "failed to run update %d: %s",
+                        (int)node_ptr->type, MBError::get_error_str(rval));
+        }
+    }
+
+    if(stop_processing)
+        return MBError::RC_SKIPPED;
+    return MBError::SUCCESS;
 }
 
 void* AsyncWriter::async_writer_thread()
@@ -273,6 +345,10 @@ void* AsyncWriter::async_writer_thread()
     AsyncNode *node_ptr;
     MBData mbd;
     int rval;
+    int64_t min_index_size = 0;
+    int64_t min_data_size = 0;
+    int64_t max_dbsize = 0xFFFFFFFFFFFF;
+    int64_t max_dbcount = 0xFFFFFFFFFFFF;
 
     Logger::Log(LOG_LEVEL_INFO, "async writer started");
     while(true)
@@ -315,11 +391,13 @@ void* AsyncWriter::async_writer_thread()
                 break;
             case MABAIN_ASYNC_TYPE_RC:
                 rval = MBError::SUCCESS;
-                try {
-                    rc_async->ReclaimResource(node_ptr->min_index_rc_size, node_ptr->min_data_rc_size);
-                } catch (int error) {
-                    if(error != MBError::RC_SKIPPED)
-                        rval = error;
+                is_rc_running = true;
+                {
+                    int64_t *data_ptr = (int64_t *) node_ptr->data;
+                    min_index_size = data_ptr[0];
+                    min_data_size  = data_ptr[1];
+                    max_dbsize = data_ptr[2];
+                    max_dbcount = data_ptr[3];
                 }
                 break; 
             case MABAIN_ASYNC_TYPE_NONE:
@@ -330,11 +408,6 @@ void* AsyncWriter::async_writer_thread()
                 break;
         }
 
-        if(rval != MBError::SUCCESS)
-        {
-            Logger::Log(LOG_LEVEL_DEBUG, "failed to run update %d: %s",
-                        (int)node_ptr->type, MBError::get_error_str(rval));
-        }
         free_async_node(node_ptr);
         node_ptr->in_use.store(false, std::memory_order_release);
         pthread_cond_signal(&node_ptr->cond);
@@ -344,8 +417,27 @@ void* AsyncWriter::async_writer_thread()
             throw (int) MBError::MUTEX_ERROR;
         }
         
+        if(rval != MBError::SUCCESS)
+        {
+            Logger::Log(LOG_LEVEL_DEBUG, "failed to run update %d: %s",
+                        (int)node_ptr->type, MBError::get_error_str(rval));
+        }
+
         writer_index++;
         mbd.Clear();
+
+        if(is_rc_running)
+        {
+            try {
+                ResourceCollection rc = ResourceCollection(*db);
+                rc.ReclaimResource(min_index_size, min_data_size, max_dbsize, max_dbcount, this);
+            } catch (int error) {
+                if(error != MBError::RC_SKIPPED)
+                    Logger::Log(LOG_LEVEL_WARN, "rc failed :%s", MBError::get_error_str(error));
+            }
+
+            is_rc_running = false;
+        }
     }
 
     mbd.buff = NULL;

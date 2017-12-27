@@ -60,22 +60,20 @@ RollableFile::RollableFile(const std::string &fpath, size_t blocksize,
     sliding_map_off = 0;
     shm_sliding_start_ptr = NULL;
 
-    if(max_num_block == 0)
+    if(mode & CONSTS::ACCESS_MODE_WRITER)
     {
-        // disk usage will be virtuall unlimited.
-        max_num_block = LONG_MAX;
-        if(mode & CONSTS::ACCESS_MODE_WRITER)
+        if(max_num_block == 0)
         {
-            Logger::Log(LOG_LEVEL_INFO, "maximal block number for %s is %d",
-                    fpath.c_str(), max_num_block);
+            // disk usage will be virtuall unlimited.
+            max_num_block = LONG_MAX;
         }
+        Logger::Log(LOG_LEVEL_INFO, "maximal block number for %s is %d", fpath.c_str(), max_num_block);
     }
-
-    Logger::Log(LOG_LEVEL_INFO, "Opening rollable file %s for %s, mmap size: %d",
+    Logger::Log(LOG_LEVEL_INFO, "opening rollable file %s for %s, mmap size: %d",
             path.c_str(), (mode & CONSTS::ACCESS_MODE_WRITER)?"writing":"reading", mmap_mem);
     if(!sliding_mmap)
     {
-        Logger::Log(LOG_LEVEL_INFO, "Sliding mmap is turned off for " + fpath);
+        Logger::Log(LOG_LEVEL_INFO, "sliding mmap is turned off for " + fpath);
     }
     else
     {
@@ -87,7 +85,7 @@ RollableFile::RollableFile(const std::string &fpath, size_t blocksize,
         }
         else
         {
-            Logger::Log(LOG_LEVEL_INFO, "Sliding mmap is turned on for " + fpath);
+            Logger::Log(LOG_LEVEL_INFO, "sliding mmap is turned on for " + fpath);
         }
     }
 
@@ -101,7 +99,9 @@ RollableFile::RollableFile(const std::string &fpath, size_t blocksize,
 void RollableFile::InitShmSlidingAddr(std::atomic<size_t> *shm_sliding_addr)
 {
     shm_sliding_start_ptr = shm_sliding_addr;
+#ifdef __DEBUG__
     assert(shm_sliding_start_ptr != NULL);
+#endif
 }
 
 void RollableFile::Close()
@@ -130,10 +130,15 @@ RollableFile::~RollableFile()
 
 int RollableFile::OpenAndMapBlockFile(int block_order)
 {
+    if(block_order >= max_num_block)
+    {
+        Logger::Log(LOG_LEVEL_WARN, "block number %d ovferflow", block_order);
+        return MBError::NO_RESOURCE;
+    }
+
     int rval = MBError::SUCCESS;
     std::stringstream ss;
     ss << block_order;
-
 #ifdef __DEBUG__
     assert(files[block_order] == NULL);
 #endif
@@ -263,9 +268,6 @@ int RollableFile::Reserve(size_t &offset, int size, uint8_t* &ptr, bool map_new_
     offset = CheckAlignment(offset, size);
 
     int order = offset / block_size;
-    if(order >= max_num_block)
-        return MBError::NO_RESOURCE;
-
     rval = CheckAndOpenFile(order);
     if(rval != MBError::SUCCESS)
         return rval;

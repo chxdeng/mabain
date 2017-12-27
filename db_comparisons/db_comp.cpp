@@ -169,8 +169,8 @@ static void InitDB(bool writer_mode = true)
     }
     if(!writer_mode)
         options = mabain::CONSTS::ReaderOptions();
-    db = new mabain::DB(db_dir_tmp, options, (unsigned long long)(0.6666667*memcap),
-                                             (unsigned long long)(0.3333333*memcap));
+    db = new mabain::DB(db_dir_tmp.c_str(), options, (unsigned long long)(0.6666667*memcap),
+                                                     (unsigned long long)(0.3333333*memcap));
     assert(db->is_open());
 #endif
 }
@@ -413,7 +413,7 @@ static void *Reader(void *arg)
 
 #if MABAIN
     std::string db_dir_tmp = std::string(db_dir) + "/mabain/";
-    mabain::DB *db_r = new mabain::DB(db_dir_tmp, mabain::CONSTS::ReaderOptions(),
+    mabain::DB *db_r = new mabain::DB(db_dir_tmp.c_str(), mabain::CONSTS::ReaderOptions(),
                                       (unsigned long long)(0.6666667*memcap),
                                       (unsigned long long)(0.3333333*memcap));
     assert(db_r->is_open());

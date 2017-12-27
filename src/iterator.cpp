@@ -28,6 +28,7 @@ typedef struct _iterator_node
     std::string *key;
     uint8_t     *data;
     int          data_len;
+    uint16_t     bucket_index;
 } iterator_node;
 
 static void free_iterator_node(void *n)
@@ -53,6 +54,7 @@ static iterator_node* new_iterator_node(const std::string &key, MBData *mbdata)
     inode->key = new std::string(key);
     if(mbdata != NULL)
     {
+	inode->bucket_index = mbdata->bucket_index;
         mbdata->TransferValueTo(inode->data, inode->data_len);
         if(inode->data == NULL || inode->data_len <= 0)
         {
@@ -77,10 +79,10 @@ static iterator_node* new_iterator_node(const std::string &key, MBData *mbdata)
 // }
 /////////////////////////////////////////////////////////////////////
 
-const DB::iterator DB::begin() const
+const DB::iterator DB::begin(bool check_async_mode) const
 {
     DB::iterator iter = iterator(*this, DB_ITER_STATE_INIT);
-    iter.init();
+    iter.init(check_async_mode);
 
     return iter;
 }
@@ -128,10 +130,10 @@ DB::iterator::~iterator()
 }
 
 // Initialize the iterator, get the very first key-value pair.
-void DB::iterator::init()
+void DB::iterator::init(bool check_async_mode)
 {
     // Writer in async mode cannot be used for lookup
-    if(db_ref.options & CONSTS::ASYNC_WRITER_MODE)
+    if(check_async_mode && (db_ref.options & CONSTS::ASYNC_WRITER_MODE))
     {
         state = DB_ITER_STATE_DONE;
         return;
@@ -379,6 +381,7 @@ DB::iterator* DB::iterator::next()
         match = MATCH_NODE_OR_EDGE;
         key = *inode->key;
         value.TransferValueFrom(inode->data, inode->data_len);
+	value.bucket_index = inode->bucket_index;
         free_iterator_node(inode);
         return this;
     }
