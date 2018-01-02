@@ -236,7 +236,7 @@ void DB::InitDB(MBConfig &config)
     if(status != MBError::SUCCESS)
     {
         Logger::Log(LOG_LEVEL_ERROR, "failed to initialize db: %s",
-                    MBError::get_error_str(dict->Status()));
+                    MBError::get_error_str(status));
         return;
     }
 

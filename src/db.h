@@ -48,8 +48,7 @@ typedef struct _MBConfig
     int max_num_index_block;
 
     // For automatic eviction
-    // All entries in the oldest bucket will be pruned.
-    // If no automatic eviction is wanted, set num_kv_per_bucket to zero.
+    // All entries in the oldest buckets will be pruned.
     int num_entry_per_bucket;
 } MBConfig;
 

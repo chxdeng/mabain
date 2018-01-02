@@ -308,6 +308,7 @@ static void delete_test(std::string &list_file, MBConfig &mbconf, int64_t expect
     std::string line;
     int rval;
     struct timeval start, stop;
+    int64_t db_count = db.Count();
 
     gettimeofday(&start, NULL);
     while(std::getline(in, line)) {
@@ -317,6 +318,8 @@ static void delete_test(std::string &list_file, MBConfig &mbconf, int64_t expect
         rval = db.Remove(line);
         if(rval == MBError::SUCCESS) {
             nfound++;
+            db_count--;
+            assert(db_count == db.Count());
         } else if(debug) {
             std::cerr << "failed to remove " << line << ": " <<
                          MBError::get_error_str(rval) << "\n";

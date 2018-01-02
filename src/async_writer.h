@@ -69,7 +69,6 @@ private:
     AsyncNode* AcquireSlot();
     int PrepareSlot(AsyncNode *node_ptr) const;
     void* async_writer_thread();
-    void ScheduleRC();
 
     static const int max_num_queue_node;
 
