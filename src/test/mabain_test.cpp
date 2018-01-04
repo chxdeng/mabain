@@ -470,9 +470,23 @@ static void async_eviction_test(std::string &list_file, MBConfig &mbconf, int64_
     std::cout << "count: " << count << "   time: " << 1.0*tmdiff/expected_count << "\n";
 }
 
+static void SetTestStatus(bool success)
+{
+    std::string cmd;
+    if(success) {
+        cmd = std::string("touch ") + MB_DIR + "_success";
+    } else {
+        cmd = std::string("rm ") + MB_DIR + "_success";
+    }
+    if(system(cmd.c_str()) != 0) {
+        std::cerr << "failed to run command " << cmd << "\n";
+    }
+}
+
 int main(int argc, char *argv[])
 {
     clean_db_dir();
+    SetTestStatus(false);
 
     std::string test_list_file = "./test_list";
     if(argc == 2) {
@@ -559,5 +573,6 @@ int main(int argc, char *argv[])
 
     test_in.close();
     DB::CloseLogFile();
+    SetTestStatus(true);
     return 0;
 }
