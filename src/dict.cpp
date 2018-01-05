@@ -764,11 +764,8 @@ void Dict::PrintStats(std::ostream &out_stream) const
     out_stream << "\tNumer of DB writer: " << header->num_writer << std::endl;
     out_stream << "\tNumer of DB reader: " << header->num_reader << std::endl;
     out_stream << "\tEntry count in DB: "  << header->count << std::endl;
-    if(header->entry_per_bucket != 0x7FFFFFFFFFFFFFFFLL)
-    {
-        out_stream << "\tEntry count per bucket: "  << header->entry_per_bucket << std::endl;
-        out_stream << "\tEviction bucket index: "  << header->eviction_bucket_index << std::endl;
-    }
+    out_stream << "\tEntry count per bucket: "  << header->entry_per_bucket << std::endl;
+    out_stream << "\tEviction bucket index: "  << header->eviction_bucket_index << std::endl;
     out_stream << "\tData block size: " << header->data_block_size << std::endl;
     out_stream << "\tData size: " << header->m_data_offset << std::endl;
     out_stream << "\tPending Buffer Size: " << header->pending_data_buff_size << std::endl;
