@@ -20,6 +20,7 @@ static pthread_t wid = 0;
 
 static std::string mbdir = "/var/tmp/mabain_test";
 static bool stop_processing = false;
+static uint32_t run_time = 3600;
 
 static void* run_mb_test(void *arg);
 
@@ -245,6 +246,7 @@ void start_mb_test()
 
 static void* run_mb_test(void *arg)
 {
+    int64_t run_stop_time = time(NULL) + run_time;
     int nreaders = 4;
     int nupdates = 4;
     srand(time(NULL));
@@ -303,20 +305,48 @@ static void* run_mb_test(void *arg)
                 }
             }
         }
+
+        if(time(NULL) >= run_stop_time) {
+            stop_processing = true;   
+        }
     }
 
     db->Close();
     delete db;
     store_key_ids();
+
+    
     return NULL;
+}
+
+static void SetTestStatus(bool success)
+{
+    std::string cmd;
+    if(success) {
+        cmd = std::string("touch ") + mbdir + "_success";
+    } else {
+        cmd = std::string("rm ") + mbdir + "_success";
+    }
+    if(system(cmd.c_str()) != 0) {
+        std::cerr << "failed to run command " << cmd << "\n";
+    }
 }
 
 int main(int argc, char *argv[])
 {
     if(argc > 1) {
         mbdir = std::string(argv[1]);
+        std::cout << "Test db directory is " << mbdir << "\n";
+    }
+    if(argc > 2) {
+        run_time = atoi(argv[2]);
+        std::cout << "running " << argv[0] << " for " << run_time << " seconds...\n";
     }
 
+    DB::SetLogFile(mbdir + "/mabain.log");
+    SetTestStatus(false);
     run_mb_test(NULL);
+    SetTestStatus(true);
+    DB::CloseLogFile();
     return 0;
 }

@@ -493,7 +493,7 @@ int main(int argc, char *argv[])
         test_list_file = argv[1];
     }
 
-    DB::SetLogFile("/var/tmp/mabain_test/mabain.log");
+    DB::SetLogFile(std::string(MB_DIR) + "/mabain.log");
     std::ifstream test_in(test_list_file);
     assert(test_in.is_open());
     std::string file;
