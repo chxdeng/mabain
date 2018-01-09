@@ -28,17 +28,19 @@
 
 using namespace mabain;
 
-static int max_key = 1000;
+static int max_key = 10000000;
 static std::atomic<int> write_index;
 static bool stop_processing = false;
+static std::string mbdir = "/var/tmp/mabain_test/";
 
 static void* insert_thread(void *arg)
 {
     int curr_key;
     TestKey mkey(MABAIN_TEST_KEY_TYPE_SHA_256);
     std::string kv;
-    DB *db_r = new DB("/var/tmp/mabain_test/", CONSTS::ReaderOptions(), 128LL*1024*1024, 128LL*1024*1024);
+    DB *db_r = new DB(mbdir.c_str(), CONSTS::ReaderOptions(), 128LL*1024*1024, 128LL*1024*1024);
     // If a reader wants to perform DB update, the async writer pointer must be set.
+    assert(db_r->is_open());
     assert(db_r->SetAsyncWriterPtr((DB *) arg) == MBError::SUCCESS);
     assert(db_r->AsyncWriterEnabled());
 
@@ -60,8 +62,38 @@ static void* insert_thread(void *arg)
     return NULL;
 }
 
+static void SetTestStatus(bool success)
+{
+    std::string cmd;
+    if(success) {
+        cmd = std::string("touch ") + mbdir + "/_success";
+    } else {
+        cmd = std::string("rm ") + mbdir + "/_success";
+    }
+    if(system(cmd.c_str()) != 0) {
+        std::cerr << "failed to run command " << cmd << "\n";
+    }
+}
+
+static void Lookup()
+{
+    TestKey mkey(MABAIN_TEST_KEY_TYPE_SHA_256);
+    std::string kv;
+    DB *db_r = new DB(mbdir.c_str(), CONSTS::ReaderOptions(), 128LL*1024*1024, 128LL*1024*1024);
+    assert(db_r->is_open());
+    MBData mbd;
+
+    for(int i = 0; i < max_key; i++) {
+        kv = mkey.get_key(i);
+        assert(db_r->Find(kv, mbd) == MBError::SUCCESS);
+        assert(kv == std::string((const char *)mbd.buff, mbd.data_len));
+    }
+    db_r->Close();
+    delete db_r;
+}
+
 // Multiple threads performing DB insertion/deletion/updating
-int main()
+int main(int argc, char *argv[])
 {
     pthread_t pid[256];
     int nthread = 4;
@@ -69,12 +101,22 @@ int main()
         abort();
     }
 
-    mabain::DB::SetLogFile("/var/tmp/mabain_test/mabain.log");
+    if(argc > 1) {
+        mbdir = std::string(argv[1]);
+        std::cout << "Mabain test db directory " << mbdir << "\n";
+    }
+    if(argc > 2) {
+        max_key = atoi(argv[2]);
+        std::cout << "Setting number of keys to be " << max_key << "\n";
+    }
+
+    SetTestStatus(false);
+    mabain::DB::SetLogFile(mbdir + "/mabain.log");
 
     write_index.store(0, std::memory_order_release);
     // Writer needs to enable async writer mode.
     int options = CONSTS::WriterOptions() | CONSTS::ASYNC_WRITER_MODE;
-    DB *db = new DB("/var/tmp/mabain_test/", options, 128LL*1024*1024, 128LL*1024*1024);
+    DB *db = new DB(mbdir.c_str(), options, 128LL*1024*1024, 128LL*1024*1024);
     assert(db->is_open());
     db->RemoveAll();
 
@@ -97,6 +139,9 @@ int main()
     assert(db->Close() == MBError::SUCCESS);
     delete db;
 
+    Lookup();
+
     mabain::DB::CloseLogFile();
+    SetTestStatus(true);
     return 0;
 }
