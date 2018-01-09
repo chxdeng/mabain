@@ -485,12 +485,15 @@ static void SetTestStatus(bool success)
 
 int main(int argc, char *argv[])
 {
+    if(argc > 1) {
+        MB_DIR = argv[1];
+    }
     clean_db_dir();
     SetTestStatus(false);
 
     std::string test_list_file = "./test_list";
-    if(argc == 2) {
-        test_list_file = argv[1];
+    if(argc > 2) {
+        test_list_file = argv[2];
     }
 
     DB::SetLogFile(std::string(MB_DIR) + "/mabain.log");
