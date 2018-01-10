@@ -143,10 +143,9 @@ static void SetTestStatus(bool success)
     if(success) {
         cmd = std::string("touch ") + mbdir + "/_success";
     } else {
-        cmd = std::string("rm ") + mbdir + "/_success";
+        cmd = std::string("rm ") + mbdir + "/_success >" + mbdir + "/out 2>" + mbdir + "/err";
     }
     if(system(cmd.c_str()) != 0) {
-        std::cerr << "failed to run command " << cmd << "\n";
     }
 }
 

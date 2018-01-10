@@ -36,7 +36,7 @@ static bool debug = false;
 
 static void clean_db_dir()
 {
-    std::string cmd = std::string("rm -rf ") + MB_DIR + "_mabain_*";
+    std::string cmd = std::string("rm -rf ") + MB_DIR + "/_mabain_* >" + MB_DIR + "/out 2>" + MB_DIR + "/err";
     if(system(cmd.c_str()) != 0) {
     }
 }
@@ -476,10 +476,9 @@ static void SetTestStatus(bool success)
     if(success) {
         cmd = std::string("touch ") + MB_DIR + "/_success";
     } else {
-        cmd = std::string("rm ") + MB_DIR + "/_success";
+        cmd = std::string("rm ") + MB_DIR + "/_success >out 2>err";
     }
     if(system(cmd.c_str()) != 0) {
-        std::cerr << "failed to run command " << cmd << "\n";
     }
 }
 
