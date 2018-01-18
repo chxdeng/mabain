@@ -24,7 +24,7 @@ extern "C" {
 #ifdef LEVEL_DB
 leveldb::DB *db = NULL;
 #elif KYOTO_CABINET
-kyotocabinet::PolyDB *db = NULL;
+kyotocabinet::HashDB *db = NULL;
 #elif LMDB
 MDB_env *env = NULL;
 MDB_dbi db;
@@ -136,7 +136,7 @@ static void InitTestDir()
 
 }
 
-static void InitDB()
+static void InitDB(bool writer_mode = true)
 {
 #ifdef LEVEL_DB
     std::string db_dir_tmp = std::string(db_dir) + "/leveldb/";
@@ -145,12 +145,13 @@ static void InitDB()
     leveldb::Status status = leveldb::DB::Open(options, db_dir_tmp, &db);
     assert(status.ok());
 #elif KYOTO_CABINET
-    std::string db_dir_tmp = std::string(db_dir) + "/kyotocabinet/";
-    db = new kyotocabinet::PolyDB();
-    std::string db_path = db_dir_tmp + "casket.kch";
-    if (!db->open(db_path.c_str(), kyotocabinet::PolyDB::OWRITER | kyotocabinet::PolyDB::OCREATE)) {
-        std::cerr << "failed to open kyotocabinet db\n";
-        abort();
+    std::string db_file = std::string(db_dir) + "/kyotocabinet/dbbench_hashDB.kch";
+    db = new kyotocabinet::HashDB();
+    int open_options = kyotocabinet::PolyDB::OWRITER |
+                       kyotocabinet::PolyDB::OCREATE;
+    db->tune_map(memcap);
+    if(!db->open(db_file, open_options)) {
+      fprintf(stderr, "open error: %s\n", db->error().name());
     }
 #elif LMDB
     std::string db_dir_tmp = std::string(db_dir) + "/lmdb";
@@ -162,12 +163,14 @@ static void InitDB()
     mdb_txn_commit(txn);
 #elif MABAIN
     std::string db_dir_tmp = std::string(db_dir) + "/mabain/";
-    int options = mabain::CONSTS::WriterOptions();
+    int options = mabain::CONSTS::WriterOptions() | mabain::CONSTS::ASYNC_WRITER_MODE;
     if(sync_on_write) {
         options |= mabain::CONSTS::SYNC_ON_WRITE;
     }
-    db = new mabain::DB(db_dir_tmp, options, (unsigned long long)(0.6666667*memcap),
-                                             (unsigned long long)(0.3333333*memcap));
+    if(!writer_mode)
+        options = mabain::CONSTS::ReaderOptions();
+    db = new mabain::DB(db_dir_tmp.c_str(), options, (unsigned long long)(0.6666667*memcap),
+                                                     (unsigned long long)(0.3333333*memcap));
     assert(db->is_open());
 #endif
 }
@@ -410,7 +413,7 @@ static void *Reader(void *arg)
 
 #if MABAIN
     std::string db_dir_tmp = std::string(db_dir) + "/mabain/";
-    mabain::DB *db_r = new mabain::DB(db_dir_tmp, mabain::CONSTS::ReaderOptions(),
+    mabain::DB *db_r = new mabain::DB(db_dir_tmp.c_str(), mabain::CONSTS::ReaderOptions(),
                                       (unsigned long long)(0.6666667*memcap),
                                       (unsigned long long)(0.3333333*memcap));
     assert(db_r->is_open());
@@ -545,6 +548,9 @@ static void RemoveDB()
 
 int main(int argc, char *argv[])
 {
+#ifdef MABAIN
+    mabain::DB::SetLogFile("/var/tmp/mabain_test/mabain.log");
+#endif
     for(int i = 1; i < argc; i++) {
         if(strcmp(argv[i], "-n") == 0) {
             if(++i >= argc) abort();
@@ -591,7 +597,7 @@ int main(int argc, char *argv[])
     Add(num_kv);
     DestroyDB();
 
-    InitDB();
+    InitDB(false);
     Lookup(num_kv);
     DestroyDB();
 
@@ -605,5 +611,8 @@ int main(int argc, char *argv[])
     ConcurrencyTest(num_kv, n_reader);
     DestroyDB();
 
+#ifdef MABAIN
+    mabain::DB::CloseLogFile();
+#endif
     return 0;
 }

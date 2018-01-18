@@ -26,26 +26,31 @@
 #include "error.h"
 #include "lock.h"
 
-#define DB_ITER_STATE_INIT         0x00
-#define DB_ITER_STATE_MORE         0x01
-#define DB_ITER_STATE_DONE         0x02
-#define DATA_BLOCK_SIZE            128LLU*1024*1024
-#define INDEX_BLOCK_SIZE           128LLU*1024*1024
-#define BUFFER_TYPE_NONE           0
-#define BUFFER_TYPE_EDGE_STR       1
-#define BUFFER_TYPE_NODE           2
-#define MATCH_NONE                 0
-#define MATCH_EDGE                 1
-#define MATCH_NODE                 2
-
 namespace mabain {
 
 class Dict;
 class MBlsq;
-class MBShrink;
 class LockFree;
 class AsyncWriter;
-struct _IndexNode;
+struct _DBTraverseNode;
+
+typedef struct _MBConfig
+{
+    const char *mbdir;
+    int options;
+    size_t memcap_index;
+    size_t memcap_data;
+    int data_size;    
+    uint32_t connect_id;
+    uint32_t block_size_index;
+    uint32_t block_size_data;
+    int max_num_data_block;
+    int max_num_index_block;
+
+    // For automatic eviction
+    // All entries in the oldest buckets will be pruned.
+    int num_entry_per_bucket;
+} MBConfig;
 
 // Database handle class
 class DB
@@ -54,17 +59,18 @@ public:
     // DB iterator class as an inner class
     class iterator
     {
-    friend class MBShrink;
+    friend class DBTraverseBase;
 
     public:
         std::string key;
         MBData value;
+        int match;
 
         iterator(const DB &db, int iter_state);
         // Copy constructor
         iterator(const iterator &rhs);
-        void init();
-        int Initialize();
+        void init(bool check_async_mode = true);
+        int init_no_next();
         ~iterator();
 
         // operator overloading
@@ -72,33 +78,23 @@ public:
         const iterator& operator++();
 
     private:
-        class iter_node
-        {
-        public:
-            size_t node_off;
-            std::string key;
-            size_t parent_edge_off;
-            uint32_t node_counter;
-            iter_node(size_t offset, const std::string &ckey, size_t edge_off, uint32_t counter);
-        };
-
-        iterator* next();
+        int  get_node_offset(const std::string &node_key, size_t &parent_edge_off,
+                 size_t &node_offset);
+        int  load_node(const std::string &curr_node_key, size_t &parent_edge_off);
+        int  load_kv_for_node(const std::string &curr_node_key);
+        int  load_kvs(const std::string &curr_node_key, MBlsq *chid_node_list);
         void iter_obj_init();
-        int  next_index_buffer(size_t &parent_node_off, struct _IndexNode *inp);
-        int  node_offset_modified(const std::string &key, size_t node_off, MBData &mbd);
-        int  edge_offset_modified(const std::string &key, size_t edge_off, MBData &mbd);
+        bool next_dbt_buffer(struct _DBTraverseNode *dbt_n);
+        void add_node_offset(size_t node_offset);
+        iterator* next();
 
         const DB &db_ref;
         int state;
         EdgePtrs edge_ptrs;
         // temp buffer to hold the node
         uint8_t node_buff[NUM_ALPHABET+NODE_EDGE_KEY_FIRST];
-        int match;
         MBlsq *node_stack;
-        std::string curr_key;
-        std::string match_str;
-        uint32_t curr_node_counter;
-        size_t curr_node_offset;
+        MBlsq *kv_per_node;
         LockFree *lfree;
     };
 
@@ -108,15 +104,15 @@ public:
     // memcap_data: maximum memory size for data file mapping
     // data_size: the value size; if zero, the value size will be variable.
     // id: the connector id
-    DB(const std::string &db_path, int db_options, size_t memcap_index=64*1024*1024LL,
-       size_t memcap_data=0, int data_size = 0, uint32_t  id = 0);
+    DB(const char *db_path, int db_options, size_t memcap_index = 64*1024*1024LL,
+       size_t memcap_data = 64*1024*1024LL, uint32_t  id = 0);
+    DB(MBConfig &config);
     ~DB();
 
     // Add a key-value pair
-    int Add(const char* key, int len, const char* data, int data_len=0,
-            bool overwrite=false);
-    int Add(const char* key, int len, MBData &data, bool overwrite=false);
-    int Add(const std::string &key, const std::string &value, bool overwrite=false);
+    int Add(const char* key, int len, const char* data, int data_len, bool overwrite = false);
+    int Add(const char* key, int len, MBData &data, bool overwrite = false);
+    int Add(const std::string &key, const std::string &value, bool overwrite = false);
     // Find an entry by exact match using a key
     int Find(const char* key, int len, MBData &mdata) const;
     int Find(const std::string &key, MBData &mdata) const;
@@ -127,7 +123,6 @@ public:
     int FindLongestPrefix(const char* key, int len, MBData &data) const;
     int FindLongestPrefix(const std::string &key, MBData &data) const;
     // Remove an entry using a key
-    int Remove(const char *key, int len, MBData &data);
     int Remove(const char *key, int len);
     int Remove(const std::string &key);
     int RemoveAll();
@@ -135,11 +130,24 @@ public:
     int Close();
     void Flush() const;
 
-    // DB shrink
-    int Shrink(size_t min_index_shk_size = INDEX_BLOCK_SIZE/2,
-               size_t min_data_shk_size  = DATA_BLOCK_SIZE/2);
+    // Garbage collection
+    // min_index_rc_size and min_data_rc_size are the threshold for trigering garbage
+    // collector. If the pending index buffer size is less than min_index_rc_size,
+    // rc will be ignored for index segment. If the pending data buffer size is less
+    // than min_data_rc_size, rc will be ignored for data segment.
+    // eviction will be ignored if db size is less than 0xFFFFFFFFFFFF and db count is
+    // less than 0xFFFFFFFFFFFF.
+    int CollectResource(int64_t min_index_rc_size = 33554432 , int64_t min_data_rc_size = 33554432,
+                        int64_t max_dbsiz = 0xFFFFFFFFFFFF, int64_t max_dbcnt = 0xFFFFFFFFFFFF);
 
-    // multi-thread or multi-process concurrency/locking
+    // Multi-thread update using async thread
+    // FOR THIS TO WORK, WRITER MUST BE THE LAST ONE TO CLOSE HANDLE.
+    int  SetAsyncWriterPtr(DB *db_writer);
+    int  UnsetAsyncWriterPtr(DB *db_writer);
+    bool AsyncWriterEnabled() const;
+    bool AsyncWriterBusy() const;
+
+    // multi-thread or multi-process locking for DB management
     int WrLock();
     int RdLock();
     int UnLock();
@@ -152,11 +160,14 @@ public:
     // level 1: error and warn will be logged.
     // level 2: error, warn, and info will be logged. This is the default setting.
     // level 3: error, warn, info and debug will be logged.
+    static void SetLogFile(const std::string &log_file);
     static int  SetLogLevel(int level);
     static void LogDebug();
+    static void CloseLogFile();
 
     // Print database stats
     void PrintStats(std::ostream &out_stream = std::cout) const;
+    void PrintHeader(std::ostream &out_stream = std::cout) const;
     // current count of key-value pair
     int64_t Count() const;
     // DB status
@@ -167,14 +178,23 @@ public:
     bool is_open() const;
 
     Dict* GetDictPtr() const;
+    int   GetDBOptions() const;
+    const std::string& GetDBDir() const;
 
     //iterator
-    const iterator begin() const;
+    const iterator begin(bool check_async_mode = true) const;
     const iterator end() const;
 
 private:
+    void InitDB(MBConfig &config);
+    static int ValidateConfig(MBConfig &config);
+
+    // DB directory
+    std::string mb_dir;
+    int options;
     Dict *dict;
     int status;
+
     // DB connector ID
     uint32_t identifier;
 

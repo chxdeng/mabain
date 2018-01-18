@@ -22,25 +22,22 @@ using namespace mabain;
 
 const char *db_dir = "./tmp_dir/";
 
-// mabain db iterator
+// Resource collection test
 int main(int argc, char *argv[])
 {
     if(argc == 2) {
         db_dir = argv[1];
     }
 
-    DB db(db_dir, CONSTS::ReaderOptions());
+    mabain::DB::SetLogFile("/var/tmp/mabain_test/mabain.log");
+    DB db(db_dir, CONSTS::ACCESS_MODE_WRITER, 128LL*1024*1024, 128LL*1024*1024);
     if(!db.is_open()) {
         std::cerr << "failed to open mabain db: " << db.StatusStr() << "\n";
         exit(1);
     }
 
-    std::string key, value;
-
-    for(DB::iterator iter = db.begin(); iter != db.end(); ++iter) {
-        std::cout << iter.key << ": " << std::string((char*)iter.value.buff, iter.value.data_len) << "\n";
-    }
-
+    db.CollectResource();
     db.Close();
+    mabain::DB::CloseLogFile();
     return 0;
 }

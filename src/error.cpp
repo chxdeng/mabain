@@ -38,14 +38,13 @@ const char* MBError::error_str[] = {
     "try again",
     "resource allocation error",
     "mutex error",
-    "Entry being inserted or deleted",
+    "unknown error",
     "writer already running",
-    "disk capacity exceeded",
+    "no resource available",
     "database closed",
     "buffer discarded", // buffer will be reclaimed by shrink
     "failed to create thread",
-    "edge offset modified",
-    "node offset modified",
+    "rc skipped",
 
     ///////////////////////////////////
     "DB not exist",

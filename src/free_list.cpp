@@ -39,8 +39,8 @@ FreeList::FreeList(const std::string &file_path, int buff_alignment,
                  count(0),
                  tot_size(0)
 {
-    // rel_parent_off in MBShrink is defined as 2-byte signed integer. The maximal buffer
-    // size cannot be greather than 32767.
+    // rel_parent_off in ResourceCollection is defined as 2-byte signed integer.
+    // The maximal buffer size cannot be greather than 32767.
     assert(GetBufferSizeByIndex(max_n_buff-1) <= 65535);
 
     Logger::Log(LOG_LEVEL_INFO, "%s maximum number of buffers: %d", file_path.c_str(),
@@ -50,6 +50,9 @@ FreeList::FreeList(const std::string &file_path, int buff_alignment,
     {
         buffer_free_list[i] = new MBlsq(NULL);
     }
+
+    memset(buf_cache, 0, sizeof(buf_cache));
+    buf_cache_index = 0;
 }
 
 FreeList::~FreeList()
@@ -94,7 +97,9 @@ int FreeList::AddBuffer(size_t offset, int size)
     int rval = MBError::SUCCESS;
 
     int buf_index = GetBufferIndex(size);
+#ifdef __DEBUG__
     assert(buf_index < max_num_buffer);
+#endif
 
     if(buffer_free_list[buf_index]->Count() > (unsigned)max_buffer_per_list)
     {
@@ -249,6 +254,9 @@ void FreeList::ReleaseAlignmentBuffer(size_t old_offset, size_t alignment_offset
 
 void FreeList::Empty()
 {
+    memset(buf_cache, 0, sizeof(buf_cache));
+    buf_cache_index = 0;
+
     for(int i = 0; i < max_num_buffer; i++)
     {
         if(buffer_free_list[i])
@@ -260,37 +268,21 @@ void FreeList::Empty()
     tot_size = 0;
 }
 
-bool FreeList::GetBufferByIndex(int buf_index, size_t &offset, LockFree *lfree)
+bool FreeList::GetBufferByIndex(int buf_index, size_t &offset)
 {
 #ifdef __DEBUG__
     assert(buf_index < max_num_buffer);
 #endif
     MBlsq *flist = buffer_free_list[buf_index];
-    int64_t list_cnt = flist->Count();
-    bool found = false;
-    while(list_cnt > 0)
+    if(flist->Count() > 0)
     {
         offset = flist->RemoveIntFromHead();
-        if(!lfree->ReleasedOffsetInUse(offset))
-        {
-            found = true;
-            break;
-        }
-        flist->AddIntToTail(offset);
-        list_cnt--;
-    }
-
-    if(found)
-    {
         count--;
         tot_size -= (buf_index + 1) * alignment;
-    }
-    else
-    {
-        offset = 0;
+        return true;
     }
 
-    return found;
+    return false;
 }
 
 }

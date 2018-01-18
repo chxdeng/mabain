@@ -22,30 +22,31 @@
 #include <stdint.h>
 #include <string>
 
+#include "drm_base.h"
 #include "dict_mem.h"
 #include "rollable_file.h"
 #include "mb_data.h"
 #include "lock_free.h"
 
-#define DATA_BUFFER_ALIGNMENT       1
-#define DATA_SIZE_BYTE              2
-
 namespace mabain {
 
 // dictionary class
 // This is the work horse class for basic db operations (add, find and remove).
-class Dict
+class Dict : public DRMBase
 {
 public:
-    Dict(const std::string &mbdir, bool init_header, int datasize, int db_options,
-         size_t memsize_index, size_t memsize_data);
-    ~Dict();
+    Dict(const std::string &mbdir, bool init_header, int datasize,
+         int db_options, size_t memsize_index, size_t memsize_data,
+         uint32_t block_sz_index, uint32_t block_sz_data,
+         int max_num_index_blk, int max_num_data_blk,
+         int64_t entry_per_bucket);
+    virtual ~Dict();
     void Destroy();
 
     // Called by writer only
     int Init(uint32_t id);
     // Add key-value pair
-    int Add(const uint8_t *key, int len, MBData &data, bool overwrite=true);
+    int Add(const uint8_t *key, int len, MBData &data, bool overwrite);
     // Find value by key
     int Find(const uint8_t *key, int len, MBData &data);
     // Find value by key using prefix match
@@ -58,34 +59,32 @@ public:
     // Delete all entries
     int RemoveAll();
 
-    inline void WriteData(const uint8_t *buff, unsigned len, size_t offset) const;
+    void ReserveData(const uint8_t* buff, int size, size_t &offset);
+    void WriteData(const uint8_t *buff, unsigned len, size_t offset) const;
 
     // Print dictinary stats
     void PrintStats(std::ostream *out_stream) const;
     void PrintStats(std::ostream &out_stream) const;
+    void PrintHeader(std::ostream &out_stream) const;
     int Status() const;
     int64_t Count() const;
-    int GetDBOptions() const;
     size_t GetRootOffset() const;
     size_t GetStartDataOffset() const;
 
-    FreeList *GetFreeList() const;
     DictMem *GetMM() const;
-    IndexHeader *GetHeader() const;
-    const std::string& GetDBDir() const;
 
     LockFree* GetLockFreePtr();
 
     // Used for DB iterator
-    int ReadNextEdge(const uint8_t *node_buff, EdgePtrs &edge_ptrs, int &match,
-                 MBData &data, std::string &match_str, size_t &node_off) const;
-    int ReadNode(size_t node_off, uint8_t *node_buff, EdgePtrs &edge_ptrs,
-                 int &match, MBData &data) const;
-    int ReadRootNode(uint8_t *node_buff, EdgePtrs &edge_ptrs, int &match,
+    int  ReadNextEdge(const uint8_t *node_buff, EdgePtrs &edge_ptrs, int &match,
+                 MBData &data, std::string &match_str, size_t &node_off,
+                 bool rd_kv = true) const;
+    int  ReadNode(size_t node_off, uint8_t *node_buff, EdgePtrs &edge_ptrs,
+                 int &match, MBData &data, bool rd_kv = true) const;
+    void ReadNodeHeader(size_t node_off, int &node_size, int &match,
+                 size_t &data_offset, size_t &data_link_offset);
+    int  ReadRootNode(uint8_t *node_buff, EdgePtrs &edge_ptrs, int &match,
                  MBData &data) const;
-    inline int ReadData(uint8_t *buff, int len, size_t offset, bool reader_mode=true) const;
-    inline int Reserve(size_t &offset, int size, uint8_t* &ptr);
-    void ReserveData(const uint8_t* buff, int size, size_t &offset);
 
     // Shared memory mutex
     int InitShmMutex();
@@ -96,6 +95,7 @@ public:
 
     void ResetSlidingWindow() const;
     void Flush() const;
+    int  ExceptionRecovery();
 
 private:
     int ReleaseBuffer(size_t offset);
@@ -104,51 +104,18 @@ private:
     int ReadDataFromEdge(MBData &data, const EdgePtrs &edge_ptrs) const;
     int ReadDataFromNode(MBData &data, const uint8_t *node_ptr) const;
     int DeleteDataFromEdge(MBData &data, EdgePtrs &edge_ptrs);
+    int ReadNodeMatch(size_t node_off, int &match, MBData &data) const;
 
-    // DB directory
-    std::string mb_dir;
     // DB access permission
     int options;
     // Memory management
     DictMem mm;
-    // Database files for storing values
-    RollableFile *db_file;
-    // buffer free lists
-    FreeList *free_lists;
 
     // dict status
     int status;
-    // Header pointer
-    IndexHeader *header;
 
     LockFree lfree;
 };
-
-inline int Dict::ReadData(uint8_t *buff, int len, size_t offset, bool reader_mode) const
-{
-    //if(offset + len > header->m_data_offset)
-    //    return -1;
-
-    return db_file->RandomRead(buff, len, offset, reader_mode);
-}
-
-inline void Dict::WriteData(const uint8_t *buff, unsigned len, size_t offset) const
-{
-    if(offset + len > header->m_data_offset)
-    {
-        std::cerr << "invalid dict write: " << offset << " " << len << " "
-                  << header->m_data_offset << "\n";
-        throw (int) MBError::OUT_OF_BOUND;
-    }
-
-    if(db_file->RandomWrite(buff, len, offset) != len)
-        throw (int) MBError::WRITE_ERROR;
-}
-
-inline int Dict::Reserve(size_t &offset, int size, uint8_t* &ptr)
-{
-    return db_file->Reserve(offset, size, ptr);
-}
 
 }
 

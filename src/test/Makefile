@@ -1,17 +1,23 @@
-TEST_BIN_NAME=mb_test
-
 CPP=g++
 
-CPPFLAGS = -I. -I.. -I../util -Wall -Werror -g -O2 -c -std=c++11 -D__UNIT_TEST__
-LDFLAGS  = -lpthread
+CPPFLAGS = -I. -I.. -I../util -Wall -Werror -g -O2 -c -std=c++11
+LDFLAGS  = -lpthread -lcrypto
 
 TESTSOURCES=$(wildcard *.cpp)
 
-all: mb_test
+all: mb_test mb_test1 mb_test2
 
 mb_test: mabain_test.cpp ../libmabain.so
 	$(CPP) $(CPPFLAGS) mabain_test.cpp
-	$(CPP) mabain_test.o -o $(TEST_BIN_NAME) -L../ -lmabain $(LDFLAGS)
+	$(CPP) mabain_test.o -o mb_test -L../ -lmabain $(LDFLAGS)
+
+mb_test1: mbtest1.cpp ../libmabain.so
+	$(CPP) $(CPPFLAGS) mbtest1.cpp 
+	$(CPP) mbtest1.o -o mb_test1 -L../ -lmabain $(LDFLAGS)
+
+mb_test2: mbtest2.cpp ../libmabain.so
+	$(CPP) $(CPPFLAGS) mbtest2.cpp 
+	$(CPP) mbtest2.o -o mb_test2 -L../ -lmabain $(LDFLAGS)
 
 clean:
-	-rm -rf *.o $(TEST_BIN_NAME)
+	-rm -rf *.o mb_test*

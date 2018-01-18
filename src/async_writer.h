@@ -22,20 +22,25 @@
 #include <pthread.h>
 
 #include "db.h"
-#include "util/mb_lsq.h"
+//#include "mb_rc.h"
 #include "dict.h"
 
 namespace mabain {
 
+#define MABAIN_ASYNC_TYPE_NONE       0
 #define MABAIN_ASYNC_TYPE_ADD        1
 #define MABAIN_ASYNC_TYPE_REMOVE     2
 #define MABAIN_ASYNC_TYPE_REMOVE_ALL 3
-#define MABAIN_ASYNC_TYPE_SHRINK     4
+#define MABAIN_ASYNC_TYPE_RC         4
 
 typedef struct _AsyncNode
 {
+    std::atomic<bool> in_use;
+    pthread_mutex_t   mutex;
+    pthread_cond_t    cond;
+
     char *key;
-    char *data;
+    void *data;
     int key_len;
     int data_len;
     bool overwrite;
@@ -49,35 +54,39 @@ public:
     AsyncWriter(DB *db_ptr);
     ~AsyncWriter();
 
-    // async add/remove by enqueue
+    void UpdateNumUsers(int delta);
     int  Add(const char *key, int key_len, const char *data, int data_len, bool overwrite);
     int  Remove(const char *key, int len);
     int  RemoveAll();
-    int  Shrink(size_t min_index_shk_size, size_t min_data_shk_size);
-    void StopAsyncThread();
+    int  CollectResource(int64_t m_index_rc_size, int64_t m_data_rc_size, 
+                         int64_t max_dbsz, int64_t max_dbcnt);
+    int  StopAsyncThread();
+    bool Busy() const;
+    int  ProcessTask(int ntasks);
 
 private:
     static void *async_thread_wrapper(void *context);
-    static const int max_num_queue_node;
-
+    AsyncNode* AcquireSlot();
+    int PrepareSlot(AsyncNode *node_ptr) const;
     void* async_writer_thread();
-    int Enqueue(AsyncNode *node_ptr);
+
+    static const int max_num_queue_node;
 
     // db pointer
     DB *db;
     Dict *dict;
 
-    // async queue
-    MBlsq *queue;
-    // queue mutex
-    pthread_mutex_t q_mutex;
-    pthread_cond_t  q_cond;
+    std::atomic<int> num_users;
+    AsyncNode *queue;
+
     // thread id
     pthread_t tid;
 
     bool stop_processing;
-    size_t min_index_shrink_size;
-    size_t min_data_shrink_size;
+    std::atomic<uint32_t> queue_index;
+    uint32_t writer_index;
+
+    bool is_rc_running;
 };
 
 }

@@ -27,6 +27,7 @@
 #include <string>
 #include <vector>
 #include <openssl/sha.h>
+#include <map>
 
 #include <mabain/db.h>
 
@@ -47,11 +48,27 @@ static int stop_processing = 0;
 static int num_keys = 1000000;
 static int test_type = 0;
 static int64_t memcap_index = 256*1024*1024LL;
-static int64_t memcap_data  = 0*1024*1024LL;
-//static int key_type = KEY_TYPE_SHA256;
-static int key_type = KEY_TYPE_INT;
+static int64_t memcap_data  = 256*1024*1024LL;
+static int key_type = KEY_TYPE_SHA256;
+//static int key_type = KEY_TYPE_INT;
+static std::map<std::string,int> checked;
 
 static const char* get_sha256_str(int key);
+
+static void SetTestStatus(bool success, bool stop_test = true)
+{
+    std::string cmd;
+    if(success) {
+        cmd = std::string("touch ") + mb_dir + "/_success";
+    } else {
+        cmd = std::string("rm ") + mb_dir + "/_success";
+    }
+    if(system(cmd.c_str()) != 0) {
+    }
+    if(stop_test) {
+        abort();
+    }
+}
 
 static void RemoveRandom(int rm_cnt, DB &db)
 {
@@ -73,10 +90,10 @@ static void RemoveRandom(int rm_cnt, DB &db)
         }
 
         db.Remove(kv);
+        checked[kv] = 0;
         if(cnt % 1000000 == 0)
             std::cout << "Removed " << cnt << "\n";
     }
-    std::cout << "Randomly removed " << rm_cnt << "\n";
 }
 
 static void PopulateDB(DB &db)
@@ -101,13 +118,13 @@ static void PopulateDB(DB &db)
         if(rval != MBError::SUCCESS)
         {
             std::cout << "failed to add " << kv << " " << rval << "\n";
-            abort();
+            SetTestStatus(false);
         }
+        checked[kv] = 1;
 
         if(nkeys % 1000000 == 0)
             std::cout << "populate db:  " << " inserted " << nkeys << " keys\n";
     }
-    //db.PrintStats();
 }
 
 static void RemoveHalf(DB &db)
@@ -132,21 +149,18 @@ static void RemoveHalf(DB &db)
                 break;
         }
         rval = db.Remove(kv.c_str(), kv.length());
+        checked[kv] = 0;
         if(rval != MBError::SUCCESS)
         {
             std::cout << "failed to remove " << nkeys << " " << kv << " " << rval << "\n";
-            abort();
+            SetTestStatus(false);
         }
     }
-    //db.PrintStats();
 }
 
 //Writer process
 static void Writer(int id)
 {
-    //std::cout << "Start time: " << time(NULL) << "\n";
-    //std::cout << "I am writer " << id << " with pid " << getpid() << "\n";
-
     DB db(mb_dir, CONSTS::WriterOptions(), memcap_index, memcap_data);
     if(!db.is_open()) {
         std::cerr << "writer " << id << " failed to open mabain db: "
@@ -155,10 +169,8 @@ static void Writer(int id)
     }
 
     if(test_type == SHRINK_TEST) {
-        db.Shrink(0, 0);
+        db.CollectResource(0, 0);
 
-        //if(id == 0) db.PrintStats();
-        std::cout << "writer " << id << " exiting\n";
         db.Close();
         exit(0);
     }
@@ -182,20 +194,21 @@ static void Writer(int id)
 
         if(test_type == REMOVE_ONE_BY_ONE) {
             rval = db.Remove(kv.c_str(), kv.length());
-            if(rval != MBError::SUCCESS && rval != MBError::NOT_EXIST)
+            if(rval != MBError::SUCCESS && rval != MBError::NOT_EXIST) {
                 std::cout << "failed to remove " << kv << "\n";
-            else
+                SetTestStatus(false);
+            } else {
                 count++;
+            }
         } else if(test_type == REMOVE_ALL) {
-            //if(nkeys % 50 == 0) usleep(1);
-
             if(nkeys == int(num_keys * 0.666666)) {
                 db.RemoveAll();
             }
         } else {
             rval = db.Add(kv, kv);
             if(rval != MBError::SUCCESS && rval != MBError::IN_DICT) {
-                //std::cout << "failed to add " << kv << " " << rval << "\n";
+                std::cout << "failed to add " << kv << " " << rval << "\n";
+                SetTestStatus(false);
             } else if(rval == MBError::SUCCESS) {
                 count++;
             }
@@ -206,12 +219,6 @@ static void Writer(int id)
         if(nkeys >= num_keys) break;
     }
 
-    //if(id == 0) db.PrintStats();
-    if(test_type == ADD_TEST)
-        std::cout << "writer " << id << " inserted " << count << " keys\n";
-    else if(test_type == REMOVE_ONE_BY_ONE)
-        std::cout << "writer " << id << " removed " << count << " keys\n";
-    std::cout << "writer " << id << " exiting\n";
     db.Close();
     exit(0);
 }
@@ -219,30 +226,47 @@ static void Writer(int id)
 //Reader process
 static void Reader(int id)
 {
-    //std::cout << "I am reader " << id << " with pid " << getpid() << "\n";
-
     DB db(mb_dir, CONSTS::ReaderOptions(), memcap_index, memcap_data);
     if(!db.is_open()) {
         std::cerr << "reader " << id << " failed to open mabain db: "
                   << db.StatusStr() << "\n";
-        exit(1);
+        SetTestStatus(false);
     }
 
+    std::string key;
     if(test_type == ITERATOR_TEST) {
         int count = 0;
         for(DB::iterator iter = db.begin(); iter != db.end(); ++iter) {
             count++;
             if(iter.key != std::string((char*)iter.value.buff, iter.value.data_len)) {
-                std::cout << iter.key << ": " << std::string((char*)iter.value.buff, iter.value.data_len) << "\n";
+                std::cout << "VALUE NOT MATCH " << iter.key << ": "
+                          << std::string((char*)iter.value.buff, iter.value.data_len) << "\n";
+                SetTestStatus(false);
+            } else {
+                if(checked[iter.key] == 1)
+                    checked[iter.key]++;
             }
         }
         db.Close();
-        std::cout << "Reader iterates " << count << " keys\n";
+        for(int i = 1; i <= num_keys; i++) {
+            switch(key_type) {
+                case KEY_TYPE_SHA256:
+                    key = get_sha256_str(i);
+                    break;
+                case KEY_TYPE_INT:
+                default:
+                    key = std::string("key") + std::to_string(i);
+                    break;
+            }
+            if(!(checked[key] == 0 || checked[key] == 2)) {
+                std::cerr << i << ": " << key << " " << checked[key] << " for id " << id << "\n";
+                SetTestStatus(false);
+            }
+        }
         exit(0);
     }
 
     int ikey = 1;
-    std::string key;
     MBData mb_data;
     int rval;
     int nfound = 0;
@@ -256,52 +280,25 @@ static void Reader(int id)
                 key = std::string("key") + std::to_string(ikey);
                 break;
         }
-        //SHRINK_TEST should only use Find()
-        if(test_type == SHRINK_TEST) {
-            rval = db.Find(key, mb_data);
-        } else {
-            rval = db.Find(key, mb_data);
-            //rval = db.FindLongestPrefix(key.c_str(), key.length(), mb_data);
-        }
+        rval = db.Find(key, mb_data);
 
         if(rval == MBError::SUCCESS) {
             // check the value read from DB
             if(memcmp(key.c_str(), mb_data.buff, mb_data.data_len)) {
-                 std::cout << "READER " << id << " VALUE DOES NOT MATCH: "
-                           << key << ":" << mb_data.match_len << " "
-                           << std::string((const char *)mb_data.buff, mb_data.data_len) << "\n";
+                std::cout << "READER " << id << " VALUE DOES NOT MATCH: "
+                          << key << ":" << mb_data.match_len << " "
+                          << std::string((const char *)mb_data.buff, mb_data.data_len) << "\n";
+                SetTestStatus(false);
             }
 
-            if((test_type == REMOVE_ONE_BY_ONE &&ikey%5 == 0) ||
-               (test_type == SHRINK_TEST && ikey%8 == 0)) {
-                usleep(2);
-            }
-
-            if(test_type == SHRINK_TEST) {
-                if(ikey % 2 != 0) {
-                    //std::cout << "READER " << id << " KEY SHOULD NOT EXIST: " << key << "\n";
-                }
-            } 
             ikey++;
             nfound++;
         }
         else if(rval == MBError::NOT_EXIST) {
-            if(test_type == REMOVE_ONE_BY_ONE || test_type == REMOVE_ALL)
-                ikey++;
-            else if(test_type == SHRINK_TEST) {
-                if(ikey % 2 == 0) {
-                    //std::cout << "READER " << id << " KEY " << ikey << " SHOULD EXIST: " << key << "\n";
-                }
-                ikey++;
-            }
-            //else
-            //    usleep(1);
-        }
-        else {
-            // for removing all test, READ_ERROR is expected.
-            if(!((test_type == REMOVE_ONE_BY_ONE || test_type == REMOVE_ALL) &&
-               rval == MBError::READ_ERROR))
-                std::cerr << "ERROR: " << MBError::get_error_str(rval) << "\n";
+            ikey++;
+        } else {
+            std::cerr << "ERROR: " << MBError::get_error_str(rval) << "\n";
+            SetTestStatus(false);
         }
 
         if(ikey % 1000000 == 0)
@@ -311,8 +308,6 @@ static void Reader(int id)
     }
 
     stop_processing = 1;
-    std::cout << "reader " << id << " found " << nfound << " keys\n";
-    std::cout << "reader " << id << " exiting\n";
     db.Close();
     exit(0);
 }
@@ -339,7 +334,9 @@ int main(int argc, char *argv[])
     int num_writer = 1; // There can be one writer at most.
     int num_reader = 2;
     test_type = -1;
+    srand(time(NULL));
 
+    mabain::DB::SetLogFile("/var/tmp/mabain_test/mabain.log");
     if(argc >= 4) {
         const char *test_tp = argv[1];
         if(strcmp(test_tp, "add") == 0)
@@ -361,6 +358,7 @@ int main(int argc, char *argv[])
         mb_dir = argv[4];
     }
 
+    SetTestStatus(false, false);
     if(test_type < 0) {
         test_type = ADD_TEST;
     }
@@ -375,25 +373,23 @@ int main(int argc, char *argv[])
     db.RemoveAll();
     PopulateDB(db);
     switch(test_type) {
-    case ADD_TEST:
-        RemoveRandom(int(num_keys * 0.11), db);
-        break;
-    case LOOKUP_TEST:
-        break;
-    case SHRINK_TEST:
-        //RemoveHalf(db);
-        RemoveRandom(int(num_keys * 0.11), db);
-        break;
-    case REMOVE_ONE_BY_ONE:
-        break;
-    case REMOVE_ALL:
-        break;
-    case ITERATOR_TEST:
-        //RemoveRandom(int(num_keys * 0.11), db);
-        RemoveHalf(db);
-        break;
-    default:
-        abort();
+        case ADD_TEST:
+            RemoveRandom(int(num_keys * 0.7777777), db);
+            break;
+        case LOOKUP_TEST:
+            break;
+        case SHRINK_TEST:
+            RemoveHalf(db);
+            break;
+        case REMOVE_ONE_BY_ONE:
+            break;
+        case REMOVE_ALL:
+            break;
+        case ITERATOR_TEST:
+            RemoveRandom(int(num_keys * 0.666666), db);
+            break;
+        default:
+            abort();
     }
  
     db.Close();
@@ -450,9 +446,9 @@ int main(int argc, char *argv[])
                         stop_processing = 1;
                         struct timeval stop_tm;
                         gettimeofday(&stop_tm,NULL);
-                        std::cout << "All children have exited!\n";
-                        std::cout << "time: " << ((stop_tm.tv_sec-start_tm.tv_sec)*1000000.0 +
-                                    (stop_tm.tv_usec-start_tm.tv_usec))/num_keys << "\n";
+                        //std::cout << "All children have exited!\n";
+                        //std::cout << "time: " << ((stop_tm.tv_sec-start_tm.tv_sec)*1000000.0 +
+                        //            (stop_tm.tv_usec-start_tm.tv_usec))/num_keys << "\n";
                     }
                 }
             }
@@ -461,5 +457,7 @@ int main(int argc, char *argv[])
         }
     }
 
+    mabain::DB::CloseLogFile();
+    SetTestStatus(true, false);
     return 0;
 }

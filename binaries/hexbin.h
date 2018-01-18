@@ -16,31 +16,12 @@
 
 // @author Changxue Deng <chadeng@cisco.com>
 
-#include <mabain/db.h>
+#ifndef __HEXBIN_H__
+#define __HEXBIN_H__
 
-using namespace mabain;
+#include <stdint.h>
 
-const char *db_dir = "./tmp_dir/";
+int bin_2_hex(const uint8_t *data, int len, char *buff, int buf_size);
+int hex_2_bin(const char *data, int len, uint8_t *buff, int buf_size);
 
-// mabain db iterator
-int main(int argc, char *argv[])
-{
-    if(argc == 2) {
-        db_dir = argv[1];
-    }
-
-    DB db(db_dir, CONSTS::ReaderOptions());
-    if(!db.is_open()) {
-        std::cerr << "failed to open mabain db: " << db.StatusStr() << "\n";
-        exit(1);
-    }
-
-    std::string key, value;
-
-    for(DB::iterator iter = db.begin(); iter != db.end(); ++iter) {
-        std::cout << iter.key << ": " << std::string((char*)iter.value.buff, iter.value.data_len) << "\n";
-    }
-
-    db.Close();
-    return 0;
-}
+#endif

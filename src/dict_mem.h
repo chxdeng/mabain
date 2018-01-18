@@ -25,6 +25,7 @@
 #include <pthread.h>
 #include <assert.h>
 
+#include "drm_base.h"
 #include "db.h"
 #include "mabain_consts.h"
 #include "mb_data.h"
@@ -33,18 +34,6 @@
 #include "free_list.h"
 #include "lock_free.h"
 #include "error.h"
-
-#define OFFSET_SIZE                6
-#define EDGE_SIZE                  13
-#define EDGE_LEN_POS               5
-#define EDGE_FLAG_POS              6
-#define EDGE_FLAG_DATA_OFF         0x01
-#define FLAG_NODE_MATCH            0x01
-#define FLAG_NODE_NONE             0x0
-#define BUFFER_ALIGNMENT           1
-#define LOCAL_EDGE_LEN             6
-#define LOCAL_EDGE_LEN_M1          5
-#define EDGE_NODE_LEADING_POS      7
 
 namespace mabain {
 
@@ -57,39 +46,14 @@ typedef struct _NodePtrs
     uint8_t *edge_ptr;
 } NodePtrs;
 
-// Mabain db header
-// This header is stored in the head of the first index file mabain_i0.
-typedef struct _IndexHeader
-{
-    uint16_t version[4];
-    int      data_size;
-    int64_t  count;
-    size_t   m_data_offset;
-    size_t   m_index_offset;
-    int64_t  pending_data_buff_size;
-    int64_t  pending_index_buff_size;
-    int64_t  n_states;
-    int64_t  n_edges;
-    int64_t  edge_str_size;
-    int      num_writer;
-    int      num_reader;
-    std::atomic<size_t> shm_index_sliding_start;
-    std::atomic<size_t> shm_data_sliding_start;
-
-    // Lock-free data structure
-    LockFreeShmData lock_free;
-
-    // read/write lock
-    pthread_rwlock_t mb_rw_lock;
-} IndexHeader;
-
 // Memory management class for the dictionary
-class DictMem
+class DictMem : public DRMBase
 {
 public:
-    DictMem(const std::string &mbdir, bool init_header5, size_t memsize, int mode);
+    DictMem(const std::string &mbdir, bool init_header, size_t memsize,
+            int mode, uint32_t block_size, int max_num_blk);
     void Destroy();
-    ~DictMem();
+    virtual ~DictMem();
 
     bool IsValid() const;
     void PrintStats(std::ostream &out_stream) const;
@@ -108,6 +72,7 @@ public:
     bool FindNext(const unsigned char *key, int keylen, int &match_len,
                   EdgePtrs &edge_ptr, uint8_t *key_tmp) const;
     int  GetRootEdge(int nt, EdgePtrs &edge_ptrs) const;
+    int  GetRootEdge_Writer(int nt, EdgePtrs &edge_ptrs) const;
     int  ClearRootEdge(int nt) const;
     void ReserveData(const uint8_t* key, int size, size_t &offset,
                      bool map_new_sliding=true);
@@ -115,20 +80,19 @@ public:
                   uint8_t *tmp_buff, bool update_parent_info=false) const;
     int  RemoveEdgeByIndex(const EdgePtrs &edge_ptrs, MBData &data);
     void InitRootNode();
-    inline int ReadData(uint8_t *buff, int len, size_t offset, bool reader_mode=true) const;
     inline void WriteEdge(const EdgePtrs &edge_ptrs) const;
-    inline void WriteData(const uint8_t *buff, unsigned len, size_t offset) const;
-    inline int  Reserve(size_t &offset, int size, uint8_t* &ptr);
+    void WriteData(const uint8_t *buff, unsigned len, size_t offset) const;
     inline size_t GetRootOffset() const;
-    IndexHeader *GetHeaderPtr() const;
     void ClearMem() const;
-    FreeList *GetFreeList();
     const int* GetNodeSizePtr() const;
     void ResetSlidingWindow() const;
 
     void InitLockFreePtr(LockFree *lf);
 
     void Flush() const;
+
+    // empty edge, used for clearing edges
+    static const uint8_t empty_edge[EDGE_SIZE];
 
 private:
     bool     ReserveNode(int nt, size_t &offset, uint8_t* &ptr);
@@ -140,20 +104,19 @@ private:
     void     UpdateHeadEdge(EdgePtrs &edge_ptrs, int match_len,
                             MBData &data, int &release_buffer_size,
                             size_t &edge_str_off, bool &map_new_sliding);
-
-    IndexHeader *header;
+    void     RemoveRootEdge(const EdgePtrs &edge_ptrs);
+    int      RemoveEdgeSizeN(const EdgePtrs &edge_ptrs, int nt, size_t node_offset,
+                            uint8_t *old_node_buffer, size_t &str_off_rel,
+                            int &str_size_rel, size_t parent_edge_offset);
+    int      RemoveEdgeSizeOne(uint8_t *old_node_buffer, size_t parent_edge_offset,
+                            size_t node_offset, int nt, size_t &str_off_rel,
+                            int &str_size_rel);
 
     int *node_size;
     bool is_valid;
 
-    // Dynamical memory management
-    RollableFile *mem_file;
-    FreeList *free_lists;
     size_t root_offset;
     uint8_t *node_ptr;
-
-    // empty edge, used for clearing edges
-    static uint8_t empty_edge[EDGE_SIZE];
 
     // lock free pointer
     LockFree *lfree;
@@ -161,13 +124,6 @@ private:
     // header file
     MmapFileIO *header_file;
 };
-
-inline int DictMem::ReadData(uint8_t *buff, int len, size_t offset, bool reader_mode) const
-{
-    //if(offset + len > header->m_index_offset)
-    //    return -1;
-    return mem_file->RandomRead(buff, len, offset, reader_mode);
-}
 
 inline void DictMem::WriteEdge(const EdgePtrs &edge_ptrs) const
 {
@@ -178,21 +134,15 @@ inline void DictMem::WriteEdge(const EdgePtrs &edge_ptrs) const
         throw (int) MBError::OUT_OF_BOUND;
     }
 
-    if(mem_file->RandomWrite(edge_ptrs.ptr, EDGE_SIZE, edge_ptrs.offset) != EDGE_SIZE)
-        throw (int) MBError::WRITE_ERROR;
-}
+    // for segfault recovery
+    header->excep_lf_offset = edge_ptrs.offset;
+    header->excep_updating_status = EXCEP_STATUS_ADD_EDGE;
 
-inline void DictMem::WriteData(const uint8_t *buff, unsigned len, size_t offset) const
-{
-    if(offset + len > header->m_index_offset)
-    {
-        std::cerr << "invalid dmm write: " << offset << " " << len << " "
-                  << header->m_index_offset << "\n";
-        throw (int) MBError::OUT_OF_BOUND;
-    }
-
-    if(mem_file->RandomWrite(buff, len, offset) != len)
+    if(kv_file->RandomWrite(edge_ptrs.ptr, EDGE_SIZE, edge_ptrs.offset) != EDGE_SIZE)
         throw (int) MBError::WRITE_ERROR;
+
+    // unset the segault flag
+    header->excep_updating_status = EXCEP_STATUS_NONE;
 }
 
 inline size_t DictMem::GetRootOffset() const
@@ -200,13 +150,8 @@ inline size_t DictMem::GetRootOffset() const
     return root_offset;
 }
 
-inline IndexHeader* DictMem::GetHeaderPtr() const
-{
-    return header;
-}
-
 // update the edge pointers for fast access
-// node_ptrs.offset and node_ptrs.ptr[0] must already be populated before calling this function
+// node_ptrs.offset and node_ptrs.ptr[1] must already be populated before calling this function
 inline void DictMem::InitEdgePtrs(const NodePtrs &node_ptrs, int index, EdgePtrs &edge_ptrs)
 {
     int edge_off = NODE_EDGE_KEY_FIRST + node_ptrs.ptr[1] + 1  + index*EDGE_SIZE;
@@ -232,11 +177,6 @@ inline void DictMem::InitNodePtrs(uint8_t *ptr, int nt, NodePtrs &node_ptrs)
     nt++;
     node_ptrs.edge_key_ptr = ptr + NODE_EDGE_KEY_FIRST;
     node_ptrs.edge_ptr = node_ptrs.edge_key_ptr + nt;
-}
-
-inline int DictMem::Reserve(size_t &offset, int size, uint8_t* &ptr)
-{
-    return mem_file->Reserve(offset, size, ptr);
 }
 
 }

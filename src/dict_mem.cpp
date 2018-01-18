@@ -62,11 +62,9 @@ namespace mabain {
 /////////////////////////////////////////////////////////////////////////////////////
 
 
-DictMem::DictMem(const std::string &mbdir, bool init_header, size_t memsize, int mode)
-               : header(NULL),
-                 is_valid(false),
-                 mem_file(NULL),
-                 free_lists(NULL)
+DictMem::DictMem(const std::string &mbdir, bool init_header, size_t memsize,
+                 int mode, uint32_t block_size, int max_num_blk)
+               : is_valid(false)
 {
     root_offset = 0;
     node_ptr = NULL;
@@ -86,10 +84,23 @@ DictMem::DictMem(const std::string &mbdir, bool init_header, size_t memsize, int
     }
 
     // Both reader and writer need to open the mmapped file.
-    mem_file = new RollableFile(mbdir + "_mabain_i", static_cast<size_t>(INDEX_BLOCK_SIZE),
-                                memsize, mode);
+    if(!init_header)
+    {
+        if(block_size != 0 && header->index_block_size != block_size)
+        {
+            std::cerr << "mabain index block size not match\n";
+            throw (int) MBError::INVALID_SIZE;
+        }
+    }
+    else
+    {
+        header->index_block_size = block_size;
+    }
+    kv_file = new RollableFile(mbdir + "_mabain_i",
+                               static_cast<size_t>(header->index_block_size),
+                               memsize, mode, max_num_blk);
 
-    mem_file->InitShmSlidingAddr(&header->shm_index_sliding_start);
+    kv_file->InitShmSlidingAddr(&header->shm_index_sliding_start);
 
     if(!(mode & CONSTS::ACCESS_MODE_WRITER))
     {
@@ -117,7 +128,6 @@ DictMem::DictMem(const std::string &mbdir, bool init_header, size_t memsize, int
     {
         memset(header, 0, sizeof(IndexHeader));
         // Set up DB version
-        Logger::Log(LOG_LEVEL_INFO, "set up mabain db version to %u.%u", version[0], version[1]);
         header->version[0] = version[0];
         header->version[1] = version[1];
         header->version[2] = version[2];
@@ -127,28 +137,29 @@ DictMem::DictMem(const std::string &mbdir, bool init_header, size_t memsize, int
     }
     else
     {
-        int rval = free_lists->LoadListFromDisk();
-        if(rval == MBError::SUCCESS)
-            is_valid = true;
-        else
-            Logger::Log(LOG_LEVEL_ERROR, "failed to load free list from disk %s",
-                        MBError::get_error_str(rval));
+        is_valid = true;
     }
+    Logger::Log(LOG_LEVEL_INFO, "set up mabain db version to %u.%u.%u",
+                header->version[0], header->version[1], header->version[2]);
 }
 
 // The whole edge is initizlized to zero.
-uint8_t DictMem::empty_edge[] = {0};
+const uint8_t DictMem::empty_edge[] = {0};
 
 void DictMem::InitRootNode()
 {
+#ifdef __DEBUG__
     assert(header != NULL);
+#endif
     header->m_index_offset = 0;
 
     bool node_move;
     uint8_t *root_node;
 
     node_move = ReserveNode(NUM_ALPHABET-1, root_offset, root_node);
+#ifdef __DEBUG__
     assert(root_offset == 0);
+#endif
 
     root_node[0] = FLAG_NODE_NONE;
     root_node[1] = NUM_ALPHABET-1;
@@ -173,18 +184,11 @@ void DictMem::Destroy()
     if(header_file != NULL)
         delete header_file;
 
-    if(mem_file != NULL)
-        delete mem_file;
+    if(kv_file != NULL)
+        delete kv_file;
 
-    // Dump free list to disk
     if(free_lists)
-    {
-        int rval = free_lists->StoreListOnDisk();
-        if(rval != MBError::SUCCESS)
-            Logger::Log(LOG_LEVEL_ERROR, "failed to dump free list to disk %s",
-                        MBError::get_error_str(rval));
         delete free_lists;
-    }
 
     if(node_size != NULL)
         delete [] node_size;
@@ -217,7 +221,6 @@ void DictMem::AddRootEdge(EdgePtrs &edge_ptrs, const uint8_t *key,
     Write6BInteger(edge_ptrs.offset_ptr, data_offset);
 
 #ifdef __LOCK_FREE__
-    lfree->PushOffsets(0, 0);
     lfree->WriterLockFreeStart(edge_ptrs.offset);
 #endif
     WriteEdge(edge_ptrs);
@@ -238,7 +241,7 @@ void DictMem::UpdateTailEdge(EdgePtrs &edge_ptrs, int match_len, MBData &data,
         // Load the string with length edge_len.
         size_t new_key_off;
         size_t edge_str_off = Get5BInteger(edge_ptrs.ptr);
-        if(ReadData(data.node_buff, edge_len, edge_str_off + match_len - 1, false)
+        if(ReadData(data.node_buff, edge_len, edge_str_off + match_len - 1)
                    != edge_len)
             throw (int) MBError::READ_ERROR;          
         new_key_first = data.node_buff[0];
@@ -252,7 +255,7 @@ void DictMem::UpdateTailEdge(EdgePtrs &edge_ptrs, int match_len, MBData &data,
     {
         if(edge_ptrs.len_ptr[0] > LOCAL_EDGE_LEN)
         {
-            if(ReadData(data.node_buff, edge_len, Get5BInteger(edge_ptrs.ptr)+match_len-1, false)
+            if(ReadData(data.node_buff, edge_len, Get5BInteger(edge_ptrs.ptr)+match_len-1)
                        != edge_len)
                 throw (int) MBError::READ_ERROR;
             new_key_first = data.node_buff[0];
@@ -287,7 +290,7 @@ void DictMem::UpdateHeadEdge(EdgePtrs &edge_ptrs, int match_len,
             // Old key is remote but new key is local. Need to read the old key.
             if(match_len_m1 > 0)
             {
-                if(ReadData(edge_ptrs.ptr, match_len_m1, edge_str_off, false) != match_len_m1)
+                if(ReadData(edge_ptrs.ptr, match_len_m1, edge_str_off) != match_len_m1)
                     throw (int) MBError::READ_ERROR;
             }
         }
@@ -296,7 +299,7 @@ void DictMem::UpdateHeadEdge(EdgePtrs &edge_ptrs, int match_len,
             edge_str_off = Get5BInteger(edge_ptrs.ptr);
             release_buffer_size = edge_ptrs.len_ptr[0] - 1;
             // Load the string with length edge_len - 1
-            if(ReadData(data.node_buff, match_len_m1, edge_str_off, false) != match_len_m1)
+            if(ReadData(data.node_buff, match_len_m1, edge_str_off) != match_len_m1)
                 throw (int) MBError::READ_ERROR;
             // Reserve the key buffer
             size_t new_key_off;
@@ -351,20 +354,10 @@ int DictMem::InsertNode(EdgePtrs &edge_ptrs, int match_len,
     if(node_move)
         WriteData(node, node_size[0], node_ptrs.offset);
 
+    if(release_buffer_size > 0)
+        ReleaseBuffer(edge_str_off, release_buffer_size);
 #ifdef __LOCK_FREE__
-    if(release_buffer_size > 0)
-    {
-        lfree->PushOffsets(edge_str_off, 0);
-        ReleaseBuffer(edge_str_off, release_buffer_size);
-    }
-    else
-    {
-        lfree->PushOffsets(0, 0);
-    }
     lfree->WriterLockFreeStart(edge_ptrs.offset);
-#else
-    if(release_buffer_size > 0)
-        ReleaseBuffer(edge_str_off, release_buffer_size);
 #endif
     WriteEdge(edge_ptrs);
 #ifdef __LOCK_FREE__
@@ -434,20 +427,10 @@ int DictMem::AddLink(EdgePtrs &edge_ptrs, int match_len, const uint8_t *key,
         WriteData(node, node_size[1], node_ptrs.offset);
 
     // Update the parent edge
+    if(release_buffer_size > 0)
+        ReleaseBuffer(edge_str_off, release_buffer_size);
 #ifdef __LOCK_FREE__
-    if(release_buffer_size > 0)
-    {
-        lfree->PushOffsets(edge_str_off, 0);
-        ReleaseBuffer(edge_str_off, release_buffer_size);
-    }
-    else
-    {
-        lfree->PushOffsets(0, 0);
-    }
     lfree->WriterLockFreeStart(edge_ptrs.offset);
-#else
-    if(release_buffer_size > 0)
-        ReleaseBuffer(edge_str_off, release_buffer_size);
 #endif
     WriteEdge(edge_ptrs);
 #ifdef __LOCK_FREE__
@@ -491,13 +474,15 @@ int DictMem::UpdateNode(EdgePtrs &edge_ptrs, const uint8_t *key, int key_len,
     }
     else
     {
+#ifdef __DEBUG__
         assert(nt > 0);
+#endif
 
         // Copy old node
         int copy_size = NODE_EDGE_KEY_FIRST + nt;
-        if(ReadData(node_ptrs.ptr, copy_size, old_node_off, false) != copy_size)
+        if(ReadData(node_ptrs.ptr, copy_size, old_node_off) != copy_size)
             return MBError::READ_ERROR;
-        if(ReadData(node_ptrs.ptr+copy_size+1, EDGE_SIZE*nt, old_node_off+copy_size, false) !=
+        if(ReadData(node_ptrs.ptr+copy_size+1, EDGE_SIZE*nt, old_node_off+copy_size) !=
                     EDGE_SIZE*nt)
             return MBError::READ_ERROR;
 
@@ -535,20 +520,10 @@ int DictMem::UpdateNode(EdgePtrs &edge_ptrs, const uint8_t *key, int key_len,
     if(node_move)
         WriteData(node, node_size[nt], node_ptrs.offset);
 
+    if(release_node_index >= 0)
+        ReleaseNode(old_node_off, release_node_index);
 #ifdef __LOCK_FREE__
     lfree->WriterLockFreeStart(edge_ptrs.offset);
-    if(release_node_index >= 0)
-    {
-        lfree->PushOffsets(0, old_node_off);
-        ReleaseNode(old_node_off, release_node_index);
-    }
-    else
-    {
-        lfree->PushOffsets(0, 0);
-    }
-#else
-    if(release_node_index >= 0)
-        ReleaseNode(old_node_off, release_node_index);
 #endif
     WriteEdge(edge_ptrs);
 #ifdef __LOCK_FREE__
@@ -572,14 +547,14 @@ bool DictMem::FindNext(const unsigned char *key, int keylen, int &match_len,
 #ifdef __DEBUG__
     assert(node_off != 0);
 #endif
-    if(ReadData(key_tmp, 1, node_off+1, false) != 1)
+    if(ReadData(key_tmp, 1, node_off+1) != 1)
         return false;
     int nt = key_tmp[0];
     edge_ptr.curr_nt = nt;
     nt++;
     // Load edge key first
     node_off += NODE_EDGE_KEY_FIRST;
-    if(ReadData(key_tmp, nt, node_off, false) != nt)
+    if(ReadData(key_tmp, nt, node_off) != nt)
         return false;
     int i;
     for(i = 0; i < nt; i++)
@@ -595,20 +570,19 @@ bool DictMem::FindNext(const unsigned char *key, int keylen, int &match_len,
 
     // Load the new edge
     edge_ptr.offset = node_off + nt + i*EDGE_SIZE;
-    if(ReadData(edge_ptr.edge_buff, EDGE_SIZE, edge_ptr.offset, false) != EDGE_SIZE)
+    if(ReadData(header->excep_buff, EDGE_SIZE, edge_ptr.offset) != EDGE_SIZE)
         return false;
-    InitTempEdgePtrs(edge_ptr);
     uint8_t *key_string_ptr;
     int len = edge_ptr.len_ptr[0] - 1;
     if(len > LOCAL_EDGE_LEN_M1)
     {
-        if(ReadData(key_tmp, len, Get5BInteger(edge_ptr.ptr), false) != len)
+        if(ReadData(key_tmp, len, Get5BInteger(edge_ptr.ptr)) != len)
             return false;
         key_string_ptr = key_tmp;
     }
     else if(len > 0)
     {
-        key_string_ptr = edge_ptr.edge_buff;
+        key_string_ptr = header->excep_buff;
     }
     else
     {
@@ -629,14 +603,16 @@ bool DictMem::FindNext(const unsigned char *key, int keylen, int &match_len,
 // The allocated in-memory buffer must be initialized to zero.
 bool DictMem::ReserveNode(int nt, size_t &offset, uint8_t* &ptr)
 {
+#ifdef __DEBUG__
     assert(nt >= 0 && nt < 256);
+#endif
 
     int buf_size = free_lists->GetAlignmentSize(node_size[nt]);
     int buf_index = free_lists->GetBufferIndex(buf_size);
 
     header->n_states++;
 #ifdef __LOCK_FREE__
-    if(free_lists->GetBufferByIndex(buf_index, offset, lfree))
+    if(free_lists->GetBufferByIndex(buf_index, offset))
     {
         ptr = node_ptr;
         memset(ptr, 0, buf_size); 
@@ -657,7 +633,7 @@ bool DictMem::ReserveNode(int nt, size_t &offset, uint8_t* &ptr)
     ptr = NULL;
     size_t old_off = header->m_index_offset;
     bool node_move = false;
-    int rval = mem_file->Reserve(header->m_index_offset, buf_size, ptr);
+    int rval = kv_file->Reserve(header->m_index_offset, buf_size, ptr);
     if(rval != MBError::SUCCESS)
         throw rval;
     if(ptr == NULL)
@@ -687,7 +663,7 @@ void DictMem::ReserveData(const uint8_t* key, int size, size_t &offset,
     int buf_size  = free_lists->GetAlignmentSize(size);
 
 #ifdef __LOCK_FREE__
-    if(free_lists->GetBufferByIndex(buf_index, offset, lfree))
+    if(free_lists->GetBufferByIndex(buf_index, offset))
     {
         WriteData(key, size, offset);
         header->pending_index_buff_size -= buf_size;
@@ -705,7 +681,7 @@ void DictMem::ReserveData(const uint8_t* key, int size, size_t &offset,
         size_t old_off = header->m_index_offset;
         uint8_t *ptr;
 
-        int rval = mem_file->Reserve(header->m_index_offset, buf_size, ptr,
+        int rval = kv_file->Reserve(header->m_index_offset, buf_size, ptr,
                                     map_new_sliding);
         if(rval != MBError::SUCCESS)
             throw rval;
@@ -761,6 +737,22 @@ int DictMem::GetRootEdge(int nt, EdgePtrs &edge_ptrs) const
         return MBError::READ_ERROR;
 
     InitTempEdgePtrs(edge_ptrs);
+    return MBError::SUCCESS;
+}
+
+// The temp edge is written to shared memory for handling segfault situations.
+// When writer restarts from segfault, it will retry WriteEdge so that the DB is
+// maintained consistently.
+int DictMem::GetRootEdge_Writer(int nt, EdgePtrs &edge_ptrs) const
+{
+    edge_ptrs.offset = root_offset + NODE_EDGE_KEY_FIRST + NUM_ALPHABET + nt*EDGE_SIZE;
+    if(ReadData(header->excep_buff, EDGE_SIZE, edge_ptrs.offset) != EDGE_SIZE)
+        return MBError::READ_ERROR;
+
+    edge_ptrs.ptr = header->excep_buff;
+    edge_ptrs.len_ptr = edge_ptrs.ptr + EDGE_LEN_POS;
+    edge_ptrs.flag_ptr = edge_ptrs.ptr + EDGE_FLAG_POS;
+    edge_ptrs.offset_ptr = edge_ptrs.flag_ptr + 1;
     return MBError::SUCCESS;
 }
 
@@ -824,7 +816,6 @@ int DictMem::NextEdge(const uint8_t *key, EdgePtrs &edge_ptrs, uint8_t *node_buf
             }
 
             edge_ptrs.offset = offset_new;
-            InitTempEdgePtrs(edge_ptrs);
             ret = MBError::SUCCESS;
             break;
         }
@@ -833,165 +824,188 @@ int DictMem::NextEdge(const uint8_t *key, EdgePtrs &edge_ptrs, uint8_t *node_buf
     return ret;
 }
 
-int DictMem::RemoveEdgeByIndex(const EdgePtrs &edge_ptrs, MBData &data)
+void DictMem::RemoveRootEdge(const EdgePtrs &edge_ptrs)
 {
-    size_t node_offset = edge_ptrs.curr_node_offset;
-
-    if(node_offset == root_offset)
-    {
-        // Clear the edge
-        // Root node needs special handling.
+    // Clear the edge
+    // Root node needs special handling.
+    if(edge_ptrs.len_ptr[0] > LOCAL_EDGE_LEN)
+        ReleaseBuffer(Get5BInteger(edge_ptrs.ptr), edge_ptrs.len_ptr[0]-1);
 #ifdef __LOCK_FREE__
-        if(edge_ptrs.len_ptr[0] > LOCAL_EDGE_LEN)
-        {
-            size_t str_off = Get5BInteger(edge_ptrs.ptr);
-            ReleaseBuffer(str_off, edge_ptrs.len_ptr[0]-1);
-            lfree->PushOffsets(str_off, 0);
-        }
-        lfree->WriterLockFreeStart(edge_ptrs.offset);
-#else
-        if(edge_ptrs.len_ptr[0] > LOCAL_EDGE_LEN)
-            ReleaseBuffer(Get5BInteger(edge_ptrs.ptr), edge_ptrs.len_ptr[0]-1);
+    lfree->WriterLockFreeStart(edge_ptrs.offset);
 #endif
-        WriteData(DictMem::empty_edge, EDGE_SIZE, edge_ptrs.offset);
+    header->excep_lf_offset = edge_ptrs.offset;
+    header->excep_updating_status = EXCEP_STATUS_CLEAR_EDGE;
+    WriteData(DictMem::empty_edge, EDGE_SIZE, edge_ptrs.offset);
+    header->excep_updating_status = 0;
+#ifdef __LOCK_FREE__
+    lfree->WriterLockFreeStop();
+#endif
+}
+
+int DictMem::RemoveEdgeSizeN(const EdgePtrs &edge_ptrs,
+                             int nt,
+                             size_t node_offset,
+                             uint8_t *old_node_buffer,
+                             size_t &str_off_rel,
+                             int &str_size_rel,
+                             size_t parent_edge_offset)
+{
+    // Reserve a new node with nt-1
+    bool node_move;
+    size_t new_node_offset;
+    uint8_t *node;
+
+    // Reserve for the new node
+    node_move = ReserveNode(nt-2, new_node_offset, node);
+
+    // Copy data from old node
+    uint8_t *first_key_ptr = node + NODE_EDGE_KEY_FIRST;
+    uint8_t *edge_ptr = first_key_ptr + nt - 1;
+    uint8_t old_edge_buff[16];
+    size_t old_edge_offset = node_offset + NODE_EDGE_KEY_FIRST + nt;
+    memcpy(node, old_node_buffer, NODE_EDGE_KEY_FIRST);
+    node[1] = nt - 2;
+    for(int i = 0; i < nt; i++)
+    {
+        // load the edge
+        if(ReadData(old_edge_buff, EDGE_SIZE, old_edge_offset) != EDGE_SIZE)
+            return MBError::READ_ERROR;
+
+        if(i == edge_ptrs.curr_edge_index)
+        {
+            // Need to release this edge string buffer
+            if(old_edge_buff[EDGE_LEN_POS] > LOCAL_EDGE_LEN)
+            {
+                str_off_rel = Get5BInteger(old_edge_buff);
+                str_size_rel = old_edge_buff[EDGE_LEN_POS]-1;
+            }
+        }
+        else
+        {
+            first_key_ptr[0] = old_node_buffer[NODE_EDGE_KEY_FIRST+i];
+            memcpy(edge_ptr, old_edge_buff, EDGE_SIZE);
+
+            first_key_ptr++;
+            edge_ptr += EDGE_SIZE;
+        }
+        old_edge_offset += EDGE_SIZE;
+    }
+
+    // Write the new node before free
+    if(node_move)
+        WriteData(node, node_size[nt-2], new_node_offset);
+
+    // Update the link from parent edge to the new node offset
+    Write6BInteger(header->excep_buff, new_node_offset);
+#ifdef __LOCK_FREE__
+    lfree->WriterLockFreeStart(parent_edge_offset);
+#endif
+    WriteData(header->excep_buff, OFFSET_SIZE, parent_edge_offset+EDGE_NODE_LEADING_POS);
+#ifdef __LOCK_FREE__
+    lfree->WriterLockFreeStop();
+#endif
+
+    return MBError::SUCCESS;
+}
+
+int DictMem::RemoveEdgeSizeOne(uint8_t *old_node_buffer,
+                               size_t parent_edge_offset,
+                               size_t node_offset,
+                               int nt,
+                               size_t &str_off_rel,
+                               int &str_size_rel)
+{
+    int rval = MBError::SUCCESS;
+
+    if(old_node_buffer[0] & FLAG_NODE_MATCH)
+    {
+        uint8_t *parent_edge_buff = header->excep_buff;
+        size_t data_offset = Get6BInteger(old_node_buffer+2);
+        parent_edge_buff[0] = EDGE_FLAG_DATA_OFF;
+        Write6BInteger(parent_edge_buff+1, data_offset);
+#ifdef __LOCK_FREE__
+        lfree->WriterLockFreeStart(parent_edge_offset);
+#endif
+        // Write the one-byte flag and 6-byte offset
+        WriteData(parent_edge_buff, OFFSET_SIZE_P1, parent_edge_offset+EDGE_FLAG_POS);
 #ifdef __LOCK_FREE__
         lfree->WriterLockFreeStop();
 #endif
+    }
+    else
+    {
+        // This is an internal node.
+        rval = MBError::TRY_AGAIN;
+    }
 
+    uint8_t old_edge_buff[16];
+    size_t old_edge_offset = node_offset + NODE_EDGE_KEY_FIRST + nt;
+    if(ReadData(old_edge_buff, EDGE_SIZE, old_edge_offset) != EDGE_SIZE)
+        return MBError::READ_ERROR;
+    if(old_edge_buff[EDGE_LEN_POS] > LOCAL_EDGE_LEN)
+    {
+        str_off_rel = Get5BInteger(old_edge_buff);
+        str_size_rel = old_edge_buff[EDGE_LEN_POS]-1;
+    }
+
+    return rval;
+}
+
+int DictMem::RemoveEdgeByIndex(const EdgePtrs &edge_ptrs, MBData &data)
+{
+    header->excep_offset = edge_ptrs.curr_node_offset;
+
+    if(header->excep_offset == root_offset)
+    {
+        RemoveRootEdge(edge_ptrs);
         return MBError::SUCCESS;
     }
 
-    size_t parent_edge_offset = edge_ptrs.parent_offset;
     int nt = edge_ptrs.curr_nt;
+    if(nt < 1) return MBError::INVALID_ARG;
+
     uint8_t *old_node_buffer = data.node_buff;
     // load the current node
-    if(ReadData(old_node_buffer, NODE_EDGE_KEY_FIRST + nt, edge_ptrs.curr_node_offset, false)
+    if(ReadData(old_node_buffer, NODE_EDGE_KEY_FIRST + nt, edge_ptrs.curr_node_offset)
                != NODE_EDGE_KEY_FIRST + nt)
         return MBError::READ_ERROR;
 
     int rval = MBError::SUCCESS;
     size_t str_off_rel;
     int    str_size_rel = 0;
+
+    header->excep_lf_offset = edge_ptrs.parent_offset;
+    header->excep_updating_status = EXCEP_STATUS_REMOVE_EDGE;
     if(nt > 1)
     {
-        // Reserve a new node with nt-1
-        bool node_move;
-        size_t new_node_offset;
-        uint8_t *node;
-
-        // Reserve for the new node
-        node_move = ReserveNode(nt-2, new_node_offset, node);
-
-        // Copy data from old node
-        uint8_t *first_key_ptr = node + NODE_EDGE_KEY_FIRST;
-        uint8_t *edge_ptr = first_key_ptr + nt - 1;
-        uint8_t old_edge_buff[16];
-        size_t old_edge_offset = node_offset + NODE_EDGE_KEY_FIRST + nt;
-        memcpy(node, old_node_buffer, NODE_EDGE_KEY_FIRST);
-        node[1] = nt - 2;
-        for(int i = 0; i < nt; i++)
-        {
-            // load the edge
-            if(ReadData(old_edge_buff, EDGE_SIZE, old_edge_offset, false) != EDGE_SIZE)
-                return MBError::READ_ERROR;
-
-            if(i == edge_ptrs.curr_edge_index)
-            {
-                // Need to release this edge string buffer
-                if(old_edge_buff[EDGE_LEN_POS] > LOCAL_EDGE_LEN)
-                {
-                    str_off_rel = Get5BInteger(old_edge_buff);
-                    str_size_rel = old_edge_buff[EDGE_LEN_POS]-1;
-                }
-            }
-            else
-            {
-                first_key_ptr[0] = old_node_buffer[NODE_EDGE_KEY_FIRST+i];
-                memcpy(edge_ptr, old_edge_buff, EDGE_SIZE);
-
-                first_key_ptr++;
-                edge_ptr += EDGE_SIZE;
-            }
-            old_edge_offset += EDGE_SIZE;
-        }
-
-        // Write the new node before free
-        if(node_move)
-            WriteData(node, node_size[nt-2], new_node_offset);
-
-        // Update the link from parent edge to the new node offset
-#ifdef __LOCK_FREE__
-        lfree->WriterLockFreeStart(parent_edge_offset);
-#endif
-        WriteData(reinterpret_cast<uint8_t *>(&new_node_offset), OFFSET_SIZE,
-                  parent_edge_offset + EDGE_NODE_LEADING_POS);
-#ifdef __LOCK_FREE__
-        lfree->WriterLockFreeStop();
-#endif
-    }
-    else if(nt == 1)
-    {
-        // nt == 1
-        if(old_node_buffer[0] & FLAG_NODE_MATCH)
-        {
-            uint8_t parent_edge_buff[8];
-            size_t data_offset = Get6BInteger(old_node_buffer+2);
-            parent_edge_buff[0] = EDGE_FLAG_DATA_OFF;
-            Write6BInteger(parent_edge_buff+1, data_offset);
-            // Write the one-byte flag and 6-byte offset
-#ifdef __LOCK_FREE__
-            lfree->WriterLockFreeStart(parent_edge_offset);
-#endif
-            WriteData(parent_edge_buff, OFFSET_SIZE_P1, parent_edge_offset+EDGE_FLAG_POS);
-#ifdef __LOCK_FREE__
-            lfree->WriterLockFreeStop();
-#endif
-        }
-        else
-        {
-            // This is an internal node.
-            rval = MBError::TRY_AGAIN;
-        }
-
-        uint8_t old_edge_buff[16];
-        size_t old_edge_offset = node_offset + NODE_EDGE_KEY_FIRST + nt;
-        if(ReadData(old_edge_buff, EDGE_SIZE, old_edge_offset, false) != EDGE_SIZE)
-            return MBError::READ_ERROR;
-        if(old_edge_buff[EDGE_LEN_POS] > LOCAL_EDGE_LEN)
-        {
-            str_off_rel = Get5BInteger(old_edge_buff);
-            str_size_rel = old_edge_buff[EDGE_LEN_POS]-1;
-        }
+        rval = RemoveEdgeSizeN(edge_ptrs, nt, header->excep_offset, old_node_buffer,
+                               str_off_rel, str_size_rel, header->excep_lf_offset);
     }
     else
-        return MBError::INVALID_ARG;
+    {
+        rval = DictMem::RemoveEdgeSizeOne(old_node_buffer, header->excep_lf_offset,
+                               header->excep_offset, nt, str_off_rel, str_size_rel);
+    }
+    header->excep_updating_status = 0;
 
     header->n_edges--;
-    ReleaseNode(node_offset, nt-1);
-#ifdef __LOCK_FREE__
-    if(str_size_rel > 0)
-    {
-        lfree->PushOffsets(str_off_rel, node_offset);
-        ReleaseBuffer(str_off_rel, str_size_rel);
-    }
-    else
-    {
-        lfree->PushOffsets(0, node_offset);
-    }
-#else
+    ReleaseNode(header->excep_offset, nt-1);
     if(str_size_rel > 0)
         ReleaseBuffer(str_off_rel, str_size_rel);
-#endif
 
     // Clear the edge
 #ifdef __LOCK_FREE__
     lfree->WriterLockFreeStart(edge_ptrs.offset);
 #endif
+    header->excep_lf_offset = edge_ptrs.offset;
+    header->excep_updating_status = EXCEP_STATUS_CLEAR_EDGE;
     WriteData(DictMem::empty_edge, EDGE_SIZE, edge_ptrs.offset);
+    header->excep_updating_status = 0;
 #ifdef __LOCK_FREE__
     lfree->WriterLockFreeStop();
 #endif
 
+    header->excep_updating_status = 0;
     return rval;
 }
 
@@ -1001,26 +1015,18 @@ void DictMem::PrintStats(std::ostream &out_stream) const
     if(!is_valid)
         return;
 
-    out_stream << "Dict Memory Stats:\n";
-    out_stream << "\tIndex size: " << header->m_index_offset << "\n";
-    out_stream << "\tNumber of edges: " << header->n_edges << "\n";
-    out_stream << "\tNumber of nodes: " << header->n_states << "\n";
-    out_stream << "\tEdge string size: " << header->edge_str_size << "\n";
-    out_stream << "\tEdge size: " << header->n_edges*EDGE_SIZE << "\n";
+    out_stream << "Dict Memory Stats:" << std::endl;
+    out_stream << "\tIndex size: " << header->m_index_offset << std::endl;
+    out_stream << "\tIndex block size: " << header->index_block_size << std::endl;
+    out_stream << "\tNumber of edges: " << header->n_edges << std::endl;
+    out_stream << "\tNumber of nodes: " << header->n_states << std::endl;
+    out_stream << "\tEdge string size: " << header->edge_str_size << std::endl;
+    out_stream << "\tEdge size: " << header->n_edges*EDGE_SIZE << std::endl;
+    out_stream << "\tException flag: " << header->excep_updating_status << std::endl;
+    out_stream << "\tPending Buffer Size: " << header->pending_index_buff_size << std::endl;
     if(free_lists)
-    {
-        out_stream << "\tPending Buffer Size: " << header->pending_index_buff_size << "\n";
-        out_stream << "\tTrackable Buffer Size: " << free_lists->GetTotSize() << "\n";
-        out_stream << "\tResidual Buffer Size: " <<
-            header->m_index_offset - header->pending_index_buff_size -
-            root_offset - free_lists->GetAlignmentSize(node_size[NUM_ALPHABET-1]) << "\n";
-    }
-    mem_file->PrintStats(out_stream);
-}
-
-FreeList* DictMem::GetFreeList()
-{
-    return free_lists;
+        out_stream << "\tTrackable Buffer Size: " << free_lists->GetTotSize() << std::endl;
+    kv_file->PrintStats(out_stream);
 }
 
 const int* DictMem::GetNodeSizePtr() const
@@ -1030,7 +1036,7 @@ const int* DictMem::GetNodeSizePtr() const
 
 void DictMem::ResetSlidingWindow() const
 {
-    mem_file->ResetSlidingWindow();
+    kv_file->ResetSlidingWindow();
     header->shm_index_sliding_start.store(0, std::memory_order_relaxed);
 }
 
@@ -1041,10 +1047,23 @@ void DictMem::InitLockFreePtr(LockFree *lf)
 
 void DictMem::Flush() const
 {
-    if(mem_file != NULL)
-        mem_file->Flush();
+    if(kv_file != NULL)
+        kv_file->Flush();
     if(header_file != NULL)
         header_file->Flush();
+}
+
+void DictMem::WriteData(const uint8_t *buff, unsigned len, size_t offset) const
+{
+    if(offset + len > header->m_index_offset)
+    {
+        std::cerr << "invalid dmm write: " << offset << " " << len << " "
+                  << header->m_index_offset << "\n";
+        throw (int) MBError::OUT_OF_BOUND;
+    }
+
+    if(kv_file->RandomWrite(buff, len, offset) != len)
+        throw (int) MBError::WRITE_ERROR;
 }
 
 }

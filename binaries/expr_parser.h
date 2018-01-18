@@ -16,31 +16,27 @@
 
 // @author Changxue Deng <chadeng@cisco.com>
 
-#include <mabain/db.h>
+#ifndef __EXPR_PARSER_H__
+#define __EXPR_PARSER_H__
 
-using namespace mabain;
+#include <string>
 
-const char *db_dir = "./tmp_dir/";
-
-// mabain db iterator
-int main(int argc, char *argv[])
+// A simple mabain client expression LL parser
+class ExprParser
 {
-    if(argc == 2) {
-        db_dir = argv[1];
-    }
+public:
+    ExprParser(const std::string &expr);
+    ~ExprParser();
+    int Evaluate(std::string &result);
 
-    DB db(db_dir, CONSTS::ReaderOptions());
-    if(!db.is_open()) {
-        std::cerr << "failed to open mabain db: " << db.StatusStr() << "\n";
-        exit(1);
-    }
+private:
+    int Parse(std::string &result);
 
-    std::string key, value;
+    size_t pos;
+    std::string expr;
+#define EXPR_PARSER_BUFFER_SIZE 1024
+    uint8_t buffer[EXPR_PARSER_BUFFER_SIZE];
+    std::string err_str;
+};
 
-    for(DB::iterator iter = db.begin(); iter != db.end(); ++iter) {
-        std::cout << iter.key << ": " << std::string((char*)iter.value.buff, iter.value.data_len) << "\n";
-    }
-
-    db.Close();
-    return 0;
-}
+#endif

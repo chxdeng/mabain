@@ -2,12 +2,14 @@ CPP=g++
 
 all: mbc
 
-CFLAGS  = -I. -I../src -Wall -Werror -g -O2 -c -std=c++11
+CFLAGS  = -I. -I../src -I../src/util -Wall -Werror -g -O2 -c -std=c++11
 LDFLAGS = -lpthread -lreadline -lncurses -L../src -lmabain
 
-mbc: mbc.cpp
+mbc: mbc.cpp expr_parser.h expr_parser.cpp hexbin.h hexbin.cpp
 	$(CPP) $(CFLAGS) mbc.cpp
-	$(CPP) mbc.o -o mbc $(LDFLAGS)
+	$(CPP) $(CFLAGS) expr_parser.cpp
+	$(CPP) $(CFLAGS) hexbin.cpp
+	$(CPP) mbc.o expr_parser.o hexbin.o -o mbc $(LDFLAGS)
 
 clean:
 	-rm -f *.o mbc

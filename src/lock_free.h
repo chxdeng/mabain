@@ -28,7 +28,8 @@ namespace mabain {
 // C++11 std::atomic shared memory variable for lock-free
 // reader/writer concurrency.
 
-#define MAX_OFFSET_CACHE 4
+#define MAX_OFFSET_CACHE   4
+#define MAX_OFFSET_CACHE_2 2*MAX_OFFSET_CACHE
 
 typedef struct _LockFreeData
 {
@@ -43,8 +44,6 @@ typedef struct _LockFreeShmData
     std::atomic<uint32_t> counter;
     std::atomic<size_t>   offset;
     std::atomic<size_t>   offset_cache[MAX_OFFSET_CACHE];
-    size_t                edge_offset_cache[MAX_OFFSET_CACHE];
-    std::atomic<size_t>   node_offset_cache[MAX_OFFSET_CACHE];
 } LockFreeShmData;
 
 class LockFree
@@ -59,10 +58,6 @@ public:
     int  ReaderLockFreeStart(LockFreeData &snapshot);
     // If there was race condition, this function returns MBError::TRY_AGAIN.
     int  ReaderLockFreeStop(const LockFreeData &snapshot, size_t reader_offset);
-    void PushOffsets(size_t edge_off, size_t node_off);
-    bool ReleasedOffsetInUse(size_t offset);
-    bool ReaderValidateNodeOffset(uint32_t counter_prev, size_t node_off, uint32_t &counter_curr);
-    uint32_t LoadCounter();
 
 private:
     LockFreeShmData *shm_data_ptr;
