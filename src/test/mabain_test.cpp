@@ -476,7 +476,7 @@ static void SetTestStatus(bool success)
     if(success) {
         cmd = std::string("touch ") + MB_DIR + "/_success";
     } else {
-        cmd = std::string("rm ") + MB_DIR + "/_success >out 2>err";
+        cmd = std::string("rm ") + MB_DIR + "/_success >" + MB_DIR + "/out 2>" + MB_DIR + "/err";
     }
     if(system(cmd.c_str()) != 0) {
     }

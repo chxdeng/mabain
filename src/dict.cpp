@@ -64,6 +64,7 @@ Dict::Dict(const std::string &mbdir, bool init_header, int datasize,
     {
         if(block_sz_data != 0 && header->data_block_size != block_sz_data)
         {
+            Destroy();
             std::cerr << "mabain data block size not match\n";
             throw (int) MBError::INVALID_SIZE;
         }
@@ -103,6 +104,7 @@ Dict::Dict(const std::string &mbdir, bool init_header, int datasize,
         {
             if(header->entry_per_bucket != entry_per_bucket)
             {
+                Destroy();
                 std::cerr << "mabain count per bucket not match\n";
                 throw (int) MBError::INVALID_SIZE;
             }
@@ -180,10 +182,10 @@ void Dict::Destroy()
 
     mm.Destroy();
 
-    if(free_lists)
+    if(free_lists != NULL)
         delete free_lists;
 
-    if(kv_file)
+    if(kv_file != NULL)
         delete kv_file;
 }
 

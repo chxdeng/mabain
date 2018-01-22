@@ -89,11 +89,13 @@ DictMem::DictMem(const std::string &mbdir, bool init_header, size_t memsize,
         if(block_size != 0 && header->index_block_size != block_size)
         {
             std::cerr << "mabain index block size not match\n";
+            Destroy();
             throw (int) MBError::INVALID_SIZE;
         }
     }
     else
     {
+        memset(header, 0, sizeof(IndexHeader));
         header->index_block_size = block_size;
     }
     kv_file = new RollableFile(mbdir + "_mabain_i",
@@ -126,7 +128,6 @@ DictMem::DictMem(const std::string &mbdir, bool init_header, size_t memsize,
 
     if(init_header)
     {
-        memset(header, 0, sizeof(IndexHeader));
         // Set up DB version
         header->version[0] = version[0];
         header->version[1] = version[1];
@@ -187,7 +188,7 @@ void DictMem::Destroy()
     if(kv_file != NULL)
         delete kv_file;
 
-    if(free_lists)
+    if(free_lists != NULL)
         delete free_lists;
 
     if(node_size != NULL)

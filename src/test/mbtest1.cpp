@@ -164,9 +164,14 @@ static void load_key_ids()
     std::ifstream ifs;
     std::string path = mbdir + "/key_id";
     ifs.open (path.c_str(), std::ofstream::in);
-    ifs >> klow;
-    ifs >> khigh;
-    ifs.close();
+    if(ifs.is_open()) {
+        ifs >> klow;
+        ifs >> khigh;
+        ifs.close();
+    } else {
+        klow = 0;
+        khigh = 0;
+    }
     key_low = klow;
     key_high = khigh;
     std::cout << "Loaded " << key_low << " " << key_high << "\n";
