@@ -24,6 +24,7 @@
 #include "logger.h"
 #include "mb_data.h"
 #include "mb_rc.h"
+#include "integer_4b_5b.h"
 
 namespace mabain {
 
@@ -347,8 +348,8 @@ void* AsyncWriter::async_writer_thread()
     int rval;
     int64_t min_index_size = 0;
     int64_t min_data_size = 0;
-    int64_t max_dbsize = 0xFFFFFFFFFFFF;
-    int64_t max_dbcount = 0xFFFFFFFFFFFF;
+    int64_t max_dbsize = MAX_6B_OFFSET;
+    int64_t max_dbcount = MAX_6B_OFFSET;
 
     Logger::Log(LOG_LEVEL_INFO, "async writer started");
     while(true)
@@ -379,15 +380,34 @@ void* AsyncWriter::async_writer_thread()
             case MABAIN_ASYNC_TYPE_ADD:
                 mbd.buff = (uint8_t *) node_ptr->data;
                 mbd.data_len = node_ptr->data_len;
-                rval = dict->Add((uint8_t *)node_ptr->key, node_ptr->key_len, mbd, node_ptr->overwrite);
+                try {
+                    rval = dict->Add((uint8_t *)node_ptr->key, node_ptr->key_len, mbd,
+                                     node_ptr->overwrite);
+                } catch (int err) {
+                    Logger::Log(LOG_LEVEL_ERROR, "dict->Add throws error %s",
+                                MBError::get_error_str(err));
+                    rval = err;
+                }
                 break;
             case MABAIN_ASYNC_TYPE_REMOVE:
                 mbd.options |= CONSTS::OPTION_FIND_AND_STORE_PARENT;
-                rval = dict->Remove((uint8_t *)node_ptr->key, node_ptr->key_len, mbd);
+                try {
+                    rval = dict->Remove((uint8_t *)node_ptr->key, node_ptr->key_len, mbd);
+                } catch (int err) {
+                    Logger::Log(LOG_LEVEL_ERROR, "dict->Remmove throws error %s",
+                                MBError::get_error_str(err));
+                    rval = err;
+                }
                 mbd.options &= ~CONSTS::OPTION_FIND_AND_STORE_PARENT;
                 break;
             case MABAIN_ASYNC_TYPE_REMOVE_ALL:
-                rval = dict->RemoveAll();
+                try {
+                    rval = dict->RemoveAll();
+                } catch (int err) {
+                    Logger::Log(LOG_LEVEL_ERROR, "dict->RemoveAll throws error %s",
+                                MBError::get_error_str(err));
+                    rval = err;
+                }
                 break;
             case MABAIN_ASYNC_TYPE_RC:
                 rval = MBError::SUCCESS;

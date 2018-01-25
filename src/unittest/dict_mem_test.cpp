@@ -184,7 +184,6 @@ TEST_F(DictMemTest, InsertNode_test)
     if(memcmp(shm_ptr, edge_ptrs.ptr, EDGE_SIZE)) {
         EXPECT_EQ(1, 2);
     }
-    EXPECT_EQ(dmm->GetFreeList()->Count(), 0);
     EXPECT_EQ(edge_ptrs.len_ptr[0], 6);
     EXPECT_EQ(edge_ptrs.flag_ptr[0], 0);
     if(memcmp(edge_ptrs.ptr, "abain", 5)) {
@@ -224,7 +223,6 @@ TEST_F(DictMemTest, InsertNode_test1)
     if(memcmp(shm_ptr, edge_ptrs.ptr, EDGE_SIZE)) {
         EXPECT_EQ(1, 2);
     }
-    EXPECT_EQ(dmm->GetFreeList()->Count(), 0);
     EXPECT_EQ(edge_ptrs.len_ptr[0], 6);
     EXPECT_EQ(edge_ptrs.flag_ptr[0], 0);
     if(memcmp(edge_ptrs.ptr, "abain", 5)) {
@@ -264,7 +262,6 @@ TEST_F(DictMemTest, InsertNode_test2)
     if(memcmp(shm_ptr, edge_ptrs.ptr, EDGE_SIZE)) {
         EXPECT_EQ(1, 2);
     }
-    EXPECT_EQ(dmm->GetFreeList()->Count(), 0);
     EXPECT_EQ(edge_ptrs.len_ptr[0], 13);
     EXPECT_EQ(edge_ptrs.flag_ptr[0], 0);
     EXPECT_EQ(Get5BInteger(edge_ptrs.ptr), 3631);
