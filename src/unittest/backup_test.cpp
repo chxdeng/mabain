@@ -138,12 +138,12 @@ TEST_F(BackupTest, Create_backup_db)
         key = tkey1.get_key(i);
         rval = db_bkp->Add(key, key+"_new", true);
     }
-   
-   // Retrive the overwritten key and check it. 
+    
+    // Retrive the overwritten key and check it. 
     check_overwritten_keys(db_bkp, num);
 
     db_bkp->Close();
-    
+    delete db_bkp;
     //Asycwriter DB backup test
     db_bkp = new DB(MB_BACKUP_DIR, CONSTS::WriterOptions() | CONSTS::ASYNC_WRITER_MODE, 128LL*1024*1024, 128LL*1024*1024);
     assert(db_bkp->is_open());
