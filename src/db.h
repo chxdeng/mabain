@@ -126,10 +126,12 @@ public:
     int Remove(const char *key, int len);
     int Remove(const std::string &key);
     int RemoveAll();
+    // DB Backup
+    int Backup(const char *backup_dir);
+
     // Close the DB handle
     int Close();
     void Flush() const;
-
     // Garbage collection
     // min_index_rc_size and min_data_rc_size are the threshold for trigering garbage
     // collector. If the pending index buffer size is less than min_index_rc_size,

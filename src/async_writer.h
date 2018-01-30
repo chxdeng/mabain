@@ -24,6 +24,7 @@
 #include "db.h"
 //#include "mb_rc.h"
 #include "dict.h"
+#include "mb_backup.h"
 
 namespace mabain {
 
@@ -32,7 +33,8 @@ namespace mabain {
 #define MABAIN_ASYNC_TYPE_REMOVE     2
 #define MABAIN_ASYNC_TYPE_REMOVE_ALL 3
 #define MABAIN_ASYNC_TYPE_RC         4
-
+#define MABAIN_ASYNC_TYPE_BACKUP     5
+    
 typedef struct _AsyncNode
 {
     std::atomic<bool> in_use;
@@ -58,6 +60,7 @@ public:
     int  Add(const char *key, int key_len, const char *data, int data_len, bool overwrite);
     int  Remove(const char *key, int len);
     int  RemoveAll();
+    int  Backup(const char *backup_dir);
     int  CollectResource(int64_t m_index_rc_size, int64_t m_data_rc_size, 
                          int64_t max_dbsz, int64_t max_dbcnt);
     int  StopAsyncThread();

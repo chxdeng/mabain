@@ -228,6 +228,30 @@ int AsyncWriter::Remove(const char *key, int len)
     return PrepareSlot(node_ptr);
 }
 
+int AsyncWriter::Backup(const char *backup_dir)
+{
+    if(backup_dir == NULL)
+        return MBError::INVALID_ARG; 
+    
+    if(stop_processing)
+        return MBError::DB_CLOSED;
+
+    AsyncNode *node_ptr = AcquireSlot();
+    if(node_ptr == NULL)
+        return MBError::MUTEX_ERROR;
+
+    node_ptr->data = (char *) strdup(backup_dir);
+    if(node_ptr->data == NULL)
+    {
+        pthread_mutex_unlock(&node_ptr->mutex);
+        free_async_node(node_ptr);
+        return MBError::NO_MEMORY;
+    }
+    node_ptr->type = MABAIN_ASYNC_TYPE_BACKUP;
+    return PrepareSlot(node_ptr);
+}
+
+
 int AsyncWriter::RemoveAll()
 {
     if(stop_processing)
@@ -304,6 +328,12 @@ int AsyncWriter::ProcessTask(int ntasks)
                     rval = MBError::RC_SKIPPED;
                 case MABAIN_ASYNC_TYPE_NONE:
                     rval = MBError::SUCCESS;
+                    break;
+                case MABAIN_ASYNC_TYPE_BACKUP:
+                    {
+                        DBBackup mbbk(*db);
+                        rval = mbbk.Backup((const char*) node_ptr->data);
+                    }
                     break;
                 default:
                     rval = MBError::INVALID_ARG;
@@ -423,6 +453,14 @@ void* AsyncWriter::async_writer_thread()
             case MABAIN_ASYNC_TYPE_NONE:
                 rval = MBError::SUCCESS;
                 break;
+            case MABAIN_ASYNC_TYPE_BACKUP:
+                try {
+                    DBBackup mbbk(*db);
+                    rval = mbbk.Backup((const char*) node_ptr->data);
+                } catch (int error) {
+                    rval = error;
+                }
+                    break;
             default:
                 rval = MBError::INVALID_ARG;
                 break;
