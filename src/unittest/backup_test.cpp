@@ -57,25 +57,19 @@ public:
     
     void check_overwritten_keys(DB *db_bkp, int num)
     {
-        std::cout<<"DDD "<<num<<"\n";
         TestKey tkey(MABAIN_TEST_KEY_TYPE_INT);
         TestKey tkey1(MABAIN_TEST_KEY_TYPE_SHA_128);
         std::string key;
         int rval;
         for(int i = 0; i < num; i++) 
         {
-        std::cout<<"DDD "<<i<<"\n";
             MBData mbd;
             key = tkey.get_key(i);
-        std::cout<<"DDD 1 "<<i<<"\n";
             rval = db_bkp->Find(key, mbd);
-        std::cout<<"DDD 2 "<<i<<"\n";
             EXPECT_EQ(rval, MBError::SUCCESS);
             EXPECT_EQ(std::string((const char*)mbd.buff, mbd.data_len)==key+"_new", true);
-        std::cout<<"DDD 3 "<<i<<"\n";
             key = tkey1.get_key(i);
             rval = db_bkp->Find(key, mbd);
-        std::cout<<"DDD 4 "<<i<<"\n";
             EXPECT_EQ(rval, MBError::SUCCESS);
             EXPECT_EQ(std::string((const char*)mbd.buff, mbd.data_len)==key+"_new", true);
         }
@@ -146,17 +140,6 @@ TEST_F(BackupTest, Create_backup_db)
     }
    
    // Retrive the overwritten key and check it. 
-    /*for(int i = 0; i < num; i++) 
-    {
-        key = tkey.get_key(i);
-        rval = db_bkp->Find(key, mbd);
-        EXPECT_EQ(rval, MBError::SUCCESS);
-        EXPECT_EQ(std::string((const char*)mbd.buff, mbd.data_len)==key+"_new", true);
-        key = tkey1.get_key(i);
-        rval = db_bkp->Find(key, mbd);
-        EXPECT_EQ(rval, MBError::SUCCESS);
-        EXPECT_EQ(std::string((const char*)mbd.buff, mbd.data_len)==key+"_new", true);
-    }*/
     check_overwritten_keys(db_bkp, num);
 
     db_bkp->Close();
@@ -178,17 +161,6 @@ TEST_F(BackupTest, Create_backup_db)
     delete db_bkp;
     delete db_r;
     db_bkp = new DB(MB_BACKUP_DIR_2, CONSTS::WriterOptions(), 128LL*1024*1024, 128LL*1024*1024);
-    /*for(int i = 0; i < num; i++) 
-    {
-        key = tkey.get_key(i);
-        rval = db_bkp->Find(key, mbd);
-        EXPECT_EQ(rval, MBError::SUCCESS);
-        EXPECT_EQ(std::string((const char*)mbd.buff, mbd.data_len)==key+"_new", true);
-        key = tkey1.get_key(i);
-        rval = db_bkp->Find(key, mbd);
-        EXPECT_EQ(rval, MBError::SUCCESS);
-        EXPECT_EQ(std::string((const char*)mbd.buff, mbd.data_len)==key+"_new", true);
-    }*/
     check_overwritten_keys(db_bkp, num);
     
     //Test to remove all the keys from the DB.
