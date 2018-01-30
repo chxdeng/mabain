@@ -30,17 +30,17 @@ namespace mabain {
 
 #define MAX_OFFSET_CACHE   4
 #define MAX_OFFSET_CACHE_2 2*MAX_OFFSET_CACHE
+#define MEMORY_ORDER_WRITER std::memory_order_release
+#define MEMORY_ORDER_READER std::memory_order_consume
 
 typedef struct _LockFreeData
 {
-    bool     modify_flag;
     uint32_t counter;
     size_t   offset;
 } LockFreeData;
 
 typedef struct _LockFreeShmData
 {
-    std::atomic<bool>     modify_flag;
     std::atomic<uint32_t> counter;
     std::atomic<size_t>   offset;
     std::atomic<size_t>   offset_cache[MAX_OFFSET_CACHE];
@@ -53,15 +53,25 @@ public:
     ~LockFree();
 
     void LockFreeInit(LockFreeShmData *lock_free_ptr, int mode = 0);
-    void WriterLockFreeStart(size_t offset);
+    inline void WriterLockFreeStart(size_t offset);
     void WriterLockFreeStop();
-    int  ReaderLockFreeStart(LockFreeData &snapshot);
+    inline void ReaderLockFreeStart(LockFreeData &snapshot);
     // If there was race condition, this function returns MBError::TRY_AGAIN.
     int  ReaderLockFreeStop(const LockFreeData &snapshot, size_t reader_offset);
 
 private:
     LockFreeShmData *shm_data_ptr;
 };
+
+inline void LockFree::WriterLockFreeStart(size_t offset)
+{
+    shm_data_ptr->offset.store(offset, MEMORY_ORDER_WRITER);
+}
+
+inline void LockFree::ReaderLockFreeStart(LockFreeData &snapshot)
+{
+    snapshot.counter = shm_data_ptr->counter.load(MEMORY_ORDER_READER);
+}
 
 }
 

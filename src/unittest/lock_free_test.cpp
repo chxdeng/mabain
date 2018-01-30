@@ -51,7 +51,6 @@ protected:
 TEST_F(LockFreeTest, WriterLockFreeStart_test)
 {
     lfree.WriterLockFreeStart(101);
-    EXPECT_EQ(lock_free_data.modify_flag, true);
     EXPECT_EQ(lock_free_data.counter, 0);
     EXPECT_EQ(lock_free_data.offset, 101);
 }
@@ -61,14 +60,12 @@ TEST_F(LockFreeTest, WriterLockFreeStop_test)
     lock_free_data.counter = 0xFFFFFFFF;
     lfree.WriterLockFreeStart(102);
     lfree.WriterLockFreeStop();
-    EXPECT_EQ(lock_free_data.modify_flag, false);
     EXPECT_EQ(lock_free_data.counter, 0);
     EXPECT_EQ(lock_free_data.offset_cache[0xFFFFFFFF % MAX_OFFSET_CACHE], 102);
 }
 
 TEST_F(LockFreeTest, ReaderLockFreeStart_test)
 {
-    lock_free_data.modify_flag = true;
     lock_free_data.counter = 99;
     lock_free_data.offset = 12345;
     for(int i = 0; i < MAX_OFFSET_CACHE; i++) {
@@ -77,13 +74,11 @@ TEST_F(LockFreeTest, ReaderLockFreeStart_test)
 
     LockFreeData snapshot;
     lfree.ReaderLockFreeStart(snapshot);
-    EXPECT_EQ(snapshot.modify_flag, true);
     EXPECT_EQ(snapshot.counter, 99);
 }
 
 TEST_F(LockFreeTest, ReaderLockFreeStop_test)
 {
-    lock_free_data.modify_flag = true;
     lock_free_data.counter = 99;
     lock_free_data.offset = 12345;
     for(int i = 0; i < MAX_OFFSET_CACHE; i++) {
@@ -106,7 +101,6 @@ TEST_F(LockFreeTest, ReaderLockFreeStop_test)
 
 TEST_F(LockFreeTest, ReaderLockFreeStop_test_1)
 {
-    lock_free_data.modify_flag = false;
     lock_free_data.counter = 999;
     lock_free_data.offset = 12345;
     for(int i = 0; i < MAX_OFFSET_CACHE; i++) {
@@ -129,7 +123,6 @@ TEST_F(LockFreeTest, ReaderLockFreeStop_test_1)
 
 TEST_F(LockFreeTest, ReaderLockFreeStop_test_2)
 {
-    lock_free_data.modify_flag = false;
     lock_free_data.counter = 999;
     lock_free_data.offset = 12345;
     for(int i = 0; i < MAX_OFFSET_CACHE; i++) {
@@ -152,7 +145,6 @@ TEST_F(LockFreeTest, ReaderLockFreeStop_test_2)
 
 TEST_F(LockFreeTest, ReaderLockFreeStop_test_3)
 {
-    lock_free_data.modify_flag = false;
     lock_free_data.counter = 999;
     lock_free_data.offset = 12345;
     for(int i = 0; i < MAX_OFFSET_CACHE; i++) {
@@ -179,7 +171,6 @@ TEST_F(LockFreeTest, ReaderLockFreeStop_test_3)
 
 TEST_F(LockFreeTest, ReaderLockFreeStop_test_4)
 {
-    lock_free_data.modify_flag = false;
     lock_free_data.counter = 999;
     lock_free_data.offset = 12345;
     for(int i = 0; i < MAX_OFFSET_CACHE; i++) {
@@ -210,7 +201,6 @@ TEST_F(LockFreeTest, ReaderLockFreeStop_test_4)
 
 TEST_F(LockFreeTest, ReaderLockFreeStop_test_5)
 {
-    lock_free_data.modify_flag = false;
     lock_free_data.counter = 999;
     lock_free_data.offset = 12345;
     for(int i = 0; i < MAX_OFFSET_CACHE; i++) {
