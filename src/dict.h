@@ -61,6 +61,7 @@ public:
 
     void ReserveData(const uint8_t* buff, int size, size_t &offset);
     void WriteData(const uint8_t *buff, unsigned len, size_t offset) const;
+    int  ReadData(uint8_t *buff, unsigned len, size_t offset) const;
 
     // Print dictinary stats
     void PrintStats(std::ostream *out_stream) const;

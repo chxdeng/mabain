@@ -1408,4 +1408,12 @@ void Dict::WriteData(const uint8_t *buff, unsigned len, size_t offset) const
         throw (int) MBError::WRITE_ERROR;
 }
 
+int Dict::ReadData(uint8_t *buff, unsigned len, size_t offset) const
+{
+    if(offset + len > header->m_data_offset)
+        return 0;
+
+    return kv_file->RandomRead(buff, len, offset);
+}
+
 }

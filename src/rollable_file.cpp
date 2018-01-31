@@ -132,7 +132,10 @@ int RollableFile::OpenAndMapBlockFile(int block_order)
 {
     if(block_order >= max_num_block)
     {
-        Logger::Log(LOG_LEVEL_WARN, "block number %d ovferflow", block_order);
+        int level = LOG_LEVEL_DEBUG;
+        if(mode & CONSTS::ACCESS_MODE_WRITER)
+            level = LOG_LEVEL_WARN;
+        Logger::Log(level, "block number %d ovferflow", block_order);
         return MBError::NO_RESOURCE;
     }
 
@@ -155,7 +158,11 @@ int RollableFile::OpenAndMapBlockFile(int block_order)
     }
 
     if(!files[block_order]->IsOpen())
+    {
+        delete files[block_order];
+        files[block_order] = NULL;
         return MBError::OPEN_FAILURE;
+    }
 
     size_t mem_used = block_order*block_size;
     if(mmap_mem > mem_used)
