@@ -164,7 +164,7 @@ TEST_F(BackupTest, Create_backup_db)
     check_overwritten_keys(db_bkp, num);
     
     //Test to remove all the keys from the DB.
-    rval = db_r->RemoveAll();
+    rval = db_bkp->RemoveAll();
     EXPECT_EQ(rval, MBError::SUCCESS);
     EXPECT_EQ(0, db_bkp->Count());
     db_bkp->Close();

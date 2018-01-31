@@ -38,7 +38,7 @@ private:
         const std::string &dest_path, char *buffer, int buffer_size);
     
     const DB &db_ref;
-	const IndexHeader *header;
+    const IndexHeader *header;
 };
 
 }
