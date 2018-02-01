@@ -470,6 +470,52 @@ static void async_eviction_test(std::string &list_file, MBConfig &mbconf, int64_
     std::cout << "count: " << count << "   time: " << 1.0*tmdiff/expected_count << "\n";
 }
 
+static void backup_test(std::string &backup_dir, std::string &list_file, MBConfig &mbconf, int64_t expected_count)
+{
+    DB db(mbconf);
+    assert(db.Status() == MBError::SUCCESS);
+
+    MBData data;
+    int count = 0;
+    struct timeval start, stop;
+    gettimeofday(&start, NULL);
+
+    DB::iterator iter = db.begin();
+    std::string first_key = iter.key;
+
+    // backup DB
+    assert(db.Backup(backup_dir.c_str()) != MBError::SUCCESS);
+
+    // Remove key to verify existence later in backed up DB
+    assert(db.Remove(first_key) == MBError::SUCCESS);
+    assert(db.Find(first_key, data) != MBError::SUCCESS);
+
+    // Open Backed up DB
+    MBConfig mbconf_bak;
+    memset(&mbconf_bak, 0, sizeof(mbconf_bak));
+    mbconf_bak.mbdir = backup_dir.c_str();
+    mbconf_bak.block_size_index = BLOCK_SIZE_ALIGN;
+    mbconf_bak.block_size_data = 2*BLOCK_SIZE_ALIGN;
+    mbconf_bak.num_entry_per_bucket = 512;
+    DB db_bak(mbconf_bak);
+
+    // Verify backed up DB has the first_key
+    assert(db_bak.Find(first_key, data) == MBError::SUCCESS);
+
+    // Now add removed key back
+    assert(db.Add(first_key.c_str(), first_key.length(), data, true) == MBError::SUCCESS);
+
+    gettimeofday(&stop, NULL);
+    count = db.Count();
+    int64_t tmdiff = (stop.tv_sec-start.tv_sec)*1000000 + (stop.tv_usec-start.tv_usec);
+    std::cout << "count: " << count << "   time: " << 1.0*tmdiff/count << "\n";
+    assert(db.Count() == expected_count);
+    assert(db_bak.Count() == expected_count);
+    db_bak.Close();
+    db.Close();
+}
+
+
 static void SetTestStatus(bool success)
 {
     std::string cmd;
@@ -493,6 +539,11 @@ int main(int argc, char *argv[])
     std::string test_list_file = "./test_list";
     if(argc > 2) {
         test_list_file = argv[2];
+    }
+
+    std::string backup_dir = "/var/tmp/mabain_test_backup/";
+    if(argc > 3) {
+        backup_dir = argv[3];
     }
 
     DB::SetLogFile(std::string(MB_DIR) + "/mabain.log");
@@ -560,11 +611,14 @@ int main(int argc, char *argv[])
             prune_test(mbconf, expected_count);
         } else if(mode.compare("eviction") == 0) {
             async_eviction_test(file, mbconf, expected_count);
+        } else if(mode.compare("backup") == 0) {
+            mbconf.options = CONSTS::ACCESS_MODE_WRITER;
+            backup_test(backup_dir, file, mbconf, expected_count);
         } else {
             std::cerr << "Unknown test\n";
             abort();
         }
-       
+
         if(remove_db) {
             clean_db_dir();
             mbconf.block_size_index += BLOCK_SIZE_ALIGN;
