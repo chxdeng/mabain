@@ -252,6 +252,9 @@ int  AsyncWriter::CollectResource(int64_t m_index_rc_size, int64_t m_data_rc_siz
         return MBError::MUTEX_ERROR;
 
     int64_t *data_ptr = (int64_t *) calloc(4, sizeof(int64_t));
+    if (data_ptr == NULL)
+        return MBError::NO_MEMORY;
+
     node_ptr->data = data_ptr;
     node_ptr->data_len = sizeof(int64_t)*4;
     data_ptr[0] = m_index_rc_size;
