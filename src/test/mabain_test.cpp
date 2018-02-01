@@ -484,7 +484,7 @@ static void backup_test(std::string &backup_dir, std::string &list_file, MBConfi
     std::string first_key = iter.key;
 
     // backup DB
-    assert(db.Backup(backup_dir.c_str()) != MBError::SUCCESS);
+    assert(db.Backup(backup_dir.c_str()) == MBError::SUCCESS);
 
     // Remove key to verify existence later in backed up DB
     assert(db.Remove(first_key) == MBError::SUCCESS);
