@@ -21,12 +21,9 @@
 #include "lock_free.h"
 #include "mabain_consts.h"
 #include "error.h"
+#include "integer_4b_5b.h"
 
 namespace mabain {
-
-//No need to use std::memory_order_seq_cst.
-#define MEMORY_ORDER_WRITER std::memory_order_release
-#define MEMORY_ORDER_READER std::memory_order_consume
 
 LockFree::LockFree()
 {
@@ -44,17 +41,8 @@ void LockFree::LockFreeInit(LockFreeShmData *lock_free_ptr, int mode)
     {
         // Clear the lock free data
         shm_data_ptr->counter.store(0, MEMORY_ORDER_WRITER);
-        shm_data_ptr->modify_flag.store(false, MEMORY_ORDER_WRITER);
+        shm_data_ptr->offset.store(MAX_6B_OFFSET, MEMORY_ORDER_WRITER);
     }
-}
-
-//////////////////////////////////////////////////
-// DO NOT CHANGE THE STORE ORDER IN THIS FUNCTION.
-//////////////////////////////////////////////////
-void LockFree::WriterLockFreeStart(size_t offset)
-{
-    shm_data_ptr->offset.store(offset, MEMORY_ORDER_WRITER);
-    shm_data_ptr->modify_flag.store(true, MEMORY_ORDER_WRITER);
 }
 
 //////////////////////////////////////////////////
@@ -66,19 +54,7 @@ void LockFree::WriterLockFreeStop()
     shm_data_ptr->offset_cache[index].store(shm_data_ptr->offset, MEMORY_ORDER_WRITER);
 
     shm_data_ptr->counter.fetch_add(1, MEMORY_ORDER_WRITER);
-    shm_data_ptr->modify_flag.store(false, MEMORY_ORDER_WRITER);
-}
-
-//////////////////////////////////////////////////
-// DO NOT CHANGE THE LOAD ORDER IN THIS FUNCTION.
-//////////////////////////////////////////////////
-int LockFree::ReaderLockFreeStart(LockFreeData &snapshot)
-{
-    snapshot.offset = shm_data_ptr->offset.load(MEMORY_ORDER_READER);
-    snapshot.counter = shm_data_ptr->counter.load(MEMORY_ORDER_READER);
-    snapshot.modify_flag = shm_data_ptr->modify_flag.load(MEMORY_ORDER_READER);
-
-    return MBError::SUCCESS;
+    shm_data_ptr->offset.store(MAX_6B_OFFSET, MEMORY_ORDER_WRITER);
 }
 
 //////////////////////////////////////////////////
@@ -89,10 +65,8 @@ int LockFree::ReaderLockFreeStop(const LockFreeData &snapshot, size_t reader_off
     LockFreeData curr;
     curr.offset = shm_data_ptr->offset.load(MEMORY_ORDER_READER);
     curr.counter = shm_data_ptr->counter.load(MEMORY_ORDER_READER);
-    curr.modify_flag = shm_data_ptr->modify_flag.load(MEMORY_ORDER_READER);
 
-    if((curr.modify_flag && curr.offset == reader_offset) ||
-       (snapshot.modify_flag && snapshot.offset == reader_offset))
+    if(curr.offset == reader_offset)
         return MBError::TRY_AGAIN;
 
     // Note it is expected that count_diff can overflow.
@@ -102,7 +76,7 @@ int LockFree::ReaderLockFreeStop(const LockFreeData &snapshot, size_t reader_off
     if(count_diff >= MAX_OFFSET_CACHE)
         return MBError::TRY_AGAIN; // Cache is overwritten. Have to retry.
 
-    for(unsigned i = 0; i <= count_diff; i++)
+    for(unsigned i = 0; i < count_diff; i++)
     {
         int index = (snapshot.counter + i) % MAX_OFFSET_CACHE;
         if(reader_offset == shm_data_ptr->offset_cache[index].load(MEMORY_ORDER_READER))

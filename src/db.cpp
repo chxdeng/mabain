@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright (C) 2017 Cisco Inc.
  *
  * This program is free software: you can redistribute it and/or  modify
@@ -31,6 +31,7 @@
 #include "mb_rc.h"
 #include "integer_4b_5b.h"
 #include "async_writer.h"
+#include "mb_backup.h"
 
 namespace mabain {
 
@@ -409,13 +410,32 @@ int DB::Remove(const std::string &key)
 int DB::RemoveAll()
 {
     if(status != MBError::SUCCESS)
-        return -1;
+        return MBError::NOT_INITIALIZED;
 
     if(async_writer != NULL)
         return async_writer->RemoveAll();
 
     int rval;
     rval = dict->RemoveAll();
+    return rval;
+}
+
+int DB::Backup(const char *bk_dir)
+{
+    if(status != MBError::SUCCESS)
+        return MBError::NOT_INITIALIZED;
+
+    if(async_writer != NULL)
+        return async_writer->Backup(bk_dir);
+        
+    int rval;
+    try {
+        DBBackup bk(*this);
+        rval = bk.Backup(bk_dir);
+    } catch  (int error) {
+        Logger::Log(LOG_LEVEL_WARN, "Backup failed :%s", MBError::get_error_str(error));
+        rval = error;
+    }
     return rval;
 }
 

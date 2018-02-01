@@ -64,6 +64,7 @@ Dict::Dict(const std::string &mbdir, bool init_header, int datasize,
     {
         if(block_sz_data != 0 && header->data_block_size != block_sz_data)
         {
+            Destroy();
             std::cerr << "mabain data block size not match\n";
             throw (int) MBError::INVALID_SIZE;
         }
@@ -103,6 +104,7 @@ Dict::Dict(const std::string &mbdir, bool init_header, int datasize,
         {
             if(header->entry_per_bucket != entry_per_bucket)
             {
+                Destroy();
                 std::cerr << "mabain count per bucket not match\n";
                 throw (int) MBError::INVALID_SIZE;
             }
@@ -180,10 +182,10 @@ void Dict::Destroy()
 
     mm.Destroy();
 
-    if(free_lists)
+    if(free_lists != NULL)
         delete free_lists;
 
-    if(kv_file)
+    if(kv_file != NULL)
         delete kv_file;
 }
 
@@ -761,8 +763,8 @@ void Dict::PrintStats(std::ostream &out_stream) const
         return;
 
     out_stream << "DB stats:\n";
-    out_stream << "\tNumer of DB writer: " << header->num_writer << std::endl;
-    out_stream << "\tNumer of DB reader: " << header->num_reader << std::endl;
+    out_stream << "\tNumber of DB writer: " << header->num_writer << std::endl;
+    out_stream << "\tNumber of DB reader: " << header->num_reader << std::endl;
     out_stream << "\tEntry count in DB: "  << header->count << std::endl;
     out_stream << "\tEntry count per bucket: "  << header->entry_per_bucket << std::endl;
     out_stream << "\tEviction bucket index: "  << header->eviction_bucket_index << std::endl;
@@ -801,7 +803,6 @@ void Dict::PrintHeader(std::ostream &out_stream) const
     out_stream << "data block size: " << header->data_block_size << "\n";
     out_stream << "index block size: " << header->index_block_size << "\n";
     out_stream << "lock free data: " << "\n";
-    out_stream << "\tmodify flag: " << header->lock_free.modify_flag << "\n";
     out_stream << "\tcounter: " << header->lock_free.counter << "\n";
     out_stream << "\toffset: " << header->lock_free.offset << "\n";
     out_stream << "Number of updates: "  << header->num_update << std::endl;
@@ -1254,7 +1255,7 @@ int Dict::UpdateNumWriter(int delta) const
     else if(delta < 0)
     {
         header->num_writer = 0;
-        header->lock_free.modify_flag = 0;
+        header->lock_free.offset = MAX_6B_OFFSET;
     }
 
     Logger::Log(LOG_LEVEL_INFO, "number of writer is set to: %d",
@@ -1375,7 +1376,7 @@ int Dict::ExceptionRecovery()
         default:
             Logger::Log(LOG_LEVEL_ERROR, "unknown exception status: %d",
                         header->excep_updating_status);
-            return MBError::INVALID_ARG;
+            rval = MBError::INVALID_ARG;
     }
 #ifdef __LOCK_FREE__
     lfree.WriterLockFreeStop();
@@ -1405,6 +1406,14 @@ void Dict::WriteData(const uint8_t *buff, unsigned len, size_t offset) const
 
     if(kv_file->RandomWrite(buff, len, offset) != len)
         throw (int) MBError::WRITE_ERROR;
+}
+
+int Dict::ReadData(uint8_t *buff, unsigned len, size_t offset) const
+{
+    if(offset + len > header->m_data_offset)
+        return 0;
+
+    return kv_file->RandomRead(buff, len, offset);
 }
 
 }

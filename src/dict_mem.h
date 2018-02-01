@@ -82,6 +82,7 @@ public:
     void InitRootNode();
     inline void WriteEdge(const EdgePtrs &edge_ptrs) const;
     void WriteData(const uint8_t *buff, unsigned len, size_t offset) const;
+    int  ReadData(uint8_t *buff, unsigned len, size_t offset) const;
     inline size_t GetRootOffset() const;
     void ClearMem() const;
     const int* GetNodeSizePtr() const;

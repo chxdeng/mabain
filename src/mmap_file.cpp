@@ -49,7 +49,10 @@ MmapFileIO::MmapFileIO(const std::string &fpath, int mode, off_t filesize, bool 
     int fd = Open();
     if(fd < 0)
     {
-        Logger::Log(LOG_LEVEL_ERROR, "failed to open file %s with mode %d, errno %d",
+        int level = LOG_LEVEL_DEBUG;
+        if(mode & O_CREAT)
+            level = LOG_LEVEL_ERROR;
+        Logger::Log(level, "failed to open file %s with mode %d, errno %d",
                 fpath.c_str(), mode, errno);
         return;
     }
