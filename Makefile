@@ -29,6 +29,15 @@ uninstall:
 	rm -f $(MABAIN_INSTALL_DIR)/bin/mbc
 
 clean:
-	make -C src clean; \
-	make -C binaries clean; \
-	make -C examples clean
+	-make -C src clean
+	-make -C binaries clean
+	-make -C examples clean
+	-rm -rf doc/*
+
+index:
+	- ctags -R *
+	-doxygen doxygen.conf
+	-echo "Generating documentation..."
+	-echo "Use following index file : "
+	-readlink -f doc/html/index.html
+	-echo "Done with doxygen"
