@@ -9,7 +9,7 @@ all: mb_insert_test mb_lookup_test mb_longest_prefix_test \
 	mb_rc_test mb_multi_thread_insert_test
 	mkdir -p ./tmp_dir
 
-CFLAGS  = -I. -I$(MABAIN_INSTALL_DIR)/include -Wall -Werror -g -O2 -c -std=c++11
+CFLAGS  = -I. -I$(MABAIN_INSTALL_DIR)/include -Wall -Werror -g -O0 -c -std=c++11
 LDFLAGS = -lpthread -lcrypto -L$(MABAIN_INSTALL_DIR)/lib -lmabain
 
 mb_insert_test: mb_insert_test.cpp
