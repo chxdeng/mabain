@@ -483,6 +483,10 @@ static void backup_test(std::string &backup_dir, std::string &list_file, MBConfi
     DB::iterator iter = db.begin();
     std::string first_key = iter.key;
 
+    // Create Backup DB directory
+    std::string backup_mkdir_cmd = "mkdir " + backup_dir;
+    system(backup_mkdir_cmd.c_str());
+
     // backup DB
     assert(db.Backup(backup_dir.c_str()) == MBError::SUCCESS);
 
@@ -541,7 +545,7 @@ int main(int argc, char *argv[])
         test_list_file = argv[2];
     }
 
-    std::string backup_dir = "/var/tmp/mabain_test_backup/";
+    std::string backup_dir = MB_DIR + "/backup/";
     if(argc > 3) {
         backup_dir = argv[3];
     }
