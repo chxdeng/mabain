@@ -343,7 +343,7 @@ TEST_F(DictTest, ReadRootNode_test)
 
     rval = dict->ReadRootNode(buff, edge_ptrs, match, mbd);
     EXPECT_EQ(rval, MBError::SUCCESS);
-    EXPECT_EQ(edge_ptrs.offset, 264);
+    EXPECT_EQ(edge_ptrs.offset, 264u);
     EXPECT_EQ((int)buff[0], 0);
     EXPECT_EQ((int)buff[1], 255);
 }
@@ -401,7 +401,7 @@ TEST_F(DictTest, ReadNextEdge_test)
     rval = dict->ReadNextEdge(buff, edge_ptrs, match, mbd, match_str, offset, true);
     EXPECT_EQ(rval, MBError::SUCCESS);
     EXPECT_EQ(match, 0);
-    EXPECT_EQ(offset, 0);
+    EXPECT_EQ(offset, 0u);
 }
 
 TEST_F(DictTest, ReadNodeHeader_test)
@@ -421,8 +421,8 @@ TEST_F(DictTest, ReadNodeHeader_test)
     dict->ReadNodeHeader(offset, node_size, match, data_offset, data_link_offset);
     EXPECT_EQ(node_size, 22);
     EXPECT_EQ(match, 2);
-    EXPECT_EQ(data_offset, 143);
-    EXPECT_EQ(data_link_offset, 3647);
+    EXPECT_EQ(data_offset, 143u);
+    EXPECT_EQ(data_link_offset, 3647u);
 }
 
 }

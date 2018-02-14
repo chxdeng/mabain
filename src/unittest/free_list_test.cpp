@@ -48,12 +48,12 @@ TEST_F(FreeListTest, AddBufferByIndex_test)
     rval = flist.AddBufferByIndex(0, 100);
     EXPECT_EQ(rval, 0);
     EXPECT_EQ(flist.Count(), 1);
-    EXPECT_EQ(flist.GetBufferCountByIndex(0), 1);
+    EXPECT_EQ(flist.GetBufferCountByIndex(0), 1u);
 
     rval = flist.AddBufferByIndex(111, 128);
     EXPECT_EQ(rval, 0);
     EXPECT_EQ(flist.Count(), 2);
-    EXPECT_EQ(flist.GetBufferCountByIndex(111), 1);
+    EXPECT_EQ(flist.GetBufferCountByIndex(111), 1u);
 }
 
 TEST_F(FreeListTest, RemoveBufferByIndex_test)
@@ -61,15 +61,15 @@ TEST_F(FreeListTest, RemoveBufferByIndex_test)
     FreeList flist("./freelist", 8, 2000);
 
     flist.AddBufferByIndex(33, 72);
-    EXPECT_EQ(flist.RemoveBufferByIndex(33), 72);
+    EXPECT_EQ(flist.RemoveBufferByIndex(33), 72u);
 
 
     flist.AddBufferByIndex(44, 328);
     flist.AddBufferByIndex(44, 1024);
     flist.AddBufferByIndex(102, 8);
-    EXPECT_EQ(flist.RemoveBufferByIndex(44), 328);
-    EXPECT_EQ(flist.RemoveBufferByIndex(102), 8);
-    EXPECT_EQ(flist.RemoveBufferByIndex(44), 1024);
+    EXPECT_EQ(flist.RemoveBufferByIndex(44), 328u);
+    EXPECT_EQ(flist.RemoveBufferByIndex(102), 8u);
+    EXPECT_EQ(flist.RemoveBufferByIndex(44), 1024u);
 }
 
 TEST_F(FreeListTest, GetAlignmentSize_test)
@@ -107,7 +107,7 @@ TEST_F(FreeListTest, GetBufferCountByIndex_test)
     flist.AddBufferByIndex(7, 24);
     flist.AddBufferByIndex(7, 8);
 
-    EXPECT_EQ(flist.GetBufferCountByIndex(7), 3);
+    EXPECT_EQ(flist.GetBufferCountByIndex(7), 3u);
 }
 
 TEST_F(FreeListTest, GetBufferSizeByIndex_test)
@@ -119,9 +119,9 @@ TEST_F(FreeListTest, GetBufferSizeByIndex_test)
     flist.AddBufferByIndex(101, 256);
     flist.AddBufferByIndex(101, 516);
 
-    EXPECT_EQ(flist.GetBufferCountByIndex(13), 1);
-    EXPECT_EQ(flist.GetBufferCountByIndex(3), 1);
-    EXPECT_EQ(flist.GetBufferCountByIndex(101), 2);
+    EXPECT_EQ(flist.GetBufferCountByIndex(13), 1u);
+    EXPECT_EQ(flist.GetBufferCountByIndex(3), 1u);
+    EXPECT_EQ(flist.GetBufferCountByIndex(101), 2u);
 }
 
 TEST_F(FreeListTest, ReleaseBuffer_test)
@@ -133,8 +133,8 @@ TEST_F(FreeListTest, ReleaseBuffer_test)
     EXPECT_EQ(rval, MBError::SUCCESS);
     rval = flist.ReleaseBuffer(124, 34);
     EXPECT_EQ(rval, MBError::SUCCESS);
-    EXPECT_EQ(flist.GetBufferCountByIndex(flist.GetBufferIndex(8)), 1);
-    EXPECT_EQ(flist.GetBufferCountByIndex(flist.GetBufferIndex(34)), 1);
+    EXPECT_EQ(flist.GetBufferCountByIndex(flist.GetBufferIndex(8)), 1u);
+    EXPECT_EQ(flist.GetBufferCountByIndex(flist.GetBufferIndex(34)), 1u);
 }
 
 TEST_F(FreeListTest, AddBuffer_test)
@@ -144,17 +144,17 @@ TEST_F(FreeListTest, AddBuffer_test)
 
     rval = flist.AddBuffer(40, 34);
     EXPECT_EQ(rval, MBError::SUCCESS);
-    EXPECT_EQ(flist.GetBufferCountByIndex(flist.GetBufferIndex(34)), 1);
+    EXPECT_EQ(flist.GetBufferCountByIndex(flist.GetBufferIndex(34)), 1u);
     rval =flist. AddBuffer(144, 34);
     EXPECT_EQ(rval, MBError::SUCCESS);
-    EXPECT_EQ(flist.GetBufferCountByIndex(flist.GetBufferIndex(34)), 2);
+    EXPECT_EQ(flist.GetBufferCountByIndex(flist.GetBufferIndex(34)), 2u);
     rval = flist.AddBuffer(196, 35);
     EXPECT_EQ(rval, MBError::SUCCESS);
-    EXPECT_EQ(flist.GetBufferCountByIndex(flist.GetBufferIndex(34)), 3);
+    EXPECT_EQ(flist.GetBufferCountByIndex(flist.GetBufferIndex(34)), 3u);
 
     rval = flist.AddBuffer(260, 135);
     EXPECT_EQ(rval, MBError::SUCCESS);
-    EXPECT_EQ(flist.GetBufferCountByIndex(flist.GetBufferIndex(135)), 1);
+    EXPECT_EQ(flist.GetBufferCountByIndex(flist.GetBufferIndex(135)), 1u);
 }
 
 TEST_F(FreeListTest, RemoveBuffer_test)
@@ -167,10 +167,10 @@ TEST_F(FreeListTest, RemoveBuffer_test)
     flist.AddBufferByIndex(98, 196);
     rval = flist.RemoveBuffer(offset, flist.GetBufferSizeByIndex(98));
     EXPECT_EQ(rval, MBError::SUCCESS);
-    EXPECT_EQ(offset, 96);
+    EXPECT_EQ(offset, 96u);
     rval = flist.RemoveBuffer(offset, flist.GetBufferSizeByIndex(98));
     EXPECT_EQ(rval, MBError::SUCCESS);
-    EXPECT_EQ(offset, 196);
+    EXPECT_EQ(offset, 196u);
     rval = flist.RemoveBuffer(offset, flist.GetBufferSizeByIndex(98));
     EXPECT_EQ(rval, MBError::NO_MEMORY);
 }
@@ -218,23 +218,23 @@ TEST_F(FreeListTest, StoreLoadSmallFilling_test)
     rval = access("./freelist", F_OK);
     EXPECT_EQ(rval, 0);
     EXPECT_EQ(flist.Count(), 0);
-    EXPECT_EQ(flist.GetTotSize(), 0);
+    EXPECT_EQ(flist.GetTotSize(), 0u);
 
     flist.LoadListFromDisk();
     rval = access("./freelist", R_OK);
     EXPECT_EQ(rval, -1);
     rval = flist.RemoveBuffer(offset, 11);
     EXPECT_EQ(rval, MBError::SUCCESS);
-    EXPECT_EQ(offset, 84);
+    EXPECT_EQ(offset, 84u);
     rval = flist.RemoveBuffer(offset, 23);
     EXPECT_EQ(rval, MBError::SUCCESS);
-    EXPECT_EQ(offset, 144);
+    EXPECT_EQ(offset, 144u);
     rval = flist.RemoveBuffer(offset, 17);
     EXPECT_EQ(rval, MBError::SUCCESS);
-    EXPECT_EQ(offset, 32);
+    EXPECT_EQ(offset, 32u);
     rval = flist.RemoveBuffer(offset, 2);
     EXPECT_EQ(rval, MBError::SUCCESS);
-    EXPECT_EQ(offset, 444);
+    EXPECT_EQ(offset, 444u);
 }
 
 TEST_F(FreeListTest, StoreLoadFullFilling_test)
@@ -263,7 +263,7 @@ TEST_F(FreeListTest, StoreLoadFullFilling_test)
     rval = access("./freelist", F_OK);
     EXPECT_EQ(rval, 0);
     EXPECT_EQ(flist.Count(), 0);
-    EXPECT_EQ(flist.GetTotSize(), 0);
+    EXPECT_EQ(flist.GetTotSize(), 0u);
 
     flist.LoadListFromDisk();
     rval = access("./freelist", R_OK);
@@ -311,7 +311,7 @@ TEST_F(FreeListTest, StoreLoadHalfFilling_test)
     rval = access("./freelist", F_OK);
     EXPECT_EQ(rval, 0);
     EXPECT_EQ(flist.Count(), 0);
-    EXPECT_EQ(flist.GetTotSize(), 0);
+    EXPECT_EQ(flist.GetTotSize(), 0u);
 
     flist.LoadListFromDisk();
     rval = access("./freelist", R_OK);
