@@ -51,8 +51,8 @@ protected:
 TEST_F(LockFreeTest, WriterLockFreeStart_test)
 {
     lfree.WriterLockFreeStart(101);
-    EXPECT_EQ(lock_free_data.counter, 0);
-    EXPECT_EQ(lock_free_data.offset, 101);
+    EXPECT_EQ(lock_free_data.counter, 0u);
+    EXPECT_EQ(lock_free_data.offset, 101u);
 }
 
 TEST_F(LockFreeTest, WriterLockFreeStop_test)
@@ -60,8 +60,8 @@ TEST_F(LockFreeTest, WriterLockFreeStop_test)
     lock_free_data.counter = 0xFFFFFFFF;
     lfree.WriterLockFreeStart(102);
     lfree.WriterLockFreeStop();
-    EXPECT_EQ(lock_free_data.counter, 0);
-    EXPECT_EQ(lock_free_data.offset_cache[0xFFFFFFFF % MAX_OFFSET_CACHE], 102);
+    EXPECT_EQ(lock_free_data.counter, 0u);
+    EXPECT_EQ(lock_free_data.offset_cache[0xFFFFFFFF % MAX_OFFSET_CACHE], 102u);
 }
 
 TEST_F(LockFreeTest, ReaderLockFreeStart_test)
@@ -74,7 +74,7 @@ TEST_F(LockFreeTest, ReaderLockFreeStart_test)
 
     LockFreeData snapshot;
     lfree.ReaderLockFreeStart(snapshot);
-    EXPECT_EQ(snapshot.counter, 99);
+    EXPECT_EQ(snapshot.counter, 99u);
 }
 
 TEST_F(LockFreeTest, ReaderLockFreeStop_test)

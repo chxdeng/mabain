@@ -2,6 +2,7 @@
 ./key_list_1 update 1000000 keep 49998
 ./key_list_1 iterator 1000000 keep 49998
 ./key_list_1 lookup 1000 keep 49998
+./key_list_1 backup 1000000 keep 49998
 ./key_list_1 delete 0 keep 49998
 ./key_list_1 lookup 0 keep 0
 ./key_list_1 eviction 0 remove 48462
