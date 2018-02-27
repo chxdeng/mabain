@@ -98,6 +98,9 @@ public:
     void Flush() const;
     int  ExceptionRecovery();
 
+    void CloseDBFiles();
+    int  OpenDBFiles();
+
 private:
     int ReleaseBuffer(size_t offset);
     int UpdateDataBuffer(EdgePtrs &edge_ptrs, bool overwrite, const uint8_t *buff,

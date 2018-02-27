@@ -90,6 +90,11 @@ static void load_test(std::string &list_file, MBConfig &mbconf, int64_t expected
         }
 
         if(count % 1000000 == 0) std::cout << "Added " << count << "\n";
+        if(count % 2000000 == 0) {
+            // Test close and open
+            db.CloseDBFiles();
+            assert(db.OpenDBFiles() == MBError::SUCCESS);
+        }
     }
     gettimeofday(&stop, NULL);
     in.close();
@@ -134,6 +139,11 @@ static void update_test(std::string &list_file, MBConfig &mbconf, int64_t expect
         assert(rval == MBError::SUCCESS);
         count++;
         if(count % 1000000 == 0) std::cout << "Added " << count << "\n";
+        if(count % 2000000 == 0) {
+            // Test close and open
+            db.CloseDBFiles();
+            assert(db.OpenDBFiles() == MBError::SUCCESS);
+        }
     }
     in.close();
     gettimeofday(&stop, NULL);
@@ -172,6 +182,11 @@ static void lookup_test(std::string &list_file, MBConfig &mbconf, int64_t expect
         }
         count++;
         if(count % 1000000 == 0) std::cout << "Looked up " << count << "\n";
+        if(count % 2000000 == 0) {
+            // Test close and open
+            db.CloseDBFiles();
+            assert(db.OpenDBFiles() == MBError::SUCCESS);
+        }
     }
     gettimeofday(&stop, NULL);
     in.close();

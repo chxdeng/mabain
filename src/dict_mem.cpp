@@ -1075,4 +1075,32 @@ int DictMem::ReadData(uint8_t *buff, unsigned len, size_t offset) const
     return kv_file->RandomRead(buff, len, offset);
 }
 
+void DictMem::CloseHeaderFile()
+{
+    header_file->UnMapFile();
+    header_file->Close();
+    header = NULL;
+    lfree = NULL;
+}
+
+int DictMem::OpenHeaderFile()
+{
+    if(!header_file->IsOpen())
+        header_file->Open();
+    if(!header_file->IsOpen())
+    {
+        Logger::Log(LOG_LEVEL_ERROR, std::string("failed to open headr file ") + header_file->GetFilePath());
+        return MBError::OPEN_FAILURE;
+    }
+    if(header == NULL)
+        header = (IndexHeader *) header_file->MapFile(sizeof(IndexHeader), 0, false);
+    if(header == NULL)
+    {
+        Logger::Log(LOG_LEVEL_ERROR, std::string("failed to map headr file ") + header_file->GetFilePath());
+        return MBError::MMAP_FAILED;
+    }
+
+    return MBError::SUCCESS;
+}
+
 }

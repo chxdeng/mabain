@@ -1416,4 +1416,35 @@ int Dict::ReadData(uint8_t *buff, unsigned len, size_t offset) const
     return kv_file->RandomRead(buff, len, offset);
 }
 
+void Dict::CloseDBFiles()
+{
+    if(status != MBError::SUCCESS)
+        return;
+
+    mm.CloseHeaderFile();
+    mm.CloseKVFiles();
+    CloseKVFiles();
+
+    // unset lock free pointer in header
+    lfree.LockFreeInit(NULL, CONSTS::ACCESS_MODE_READER);
+    status = MBError::DB_CLOSED;
+}
+
+int Dict::OpenDBFiles()
+{
+    // Proceed only when the status is DB_CLOSED.
+    if(status != MBError::DB_CLOSED)
+        return status;
+
+    int rval = mm.OpenHeaderFile();
+    if(rval != MBError::SUCCESS)
+        return rval;
+
+    // set lock free pointer in header
+    lfree.LockFreeInit(&header->lock_free, options);
+    mm.InitLockFreePtr(&lfree);
+    status = MBError::SUCCESS;
+    return status;
+}
+
 }
