@@ -434,11 +434,16 @@ TEST_F(DictTest, CloseDBFiles_test)
     AddKV(8, 22, true);
     dict->CloseDBFiles();
     EXPECT_EQ(dict->Status(), MBError::DB_CLOSED);
+    EXPECT_TRUE(dict->GetHeaderPtr() == NULL);
+    EXPECT_TRUE(dict->GetMM()->GetHeaderPtr() == NULL);
 
     int rval;
     rval = dict->OpenDBFiles();
     EXPECT_EQ(rval, MBError::SUCCESS);
     EXPECT_EQ(dict->Status(), MBError::SUCCESS);
+    EXPECT_TRUE(dict->GetHeaderPtr() != NULL);
+    EXPECT_TRUE(dict->GetMM()->GetHeaderPtr() != NULL);
+    EXPECT_TRUE(dict->GetMM()->GetHeaderPtr() == dict->GetHeaderPtr());
 
     MBData mbd;
     rval = dict->Find((const uint8_t*)FAKE_KEY, 10, mbd);

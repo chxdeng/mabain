@@ -1038,7 +1038,8 @@ const int* DictMem::GetNodeSizePtr() const
 void DictMem::ResetSlidingWindow() const
 {
     kv_file->ResetSlidingWindow();
-    header->shm_index_sliding_start.store(0, std::memory_order_relaxed);
+    if(header != NULL)
+        header->shm_index_sliding_start.store(0, std::memory_order_relaxed);
 }
 
 void DictMem::InitLockFreePtr(LockFree *lf)

@@ -1276,7 +1276,8 @@ size_t Dict::GetStartDataOffset() const
 void Dict::ResetSlidingWindow() const
 {
     kv_file->ResetSlidingWindow();
-    header->shm_data_sliding_start.store(0, std::memory_order_relaxed);
+    if(header != NULL)
+        header->shm_data_sliding_start.store(0, std::memory_order_relaxed);
 }
 
 LockFree* Dict::GetLockFreePtr()
@@ -1422,6 +1423,7 @@ void Dict::CloseDBFiles()
         return;
 
     mm.CloseHeaderFile();
+    header = NULL;
     mm.CloseKVFiles();
     CloseKVFiles();
 
@@ -1439,6 +1441,10 @@ int Dict::OpenDBFiles()
     int rval = mm.OpenHeaderFile();
     if(rval != MBError::SUCCESS)
         return rval;
+
+    header = mm.GetHeaderPtr();
+    if(header == NULL)
+        return MBError::MMAP_FAILED;
 
     // set lock free pointer in header
     lfree.LockFreeInit(&header->lock_free, options);
