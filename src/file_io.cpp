@@ -151,4 +151,9 @@ void FileIO::Flush()
         fsync(fd);
 }
 
+const std::string& FileIO::GetFilePath() const
+{
+    return path;
+}
+
 }

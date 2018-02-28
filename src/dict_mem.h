@@ -91,6 +91,8 @@ public:
     void InitLockFreePtr(LockFree *lf);
 
     void Flush() const;
+    void CloseHeaderFile();
+    int  OpenHeaderFile();
 
     // empty edge, used for clearing edges
     static const uint8_t empty_edge[EDGE_SIZE];

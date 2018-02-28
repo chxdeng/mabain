@@ -1276,7 +1276,8 @@ size_t Dict::GetStartDataOffset() const
 void Dict::ResetSlidingWindow() const
 {
     kv_file->ResetSlidingWindow();
-    header->shm_data_sliding_start.store(0, std::memory_order_relaxed);
+    if(header != NULL)
+        header->shm_data_sliding_start.store(0, std::memory_order_relaxed);
 }
 
 LockFree* Dict::GetLockFreePtr()
@@ -1414,6 +1415,42 @@ int Dict::ReadData(uint8_t *buff, unsigned len, size_t offset) const
         return 0;
 
     return kv_file->RandomRead(buff, len, offset);
+}
+
+void Dict::CloseDBFiles()
+{
+    if(status != MBError::SUCCESS)
+        return;
+
+    mm.CloseHeaderFile();
+    header = NULL;
+    mm.CloseKVFiles();
+    CloseKVFiles();
+
+    // unset lock free pointer in header
+    lfree.LockFreeInit(NULL, CONSTS::ACCESS_MODE_READER);
+    status = MBError::DB_CLOSED;
+}
+
+int Dict::OpenDBFiles()
+{
+    // Proceed only when the status is DB_CLOSED.
+    if(status != MBError::DB_CLOSED)
+        return status;
+
+    int rval = mm.OpenHeaderFile();
+    if(rval != MBError::SUCCESS)
+        return rval;
+
+    header = mm.GetHeaderPtr();
+    if(header == NULL)
+        return MBError::MMAP_FAILED;
+
+    // set lock free pointer in header
+    lfree.LockFreeInit(&header->lock_free, options);
+    mm.InitLockFreePtr(&lfree);
+    status = MBError::SUCCESS;
+    return status;
 }
 
 }

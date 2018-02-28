@@ -110,6 +110,7 @@ public:
     inline int Reserve(size_t &offset, int size, uint8_t* &ptr);
     inline uint8_t* GetShmPtr(size_t offset, int size) const;
     inline size_t CheckAlignment(size_t offset, int size) const;
+    inline void CloseKVFiles() const;
 
     FreeList *GetFreeList() const
     {
@@ -140,6 +141,12 @@ inline uint8_t* DRMBase::GetShmPtr(size_t offset, int size) const
 inline size_t DRMBase::CheckAlignment(size_t offset, int size) const
 {
     return kv_file->CheckAlignment(offset, size);
+}
+
+inline void DRMBase::CloseKVFiles() const
+{
+    if(kv_file != NULL)
+        kv_file->Close();
 }
 
 }

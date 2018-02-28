@@ -1038,7 +1038,8 @@ const int* DictMem::GetNodeSizePtr() const
 void DictMem::ResetSlidingWindow() const
 {
     kv_file->ResetSlidingWindow();
-    header->shm_index_sliding_start.store(0, std::memory_order_relaxed);
+    if(header != NULL)
+        header->shm_index_sliding_start.store(0, std::memory_order_relaxed);
 }
 
 void DictMem::InitLockFreePtr(LockFree *lf)
@@ -1073,6 +1074,34 @@ int DictMem::ReadData(uint8_t *buff, unsigned len, size_t offset) const
         return 0;
 
     return kv_file->RandomRead(buff, len, offset);
+}
+
+void DictMem::CloseHeaderFile()
+{
+    header_file->UnMapFile();
+    header_file->Close();
+    header = NULL;
+    lfree = NULL;
+}
+
+int DictMem::OpenHeaderFile()
+{
+    if(!header_file->IsOpen())
+        header_file->Open();
+    if(!header_file->IsOpen())
+    {
+        Logger::Log(LOG_LEVEL_ERROR, std::string("failed to open headr file ") + header_file->GetFilePath());
+        return MBError::OPEN_FAILURE;
+    }
+    if(header == NULL)
+        header = (IndexHeader *) header_file->MapFile(sizeof(IndexHeader), 0, false);
+    if(header == NULL)
+    {
+        Logger::Log(LOG_LEVEL_ERROR, std::string("failed to map headr file ") + header_file->GetFilePath());
+        return MBError::MMAP_FAILED;
+    }
+
+    return MBError::SUCCESS;
 }
 
 }

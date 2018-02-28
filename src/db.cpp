@@ -612,4 +612,34 @@ void DB::CloseLogFile()
     Logger::Close();
 }
 
+void DB::CloseDBFiles()
+{
+    // Only do this for non async writer mode or reader mode
+    if((options & CONSTS::CONSTS::ACCESS_MODE_WRITER) && async_writer != NULL)
+        return;
+
+    if(status != MBError::SUCCESS)
+        return;
+    dict->CloseDBFiles();
+    lock.Init(NULL);
+    status = MBError::DB_CLOSED;
+}
+
+int DB::OpenDBFiles()
+{
+    // Only do this for non async writer mode or reader mode
+    if((options & CONSTS::CONSTS::ACCESS_MODE_WRITER) && async_writer != NULL)
+        return MBError::SUCCESS;
+
+    if(status != MBError::DB_CLOSED)
+        return status;
+    int rval = dict->OpenDBFiles();
+    if(rval == MBError::SUCCESS)
+        status = MBError::SUCCESS;
+
+    lock.Init(dict->GetShmLockPtrs());
+
+    return rval;
+}
+
 } // namespace mabain

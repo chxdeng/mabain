@@ -251,7 +251,6 @@ int AsyncWriter::Backup(const char *backup_dir)
     return PrepareSlot(node_ptr);
 }
 
-
 int AsyncWriter::RemoveAll()
 {
     if(stop_processing)

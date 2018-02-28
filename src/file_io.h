@@ -49,6 +49,8 @@ public:
     virtual size_t RandomRead(void *buff, size_t size, off_t offset);
     virtual void   Flush();
 
+    const std::string& GetFilePath() const;
+
 protected:
     std::string path;
     int options;
