@@ -16,7 +16,7 @@ before_install:
   - sudo cp -a libgtest_main.so libgtest.so /usr/lib/
   - cd /var/tmp
   - sudo wget https://raw.githubusercontent.com/kinow/gtest-tap-listener/master/src/tap.h
-  - sudo cp tap.h /usr/lib/gtest
+  - sudo cp tap.h /usr/lib/gtest/tap.h
   - which valgrind
   - cd $TRAVIS_BUILD_DIR
 
