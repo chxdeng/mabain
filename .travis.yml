@@ -6,6 +6,7 @@ before_install:
   - sudo apt-get install libcurl4-openssl-dev
   - sudo apt-get install -y cmake libgtest-dev valgrind gcovr
   - sudo apt-get install -y exuberant-ctags doxygen graphviz
+  - sudo pip install --user cpp-coveralls
   - cd /var/tmp
   - sudo wget https://github.com/google/googletest/archive/release-1.7.0.tar.gz
   - sudo tar xf release-1.7.0.tar.gz
@@ -37,7 +38,7 @@ script:
   - make unit-test
 
 # Run examples
-after_success: coveralls
+after_success:
   - cd ./examples
   - make
   - export LD_LIBRARY_PATH=/usr/local/lib/
@@ -47,3 +48,4 @@ after_success: coveralls
   - ./mb_lookup_test
   - ./mb_multi_proc_test
   - ./mb_remove_test
+  - coveralls --root src/unittest/ 
