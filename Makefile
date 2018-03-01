@@ -44,3 +44,6 @@ index:
 	-echo "Use following index file : "
 	-readlink -f doc/html/index.html
 	-echo "Done with doxygen"
+
+unit-test: build
+	make -C src unit-test

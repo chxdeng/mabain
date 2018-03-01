@@ -1,6 +1,7 @@
 CPP=g++
 TARGET=libmabain.so
-all=$(TARGET)
+
+all: $(TARGET)
 
 CFLAGS  = -I. -I.. -Iutil -Wall -Werror -c -Wwrite-strings -Wsign-compare -Wcast-align -Wformat-security -fdiagnostics-show-option
 CFLAGS += -g -ggdb -fPIC -O2 -std=c++11
@@ -24,3 +25,6 @@ uninstall:
 
 clean:
 	-rm -f *.o util/*.o $(TARGET)
+
+unit-test: all
+	make -C unittest

@@ -4,7 +4,7 @@ sudo: required
 before_install:
   - sudo apt-get install libao-dev
   - sudo apt-get install libcurl4-openssl-dev
-  - sudo apt-get install -y cmake libgtest-dev valgrind
+  - sudo apt-get install -y cmake libgtest-dev valgrind gcovr
   - sudo apt-get install -y exuberant-ctags doxygen graphviz
   - cd /var/tmp
   - sudo wget https://github.com/google/googletest/archive/release-1.7.0.tar.gz
@@ -34,9 +34,10 @@ install: true
 script:
   - make clean build
   - sudo make install
+  - make unit-test
 
 # Run examples
-after_success:
+after_success: coveralls
   - cd ./examples
   - make
   - export LD_LIBRARY_PATH=/usr/local/lib/
