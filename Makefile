@@ -32,10 +32,13 @@ clean:
 	-make -C src clean
 	-make -C binaries clean
 	-make -C examples clean
+
+distclean: clean
 	-rm -rf doc/*
+	-rm -f tags
 
 index:
-	- ctags -R *
+	-ctags -R *
 	-doxygen doxygen.conf
 	-echo "Generating documentation..."
 	-echo "Use following index file : "
