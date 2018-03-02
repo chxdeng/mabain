@@ -40,7 +40,7 @@ script:
 
 # Run examples
 after_success:
-  - cd ./examples
+  - cd $TRAVIS_BUILD_DIR/examples
   - make
   - export LD_LIBRARY_PATH=/usr/local/lib/
   - ./mb_insert_test
@@ -49,4 +49,5 @@ after_success:
   - ./mb_lookup_test
   - ./mb_multi_proc_test
   - ./mb_remove_test
+  - cd $TRAVIS_BUILD_DIR
   - coveralls --root src/unittest/ 
