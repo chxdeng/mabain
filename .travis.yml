@@ -50,4 +50,4 @@ after_success:
   - ./mb_multi_proc_test
   - ./mb_remove_test
   - cd $TRAVIS_BUILD_DIR
-  - coveralls --root src/unittest/ 
+  - coveralls --root src/ -E "./src/unittest/*" -E "./src/test/*"
