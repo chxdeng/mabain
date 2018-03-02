@@ -7,6 +7,7 @@ before_install:
   - sudo apt-get install -y cmake libgtest-dev valgrind gcovr
   - sudo apt-get install -y exuberant-ctags doxygen graphviz
   - sudo pip install cpp-coveralls
+  - sudo pip install -U cpp-coveralls
   - cd /var/tmp
   - sudo wget https://github.com/google/googletest/archive/release-1.7.0.tar.gz
   - sudo tar xf release-1.7.0.tar.gz
