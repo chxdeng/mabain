@@ -277,20 +277,7 @@ int DB::Find(const char* key, int len, MBData &mdata) const
     if(options & CONSTS::ASYNC_WRITER_MODE)
         return MBError::NOT_ALLOWED;
 
-    int rval;
-    rval = dict->Find(reinterpret_cast<const uint8_t*>(key), len, mdata);
-#ifdef __LOCK_FREE__
-    while(rval == MBError::TRY_AGAIN)
-    {
-        nanosleep((const struct timespec[]){{0, 10L}}, NULL);
-        rval = dict->Find(reinterpret_cast<const uint8_t*>(key), len, mdata);
-    }
-#endif
-
-    if(rval == MBError::SUCCESS)
-        mdata.match_len = len;
-
-    return rval;
+    return dict->Find(reinterpret_cast<const uint8_t*>(key), len, mdata);
 }
 
 int DB::Find(const std::string &key, MBData &mdata) const
@@ -329,18 +316,7 @@ int DB::FindLongestPrefix(const char* key, int len, MBData &data) const
 
     data.match_len = 0;
 
-    int rval;
-    rval = dict->FindPrefix(reinterpret_cast<const uint8_t*>(key), len, data);
-#ifdef __LOCK_FREE__
-    while(rval == MBError::TRY_AGAIN)
-    {
-        nanosleep((const struct timespec[]){{0, 10L}}, NULL);
-        data.Clear();
-        rval = dict->FindPrefix(reinterpret_cast<const uint8_t*>(key), len, data);
-    }
-#endif
-
-    return rval;
+    return dict->FindPrefix(reinterpret_cast<const uint8_t*>(key), len, data);
 }
 
 int DB::FindLongestPrefix(const std::string &key, MBData &data) const

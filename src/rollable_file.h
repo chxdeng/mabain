@@ -49,6 +49,8 @@ public:
     void     ResetSlidingWindow();
 
     void     Flush();
+    void     RemoveUnusedFiles(size_t max_offset);
+    size_t   GetMaxSize() const;
 
     static const long page_size;
     static int ShmSync(uint8_t *addr, int size);
@@ -78,6 +80,8 @@ private:
     size_t sliding_size;
     off_t sliding_start;
     off_t sliding_map_off;
+
+    size_t mem_used;
 };
 
 }

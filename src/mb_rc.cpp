@@ -25,6 +25,9 @@
 
 #define PRUNE_TASK_CHECK     100
 #define MAX_PRUNE_COUNT      3
+#define RC_TASK_CHECK        100
+#define NUM_ASYNC_TASK       10
+
 
 namespace mabain {
 
@@ -75,12 +78,15 @@ int ResourceCollection::LRUEviction()
                 pruned++;
         }
 
-        count++;
         if(async_writer_ptr != NULL && (count % PRUNE_TASK_CHECK == 0))
         {
-            rval = async_writer_ptr->ProcessTask(1);
-            if(rval == MBError::RC_SKIPPED)
-                break;
+            if(count++ > PRUNE_TASK_CHECK)
+            {
+                count = 0;
+                rval = async_writer_ptr->ProcessTask(NUM_ASYNC_TASK, false);
+                if(rval == MBError::RC_SKIPPED)
+                    break;
+            }
         }
     }
 
@@ -144,7 +150,9 @@ void ResourceCollection::ReclaimResource(int64_t min_index_size,
     if(min_index_size > 0 || min_data_size > 0)
     {
         Prepare(min_index_size, min_data_size);
-        Logger::Log(LOG_LEVEL_INFO, "defragmentation started");
+        Logger::Log(LOG_LEVEL_INFO, "%s%sdefragmentation started",
+                    rc_type & RESOURCE_COLLECTION_TYPE_INDEX ? "index":"",
+                    rc_type & RESOURCE_COLLECTION_TYPE_DATA ? " data":" ");
         gettimeofday(&start,NULL);
 
         ReorderBuffers();
@@ -173,11 +181,11 @@ void ResourceCollection::ReclaimResource(int64_t min_index_size,
 
 void ResourceCollection::Prepare(int64_t min_index_size, int64_t min_data_size)
 {
-    if(header->pending_index_buff_size < min_index_size)
+    if(min_index_size == 0 || header->pending_index_buff_size < min_index_size)
     {
         rc_type &= ~RESOURCE_COLLECTION_TYPE_INDEX;
     }
-    if(header->pending_data_buff_size < min_data_size)
+    if(min_data_size == 0 || header->pending_data_buff_size <= min_data_size)
     {
         rc_type &= ~RESOURCE_COLLECTION_TYPE_DATA;
     }
@@ -188,19 +196,38 @@ void ResourceCollection::Prepare(int64_t min_index_size, int64_t min_data_size)
         throw (int) MBError::RC_SKIPPED;
     }
 
-    if(rc_type & RESOURCE_COLLECTION_TYPE_INDEX)
-        index_free_lists->Empty();
-    if(rc_type & RESOURCE_COLLECTION_TYPE_DATA)
-        data_free_lists->Empty();
+    index_free_lists->Empty();
+    data_free_lists->Empty();
 
+    rc_loop_counter = 0;
     index_reorder_cnt = 0;
     data_reorder_cnt = 0;
     index_rc_status = MBError::NOT_INITIALIZED;
     data_rc_status = MBError::NOT_INITIALIZED;
     index_reorder_status = MBError::NOT_INITIALIZED;
     data_reorder_status = MBError::NOT_INITIALIZED;
-    m_index_off_pre = header->m_index_offset;
-    m_data_off_pre = header->m_data_offset;
+    header->rc_m_index_off_pre = header->m_index_offset;
+    header->rc_m_data_off_pre = header->m_data_offset;
+
+    if(async_writer_ptr != NULL)
+    {
+        min_index_off_rc = dmm->GetMaxSize();
+        min_data_off_rc = dict->GetMaxSize();
+        if(min_index_off_rc < header->m_index_offset + 256ULL*1024*1024 ||
+           min_data_off_rc  < header->m_data_offset + 256ULL*1024*1024)
+        {
+            Logger::Log(LOG_LEVEL_WARN, "not enough space for rc");
+            throw (int) MBError::OUT_OF_BOUND;
+        }
+        header->m_index_offset = min_index_off_rc;
+        header->m_data_offset  = min_data_off_rc;
+
+        size_t rc_off = dmm->InitRootNode_RC();
+        header->rc_root_offset.store(rc_off, MEMORY_ORDER_WRITER);
+    }
+
+    Logger::Log(LOG_LEVEL_DEBUG, "setting rc index off start to: %llu", header->m_index_offset);
+    Logger::Log(LOG_LEVEL_DEBUG, "setting rc data off start to: %llu", header->m_data_offset);
 }
 
 void ResourceCollection::CollectBuffers()
@@ -227,17 +254,42 @@ void ResourceCollection::Finish()
     if(index_rc_status == MBError::SUCCESS)
     {
         Logger::Log(LOG_LEVEL_INFO, "index buffer size reclaimed: %lld",
-                    (m_index_off_pre>index_size) ? (m_index_off_pre-index_size) : 0);
+                    (header->rc_m_index_off_pre>index_size) ?
+                    (header->rc_m_index_off_pre-index_size) : 0);
         header->m_index_offset = index_size;
         header->pending_index_buff_size = 0;
+    }
+    else
+    {
+        if(header->rc_m_index_off_pre == 0)
+            throw (int) MBError::INVALID_ARG;
+        header->m_index_offset = header->rc_m_index_off_pre;
     }
     if(data_rc_status == MBError::SUCCESS)
     {
         Logger::Log(LOG_LEVEL_INFO, "data buffer size reclaimed: %lld",
-                    (m_data_off_pre>data_size) ? (m_data_off_pre-data_size) : 0);
+                    (header->rc_m_data_off_pre>data_size) ?
+                    (header->rc_m_data_off_pre-data_size) : 0);
         header->m_data_offset = data_size;
         header->pending_data_buff_size = 0;
     }
+    else
+    {
+        if(header->rc_m_data_off_pre == 0)
+            throw (int) MBError::INVALID_ARG;
+        header->m_data_offset = header->rc_m_data_off_pre;
+    }
+
+    if(async_writer_ptr != NULL)
+    {
+        index_free_lists->Empty();
+        data_free_lists->Empty();
+        ProcessRCTree();
+    }
+
+    header->rc_m_index_off_pre = 0;
+    header->rc_m_data_off_pre = 0;
+    dict->RemoveUnusedDBFiles();
 }
 
 bool ResourceCollection::MoveIndexBuffer(int phase, size_t &offset_src, int size)
@@ -389,6 +441,15 @@ void ResourceCollection::DoTask(int phase, DBTraverseNode &dbt_node)
     }
 
     header->excep_updating_status = 0;
+
+    if(async_writer_ptr != NULL)
+    {
+        if(rc_loop_counter++ > RC_TASK_CHECK)
+        {
+            rc_loop_counter = 0;
+            async_writer_ptr->ProcessTask(NUM_ASYNC_TASK, true);
+        }
+    }
 }
 
 
@@ -419,6 +480,40 @@ void ResourceCollection::ReorderBuffers()
         data_reorder_status = MBError::SUCCESS;
         Logger::Log(LOG_LEVEL_INFO, "number of data buffer reordered: %lld", data_reorder_cnt);
     }
+}
+
+void ResourceCollection::ProcessRCTree()
+{
+    Logger::Log(LOG_LEVEL_INFO, "resource collection done, traversing the rc tree %llu entries", header->rc_count);
+
+    int count = 0;
+    int rval;
+    for(DB::iterator iter = db_ref.begin(false, true); iter != db_ref.end(); ++iter)
+    {
+        iter.value.options = 0;
+        rval = dict->Add((const uint8_t *)iter.key.data(), iter.key.size(), iter.value, true);
+        if(rval != MBError::SUCCESS)
+            Logger::Log(LOG_LEVEL_WARN, "failed to add: %s", MBError::get_error_str(rval));
+        if(count++ > RC_TASK_CHECK)
+        {
+            count = 0;
+            async_writer_ptr->ProcessTask(NUM_ASYNC_TASK, false);
+        }
+
+        if(header->m_index_offset > min_index_off_rc ||
+           header->m_data_offset > min_data_off_rc)
+        {
+            Logger::Log(LOG_LEVEL_ERROR, "not enough space for insertion: %llu, %llu",
+                        header->m_index_offset, header->m_data_offset);
+            break;
+        }
+    }
+
+    header->rc_count = 0;
+    header->rc_root_offset.store(0, MEMORY_ORDER_WRITER);
+
+    // Clear the rc tree
+    dmm->ClearRootEdges_RC();
 }
 
 }

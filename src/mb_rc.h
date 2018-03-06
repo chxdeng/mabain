@@ -53,6 +53,7 @@ private:
     bool MoveIndexBuffer(int phase, size_t &offset_src, int size);
     bool MoveDataBuffer(int phase, size_t &offset_src, int size);
     int  LRUEviction();
+    void ProcessRCTree();
 
     int      rc_type;
     int      index_rc_status;
@@ -63,11 +64,14 @@ private:
     // data for print gc stats only
     int64_t  index_reorder_cnt;
     int64_t  data_reorder_cnt;
-    size_t   m_index_off_pre;
-    size_t   m_data_off_pre;
 
     // Async writer pointer
     AsyncWriter *async_writer_ptr;
+
+    size_t min_index_off_rc;
+    size_t min_data_off_rc;
+
+    int64_t rc_loop_counter;
 };
 
 }

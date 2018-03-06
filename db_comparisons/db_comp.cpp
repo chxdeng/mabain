@@ -395,6 +395,10 @@ static void *Writer(void *arg)
         db->Put(opts, key, val);
 #elif MABAIN
         db->Add(key.c_str(), key.length(), val.c_str(), val.length());
+        if((i+1)%2000000 == 0) {
+            std::cout<<"RC SCHEDULED\n";
+            db->CollectResource(1, 1);
+        }
 #endif
 
         if((i+1)%1000000 == 0) {
@@ -592,7 +596,7 @@ int main(int argc, char *argv[])
 
     InitTestDir();
     RemoveDB();
-
+if(0){
     InitDB();
     Add(num_kv);
     DestroyDB();
@@ -606,7 +610,7 @@ int main(int argc, char *argv[])
     DestroyDB();
 
     RemoveDB();
-
+}
     InitDB();
     ConcurrencyTest(num_kv, n_reader);
     DestroyDB();

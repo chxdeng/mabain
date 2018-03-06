@@ -36,6 +36,7 @@
 namespace mabain {
 
 #define SLIDING_MEM_SIZE 16LLU*1024*1024
+#define MAX_NUM_BLOCK    2048
 
 const long RollableFile::page_size = sysconf(_SC_PAGESIZE);
 int RollableFile::ShmSync(uint8_t *addr, int size)
@@ -51,7 +52,8 @@ RollableFile::RollableFile(const std::string &fpath, size_t blocksize,
             mmap_mem(memcap),
             sliding_mmap(access_mode & CONSTS::USE_SLIDING_WINDOW),
             mode(access_mode),
-            max_num_block(max_block)
+            max_num_block(max_block),
+            mem_used(0)
 {
     sliding_addr = NULL;
     sliding_mem_size = SLIDING_MEM_SIZE;
@@ -62,12 +64,10 @@ RollableFile::RollableFile(const std::string &fpath, size_t blocksize,
 
     if(mode & CONSTS::ACCESS_MODE_WRITER)
     {
-        if(max_num_block == 0)
-        {
-            // disk usage will be virtuall unlimited.
-            max_num_block = LONG_MAX;
-        }
-        Logger::Log(LOG_LEVEL_INFO, "maximal block number for %s is %d", fpath.c_str(), max_num_block);
+        if(max_num_block == 0 || max_num_block > MAX_NUM_BLOCK)
+            max_num_block = MAX_NUM_BLOCK;
+        Logger::Log(LOG_LEVEL_INFO, "maximal block number for %s is %d",
+                    fpath.c_str(), max_num_block);
     }
     Logger::Log(LOG_LEVEL_INFO, "opening rollable file %s for %s, mmap size: %d",
             path.c_str(), (mode & CONSTS::ACCESS_MODE_WRITER)?"writing":"reading", mmap_mem);
@@ -164,29 +164,20 @@ int RollableFile::OpenAndMapBlockFile(int block_order)
         return MBError::OPEN_FAILURE;
     }
 
-    size_t mem_used = block_order*block_size;
     if(mmap_mem > mem_used)
     {
-        if(mmap_mem > mem_used + block_size)
+        if(files[block_order]->MapFile(block_size, 0) != NULL)
         {
-            if(files[block_order]->MapFile(block_size, 0) == NULL)
-            {
-                char err_buf[32];
-                rval = MBError::MMAP_FAILED;
-                Logger::Log(LOG_LEVEL_WARN, "failed to mmap file %s:%s", (path+ss.str()).c_str(),
-                        strerror_r(errno, err_buf, sizeof(err_buf)));
-            }
+            mem_used += block_size;
+            // If file is mmaped, close file descriptor
+            files[block_order]->Close();
         }
         else
         {
-            if(files[block_order]->MapFile(mmap_mem - mem_used, 0) == NULL)
-            {
-                char err_buf[32];
-                rval = MBError::MMAP_FAILED;
-                Logger::Log(LOG_LEVEL_WARN, "failed to mmap partial file %s:%s",
-                        (path+ss.str()).c_str(),
-                        strerror_r(errno, err_buf, sizeof(err_buf)));
-            }
+            char err_buf[32];
+            rval = MBError::MMAP_FAILED;
+            Logger::Log(LOG_LEVEL_WARN, "failed to mmap file %s:%s", (path+ss.str()).c_str(),
+                    strerror_r(errno, err_buf, sizeof(err_buf)));
         }
     }
 
@@ -204,20 +195,6 @@ size_t RollableFile::CheckAlignment(size_t offset, int size)
     {
         // Start at the begining of the next block
         offset = offset + block_size - block_offset;
-    }
-
-    // Check alignment with mmap_mem
-    if(offset <  mmap_mem)
-    {
-        if(offset + size > mmap_mem)
-        {
-            offset = mmap_mem;
-            // Need to check block_size alignement again since we changed
-            // offset to mmap_mem.
-            block_offset = offset % block_size;
-            if(block_offset + size > block_size)
-                offset = offset + block_size - block_offset;
-        }
     }
 
     return offset;
@@ -246,14 +223,11 @@ uint8_t* RollableFile::GetShmPtr(size_t offset, int size)
     if(rval != MBError::SUCCESS)
         return NULL;
 
-    if(offset + size <= mmap_mem)
+    if(files[order]->IsMapped())
     {
         size_t index = offset % block_size;
         return files[order]->GetMapAddr() + index;
     }
-
-    if(files[order]->IsMapped())
-        return NULL;
 
     if(sliding_mmap)
     {
@@ -279,22 +253,12 @@ int RollableFile::Reserve(size_t &offset, int size, uint8_t* &ptr, bool map_new_
     if(rval != MBError::SUCCESS)
         return rval;
 
-    // After CheckAlignment, the new range (offset -> offset+size)
-    // should be either in mmaped or non-mamped region. It should
-    // have no overlap with both of them.
-    if(offset <  mmap_mem)
+    if(files[order]->IsMapped())
     {
         size_t index = offset % block_size;
         ptr = files[order]->GetMapAddr() + index;
         return rval;
     }
-
-    // Can a file be mapped to two different address with different offset?
-    // Tests showed that error will be thrown if a file is mapped in two regions
-    // simultaneously. Therefore, the following check and return statements are
-    // necessary.
-    if(files[order]->IsMapped())
-        return rval;
 
     if(sliding_mmap)
     {
@@ -483,6 +447,34 @@ void RollableFile::Flush()
             (*it)->Flush();
         }
     }
+}
+
+void RollableFile::RemoveUnusedFiles(size_t max_offset)
+{
+    size_t start_off = 0;
+    for(unsigned i = 1; i < files.size(); i++)
+    {
+        start_off += block_size;
+
+        if(start_off > max_offset && files[i] != NULL)
+        {
+            if(files[i]->IsMapped())
+            {
+                if(mem_used > block_size)
+                    mem_used -= block_size;
+                else
+                    mem_used = 0;
+            }
+
+            delete files[i];
+            files[i] = NULL;
+        }
+    }
+}
+
+size_t RollableFile::GetMaxSize() const
+{
+    return int(0.75*max_num_block) * block_size;
 }
 
 }
