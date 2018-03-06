@@ -346,6 +346,9 @@ int AsyncWriter::ProcessTask(int ntasks, bool rc_mode)
                     rval = MBError::SUCCESS;
                     break;
                 case MABAIN_ASYNC_TYPE_BACKUP:
+                    // clean up existing backup dir varibale buffer.
+                    if (rc_backup_dir && node_ptr->data)
+                        free(rc_backup_dir);
                     rc_backup_dir = (char *) node_ptr->data;
                     node_ptr->data = NULL;
                     rval = MBError::SUCCESS;
