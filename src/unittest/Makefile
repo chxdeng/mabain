@@ -18,7 +18,7 @@ unit-test: clean build
 	mkdir -p $(TEST_COVRAGE_DIR)
 	- LD_LIBRARY_PATH=$$LD_LIBRARY_PATH:../ ./$(TEST_BIN_NAME)
 	- gcovr -r . --xml > $(TEST_COVRAGE_DIR)/coverage.xml
-#	- gcovr -r . --html --html-details -o $(TEST_COVRAGE_DIR)/coverage.html
+	- gcovr -r . --html --html-details -o $(TEST_COVRAGE_DIR)/coverage.html
 
 clean:
 	-rm -rf $(TEST_BIN_NAME)
