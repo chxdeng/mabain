@@ -25,6 +25,7 @@ uninstall:
 
 clean:
 	-rm -f *.o util/*.o $(TARGET)
+	-make -C unittest clean
 
 unit-test: all
 	make -C unittest
