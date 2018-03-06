@@ -20,6 +20,8 @@
 
 using namespace mabain;
 
+#define ONE_MILLION 1000000
+
 const char *db_dir = "/var/tmp/mabain_test";
 
 // mabain db iterator
@@ -36,11 +38,11 @@ int main(int argc, char *argv[])
     }
 
     std::string key, value;
-int64_t count=0;
+    int64_t count=0;
     for(DB::iterator iter = db.begin(); iter != db.end(); ++iter) {
         std::cout << iter.key << ": " << std::string((char*)iter.value.buff, iter.value.data_len) << "\n";
-count++;
-if(count % 1000000 == 0) std::cout<<"COUNT: "<<count<<"\n";
+        count++;
+        if(count % ONE_MILLION == 0) std::cout << "COUNT: " << count<< "\n";
     }
 
     db.Close();

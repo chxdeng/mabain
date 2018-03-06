@@ -21,7 +21,6 @@
 
 using namespace mabain;
 
-//const char *db_dir = "./tmp_dir/";
 const char *db_dir = "/var/tmp/db_test/mabain/";
 
 // Resource collection test
@@ -30,7 +29,9 @@ int main(int argc, char *argv[])
     if(argc == 2) {
         db_dir = argv[1];
     }
-
+    std::string cmd = std::string("mkdir -p ") + db_dir;
+    if(system(cmd.c_str()) != 0) {
+    }
     mabain::DB::SetLogFile("/var/tmp/mabain_test/mabain.log");
     mabain::MBConfig mbconf;
     memset(&mbconf, 0, sizeof(mbconf));
