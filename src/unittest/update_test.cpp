@@ -26,7 +26,10 @@ public:
             delete db;
     }
     virtual void SetUp() {
-        std::string cmd = std::string("rm ") + MB_DIR + "_*";
+        std::string cmd = std::string("mkdir -p ") + MB_DIR;
+        if(system(cmd.c_str()) != 0) {
+        }
+        cmd = std::string("rm ") + MB_DIR + "_*";
         if(system(cmd.c_str()) != 0) {
         }
         db = new DB(MB_DIR, CONSTS::WriterOptions());
