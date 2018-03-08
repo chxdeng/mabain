@@ -124,7 +124,7 @@ void ResourceCollection::ReclaimResource(int64_t min_index_size,
 
     // Check LRU eviction first
     if(header->m_data_offset + header->m_index_offset > (size_t) max_dbsz ||
-       header->count > max_dbcnt)
+            header->count > max_dbcnt)
     {
         int cnt = 0;
         gettimeofday(&start,NULL);
@@ -151,13 +151,14 @@ void ResourceCollection::ReclaimResource(int64_t min_index_size,
     {
         Prepare(min_index_size, min_data_size);
         Logger::Log(LOG_LEVEL_INFO, "%s%sdefragmentation started",
-                    rc_type & RESOURCE_COLLECTION_TYPE_INDEX ? "index":"",
-                    rc_type & RESOURCE_COLLECTION_TYPE_DATA ? " data":" ");
+                rc_type & RESOURCE_COLLECTION_TYPE_INDEX ? "index":"",
+                rc_type & RESOURCE_COLLECTION_TYPE_DATA ? " data":" ");
         gettimeofday(&start,NULL);
 
         ReorderBuffers();
         CollectBuffers();
         Finish();
+        ShrinkDataBase();
 
         gettimeofday(&stop,NULL);
         async_writer_ptr = NULL;
@@ -514,6 +515,58 @@ void ResourceCollection::ProcessRCTree()
 
     // Clear the rc tree
     dmm->ClearRootEdges_RC();
+}
+
+void ResourceCollection::ShrinkDataBase()
+{
+    MBConfig config;
+    db_ref.GetDBConfig(config);
+
+    std::string curDir = std::string(db_ref.GetDBDir() + "/shrink");
+    config.mbdir = curDir.c_str();
+
+    // make sure we have directory to work with
+    std::string cmd = std::string("mkdir -p ") + curDir;
+    if(system(cmd.c_str()) != 0) {}
+
+    // cleanup any old files in it
+    cmd = std::string("rm -rf ") + curDir + "/*";
+    if(system(cmd.c_str()) != 0) {}
+
+    // setup new db
+    DB shrinkDB (config);
+
+    if(!shrinkDB.is_open()) {
+        std::cerr << "failed to open db for shrink operation: " << shrinkDB.StatusStr() << "\n";
+    }
+    else
+    {
+        // reset db
+        // shrinkDB.RemoveAll();
+
+        int sucessCount = 0;
+        int failedCount = 0;
+        int rval;
+
+        // read every key from fragmented db and write to new db
+        for(DB::iterator iter = db_ref.begin(); iter != db_ref.end(); ++iter)
+        {
+            // add key with overwrite option enabled
+            rval = shrinkDB.Add(iter.key.c_str(), (int)iter.key.size(),
+                    (const char *)iter.value.buff, (int)iter.value.data_len, true);
+
+            if(rval != MBError::SUCCESS) {
+                Logger::Log(LOG_LEVEL_WARN, "failed to add: %s", MBError::get_error_str(rval));
+                failedCount++;
+            } else {
+                sucessCount++;
+            }
+        }
+        Logger::Log(LOG_LEVEL_WARN, "ShrinkDB failed to add: %d", sucessCount);
+        Logger::Log(LOG_LEVEL_WARN, "ShrinkDB successfully added: %d", failedCount);
+
+        shrinkDB.Close();
+    }
 }
 
 }

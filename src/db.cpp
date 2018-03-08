@@ -167,6 +167,10 @@ void DB::InitDB(MBConfig &config)
     if(ValidateConfig(config) != MBError::SUCCESS)
         return;
 
+	// save the configuration
+	memcpy(&dbConfig, &config, sizeof(MBConfig));
+	dbConfig.mbdir = NULL;
+
     // If id not given, use thread ID
     if(config.connect_id == 0)
         config.connect_id = static_cast<uint32_t>(syscall(SYS_gettid));
@@ -524,6 +528,12 @@ int DB::GetDBOptions() const
 const std::string& DB::GetDBDir() const
 {
     return mb_dir;
+}
+
+void DB::GetDBConfig(MBConfig &config) const
+{
+    memcpy(&config, &dbConfig, sizeof(MBConfig));
+    config.mbdir = NULL;
 }
 
 int DB::SetAsyncWriterPtr(DB *db_writer)

@@ -11,5 +11,7 @@ mbc: mbc.cpp expr_parser.h expr_parser.cpp hexbin.h hexbin.cpp
 	$(CPP) $(CFLAGS) hexbin.cpp
 	$(CPP) mbc.o expr_parser.o hexbin.o -o mbc $(LDFLAGS)
 
+build: mbc
+
 clean:
 	-rm -f *.o mbc

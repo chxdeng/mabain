@@ -54,6 +54,7 @@ private:
     bool MoveDataBuffer(int phase, size_t &offset_src, int size);
     int  LRUEviction();
     void ProcessRCTree();
+    void ShrinkDataBase();
 
     int      rc_type;
     int      index_rc_status;
