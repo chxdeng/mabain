@@ -150,17 +150,17 @@ void ResourceCollection::ReclaimResource(int64_t min_index_size,
     if(min_index_size > 0 || min_data_size > 0)
     {
         Prepare(min_index_size, min_data_size);
-        Logger::Log(LOG_LEVEL_INFO, "%s%sdefragmentation started",
-                rc_type & RESOURCE_COLLECTION_TYPE_INDEX ? "index":"",
-                rc_type & RESOURCE_COLLECTION_TYPE_DATA ? " data":" ");
-        gettimeofday(&start,NULL);
+        Logger::Log(LOG_LEVEL_INFO, "defragmentation started for [index - %s] [data - %s]",
+                rc_type & RESOURCE_COLLECTION_TYPE_INDEX ? "yes":"no",
+                rc_type & RESOURCE_COLLECTION_TYPE_DATA ? " yes":"no");
+        gettimeofday(&start, NULL);
 
         ReorderBuffers();
         CollectBuffers();
         Finish();
-        ShrinkDataBase();
+        // ShrinkDataBase();
 
-        gettimeofday(&stop,NULL);
+        gettimeofday(&stop, NULL);
         async_writer_ptr = NULL;
         timediff = (stop.tv_sec - start.tv_sec)*1000000 + (stop.tv_usec - start.tv_usec);
         if(timediff > 1000000)
@@ -182,18 +182,23 @@ void ResourceCollection::ReclaimResource(int64_t min_index_size,
 
 void ResourceCollection::Prepare(int64_t min_index_size, int64_t min_data_size)
 {
+    // make sure there is enough grabaged index buffers before initiating collection
     if(min_index_size == 0 || header->pending_index_buff_size < min_index_size)
     {
         rc_type &= ~RESOURCE_COLLECTION_TYPE_INDEX;
     }
+
+    // make sure there is enough grabaged data buffers before initiating collection
     if(min_data_size == 0 || header->pending_data_buff_size <= min_data_size)
     {
         rc_type &= ~RESOURCE_COLLECTION_TYPE_DATA;
     }
+
+    // minimum defragmentation throshold is not reached, skip grabage collection
     if(rc_type == 0)
     {
         Logger::Log(LOG_LEVEL_DEBUG, "garbage collection skipped since pending "
-                                    "sizes smaller than required");
+                "sizes smaller than required");
         throw (int) MBError::RC_SKIPPED;
     }
 
@@ -210,19 +215,26 @@ void ResourceCollection::Prepare(int64_t min_index_size, int64_t min_data_size)
     header->rc_m_index_off_pre = header->m_index_offset;
     header->rc_m_data_off_pre = header->m_data_offset;
 
-    if(async_writer_ptr != NULL)
+    if(async_writer_ptr)
     {
+        // set rc root to at the end of max size
         min_index_off_rc = dmm->GetMaxSize();
         min_data_off_rc = dict->GetMaxSize();
+
+        // make sure there is 256M space left at the end of current index
+        // [start|....|current_index_offset|...256M OR More...|rc_index_offset|.....|end]
         if(min_index_off_rc < header->m_index_offset + 256ULL*1024*1024 ||
-           min_data_off_rc  < header->m_data_offset + 256ULL*1024*1024)
+                min_data_off_rc  < header->m_data_offset + 256ULL*1024*1024)
         {
             Logger::Log(LOG_LEVEL_WARN, "not enough space for rc");
             throw (int) MBError::OUT_OF_BOUND;
         }
+
+        // update current indexs to rc offsets
         header->m_index_offset = min_index_off_rc;
         header->m_data_offset  = min_data_off_rc;
 
+        // create rc root node
         size_t rc_off = dmm->InitRootNode_RC();
         header->rc_root_offset.store(rc_off, MEMORY_ORDER_WRITER);
     }
@@ -562,8 +574,8 @@ void ResourceCollection::ShrinkDataBase()
                 sucessCount++;
             }
         }
-        Logger::Log(LOG_LEVEL_WARN, "ShrinkDB failed to add: %d", sucessCount);
-        Logger::Log(LOG_LEVEL_WARN, "ShrinkDB successfully added: %d", failedCount);
+        Logger::Log(LOG_LEVEL_WARN, "ShrinkDB failed to add: %d", failedCount);
+        Logger::Log(LOG_LEVEL_WARN, "ShrinkDB successfully added: %d", sucessCount);
 
         shrinkDB.Close();
     }

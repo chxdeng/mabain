@@ -33,11 +33,13 @@ MDB_txn *txn = NULL;
 mabain::DB *db = NULL;
 #endif
 
-static const char *db_dir = "/var/tmp/db_test/";
-static int num_kv = 1000000;
-static int n_reader = 7;
-static int key_type = 0;
-static bool sync_on_write = false;
+#define ONE_MILLION 1000000
+
+static const char *db_dir   = "/var/tmp/db_test/";
+static int num_kv           = 20 * ONE_MILLION;
+static int n_reader         = 7;
+static int key_type         = 0;
+static bool sync_on_write   = false;
 static unsigned long long memcap = 1024ULL*1024*1024;
 
 static void get_sha256_str(int key, char *sha256_str)
@@ -228,7 +230,7 @@ static void Add(int n)
         db->Add(key, val);
 #endif
 
-        if((i+1)%1000000 == 0) {
+        if((i+1) % ONE_MILLION == 0) {
             std::cout << "inserted: " << (i+1) << " key-value pairs\n";
         }
     }    
@@ -289,7 +291,7 @@ static void Lookup(int n)
         if(rval == 0) nfound++;
 #endif
 
-        if((i+1)%1000000 == 0) {
+        if((i+1) % ONE_MILLION == 0) {
             std::cout << "looked up: " << (i+1) << " keys\n";
         }
     }
@@ -352,7 +354,7 @@ static void Delete(int n)
         if(rval == 0) nfound++;
 #endif
 
-        if((i+1)%1000000 == 0) {
+        if((i+1) % ONE_MILLION == 0) {
             std::cout << "deleted: " << (i+1) << " keys\n";
         }
     }
@@ -395,13 +397,13 @@ static void *Writer(void *arg)
         db->Put(opts, key, val);
 #elif MABAIN
         db->Add(key.c_str(), key.length(), val.c_str(), val.length());
-        if((i+1)%2000000 == 0) {
+        if((i+1) % (2*ONE_MILLION)== 0) {
             std::cout<<"RC SCHEDULED\n";
-            db->CollectResource(1, 1);
+            db->CollectResource(2*ONE_MILLION, 64*ONE_MILLION);
         }
 #endif
 
-        if((i+1)%1000000 == 0) {
+        if((i+1) % ONE_MILLION == 0) {
             std::cout << "writer inserted " << (i+1) << "\n";
         }
     }
@@ -423,7 +425,7 @@ static void *Reader(void *arg)
     assert(db_r->is_open());
 #endif
 
-    std::cout << "reader " << tid << " started " << "\n";
+    std::cout << "\n[reader : " << tid << "] started" << std::endl;
     while(i < num) {
         std::string key;
         bool found = false;
@@ -455,13 +457,13 @@ static void *Reader(void *arg)
 #endif
         if(found) {
             if(key.compare(value) != 0) {
-                std::cout << "VALUE NOT MATCH for key:" << key << ":" << value << "\n";
+                std::cout << "\nVALUE NOT MATCH for key:" << key << ":" << value << "\n";
                 abort();
             }
 
             i++;
-            if((i+1)%1000000 == 0) {
-                std::cout << "reader " << tid << " found " << (i+1) << "\n";
+            if((i+1) % ONE_MILLION == 0) {
+                std::cout << "\n[reader : " << tid << "] found " << (i+1) << "\n";
             }
         }
     }
@@ -554,6 +556,7 @@ int main(int argc, char *argv[])
 {
 #ifdef MABAIN
     mabain::DB::SetLogFile("/var/tmp/mabain_test/mabain.log");
+    mabain::DB::SetLogLevel(2);
 #endif
     for(int i = 1; i < argc; i++) {
         if(strcmp(argv[i], "-n") == 0) {
