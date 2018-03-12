@@ -119,7 +119,7 @@ public:
     inline void CloseKVFiles() const;
     inline void RemoveUnusedFiles(size_t max_off) const;
     inline int ReadData(uint8_t *buff, unsigned len, size_t offset) const;
-    inline size_t GetMaxSize() const;
+    inline size_t GetResourceCollectionOffset() const;
 
     FreeList *GetFreeList() const
     {
@@ -173,9 +173,9 @@ inline int DRMBase::ReadData(uint8_t *buff, unsigned len, size_t offset) const
     return kv_file->RandomRead(buff, len, offset);
 }
 
-inline size_t DRMBase::GetMaxSize() const
+inline size_t DRMBase::GetResourceCollectionOffset() const
 {
-     return kv_file->GetMaxSize();
+     return kv_file->GetResourceCollectionOffset();
 }
 
 }

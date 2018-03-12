@@ -18,6 +18,8 @@ $(TARGET):$(OBJECTS) $(HEADERS)
 .cpp.o: $(HEADERS) $(SOURCES)
 	$(CPP) $(CFLAGS) $< -o $@
 
+build: all
+
 uninstall:
 	-rm -rf $(INSTALLDIR)/include/mabain
 	-rm -f $(INSTALLDIR)/lib/$(TARGET)

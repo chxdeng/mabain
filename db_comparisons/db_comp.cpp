@@ -375,7 +375,7 @@ static void *Writer(void *arg)
     int num = *((int *) arg);
     char kv[65];
 
-    std::cout << "writer started " << "\n";
+    std::cout << "\nwriter started " << std::endl;
     for(int i = 0; i < num; i++) {
         std::string key, val;
         if(key_type == 0) {
@@ -398,13 +398,14 @@ static void *Writer(void *arg)
 #elif MABAIN
         db->Add(key.c_str(), key.length(), val.c_str(), val.length());
         if((i+1) % (2*ONE_MILLION)== 0) {
-            std::cout<<"RC SCHEDULED\n";
-            db->CollectResource(2*ONE_MILLION, 64*ONE_MILLION);
+            std::cout<<"\nRC SCHEDULED " << std::endl;
+            // db->CollectResource(2*ONE_MILLION, 64*ONE_MILLION);
+            db->CollectResource(1, 1);
         }
 #endif
 
         if((i+1) % ONE_MILLION == 0) {
-            std::cout << "writer inserted " << (i+1) << "\n";
+            std::cout << "\nwriter inserted " << (i+1) << std::endl;
         }
     }
 
@@ -599,7 +600,9 @@ int main(int argc, char *argv[])
 
     InitTestDir();
     RemoveDB();
+
 if(0){
+
     InitDB();
     Add(num_kv);
     DestroyDB();

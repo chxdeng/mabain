@@ -35,8 +35,9 @@
 
 namespace mabain {
 
-#define SLIDING_MEM_SIZE 16LLU*1024*1024
-#define MAX_NUM_BLOCK    2048
+#define SLIDING_MEM_SIZE     16LLU*1024*1024
+#define MAX_NUM_BLOCK        2048
+#define RC_OFFSET_PERCENTAGE 75
 
 const long RollableFile::page_size = sysconf(_SC_PAGESIZE);
 int RollableFile::ShmSync(uint8_t *addr, int size)
@@ -45,14 +46,15 @@ int RollableFile::ShmSync(uint8_t *addr, int size)
     return msync(addr-page_offset, size+page_offset, MS_SYNC);
 }
 
-RollableFile::RollableFile(const std::string &fpath, size_t blocksize,
-                           size_t memcap, int access_mode, long max_block)
+RollableFile::RollableFile(const std::string &fpath, size_t blocksize, size_t memcap, int access_mode,
+                            long max_block, int in_rc_offset_percentage)
           : path(fpath),
             block_size(blocksize),
             mmap_mem(memcap),
             sliding_mmap(access_mode & CONSTS::USE_SLIDING_WINDOW),
             mode(access_mode),
             max_num_block(max_block),
+            rc_offset_percentage(in_rc_offset_percentage),
             mem_used(0)
 {
     sliding_addr = NULL;
@@ -66,9 +68,16 @@ RollableFile::RollableFile(const std::string &fpath, size_t blocksize,
     {
         if(max_num_block == 0 || max_num_block > MAX_NUM_BLOCK)
             max_num_block = MAX_NUM_BLOCK;
+
         Logger::Log(LOG_LEVEL_INFO, "maximal block number for %s is %d",
                     fpath.c_str(), max_num_block);
+
+        if(rc_offset_percentage == 0 || rc_offset_percentage > 100 || rc_offset_percentage < 50)
+            rc_offset_percentage = RC_OFFSET_PERCENTAGE;
+
+        Logger::Log(LOG_LEVEL_INFO, "rc_offset_percentage is set to %d", rc_offset_percentage);
     }
+
     Logger::Log(LOG_LEVEL_INFO, "opening rollable file %s for %s, mmap size: %d",
             path.c_str(), (mode & CONSTS::ACCESS_MODE_WRITER)?"writing":"reading", mmap_mem);
     if(!sliding_mmap)
@@ -472,9 +481,9 @@ void RollableFile::RemoveUnusedFiles(size_t max_offset)
     }
 }
 
-size_t RollableFile::GetMaxSize() const
+size_t RollableFile::GetResourceCollectionOffset() const
 {
-    return int(0.75*max_num_block) * block_size;
+    return int((rc_offset_percentage / 100.0f) * max_num_block) * block_size;
 }
 
 }

@@ -35,7 +35,7 @@ namespace mabain {
 class RollableFile {
 public:
     RollableFile(const std::string &fpath, size_t blocksize,
-                 size_t memcap, int access_mode, long max_block=0);
+                 size_t memcap, int access_mode, long max_block=0, int rc_offset_percentage=75);
     ~RollableFile();
 
     size_t   RandomWrite(const void *data, size_t size, off_t offset);
@@ -50,7 +50,7 @@ public:
 
     void     Flush();
     void     RemoveUnusedFiles(size_t max_offset);
-    size_t   GetMaxSize() const;
+    size_t   GetResourceCollectionOffset() const;
 
     static const long page_size;
     static int ShmSync(uint8_t *addr, int size);
@@ -81,6 +81,7 @@ private:
     off_t sliding_start;
     off_t sliding_map_off;
 
+    int rc_offset_percentage;
     size_t mem_used;
 };
 

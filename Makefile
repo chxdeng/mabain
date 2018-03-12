@@ -5,8 +5,8 @@ MABAIN_INSTALL_DIR=/usr/local
 endif
 
 build:
-	make -C src
-	make -C binaries
+	make -C src build
+	make -C binaries build
 
 install: build
 	echo "mabain install directory: $(MABAIN_INSTALL_DIR)"

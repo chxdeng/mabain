@@ -27,6 +27,7 @@
 #define MAX_PRUNE_COUNT      3
 #define RC_TASK_CHECK        100
 #define NUM_ASYNC_TASK       10
+#define MIN_RC_OFFSET_GAP    256ULL*1024*1024
 
 
 namespace mabain {
@@ -158,7 +159,6 @@ void ResourceCollection::ReclaimResource(int64_t min_index_size,
         ReorderBuffers();
         CollectBuffers();
         Finish();
-        // ShrinkDataBase();
 
         gettimeofday(&stop, NULL);
         async_writer_ptr = NULL;
@@ -189,7 +189,7 @@ void ResourceCollection::Prepare(int64_t min_index_size, int64_t min_data_size)
     }
 
     // make sure there is enough grabaged data buffers before initiating collection
-    if(min_data_size == 0 || header->pending_data_buff_size <= min_data_size)
+    if(min_data_size == 0 || header->pending_data_buff_size < min_data_size)
     {
         rc_type &= ~RESOURCE_COLLECTION_TYPE_DATA;
     }
@@ -197,7 +197,13 @@ void ResourceCollection::Prepare(int64_t min_index_size, int64_t min_data_size)
     // minimum defragmentation throshold is not reached, skip grabage collection
     if(rc_type == 0)
     {
-        Logger::Log(LOG_LEVEL_DEBUG, "garbage collection skipped since pending "
+        Logger::Log(LOG_LEVEL_DEBUG, "pending_index_buff_size (%llu) min_index_size (%llu)",
+                header->pending_index_buff_size, min_index_size);
+
+        Logger::Log(LOG_LEVEL_DEBUG, "pending_data_buff_size (%llu) min_data_size (%llu)",
+                header->pending_data_buff_size, min_data_size);
+
+        Logger::Log(LOG_LEVEL_DEBUG, "garbage collection skipped since pending"
                 "sizes smaller than required");
         throw (int) MBError::RC_SKIPPED;
     }
@@ -218,21 +224,21 @@ void ResourceCollection::Prepare(int64_t min_index_size, int64_t min_data_size)
     if(async_writer_ptr)
     {
         // set rc root to at the end of max size
-        min_index_off_rc = dmm->GetMaxSize();
-        min_data_off_rc = dict->GetMaxSize();
+        rc_index_offset = dmm->GetResourceCollectionOffset();
+        rc_data_offset = dict->GetResourceCollectionOffset();
 
         // make sure there is 256M space left at the end of current index
-        // [start|....|current_index_offset|...256M OR More...|rc_index_offset|.....|end]
-        if(min_index_off_rc < header->m_index_offset + 256ULL*1024*1024 ||
-                min_data_off_rc  < header->m_data_offset + 256ULL*1024*1024)
+        // [start|....|current_index_offset|...MIN_RC_OFFSET_GAP/more...|rc_index_offset|.....|end]
+        if(rc_index_offset < header->m_index_offset + MIN_RC_OFFSET_GAP ||
+                rc_data_offset < header->m_data_offset + MIN_RC_OFFSET_GAP)
         {
             Logger::Log(LOG_LEVEL_WARN, "not enough space for rc");
             throw (int) MBError::OUT_OF_BOUND;
         }
 
         // update current indexs to rc offsets
-        header->m_index_offset = min_index_off_rc;
-        header->m_data_offset  = min_data_off_rc;
+        header->m_index_offset = rc_index_offset;
+        header->m_data_offset  = rc_data_offset;
 
         // create rc root node
         size_t rc_off = dmm->InitRootNode_RC();
@@ -513,8 +519,8 @@ void ResourceCollection::ProcessRCTree()
             async_writer_ptr->ProcessTask(NUM_ASYNC_TASK, false);
         }
 
-        if(header->m_index_offset > min_index_off_rc ||
-           header->m_data_offset > min_data_off_rc)
+        if(header->m_index_offset > rc_index_offset ||
+           header->m_data_offset > rc_data_offset)
         {
             Logger::Log(LOG_LEVEL_ERROR, "not enough space for insertion: %llu, %llu",
                         header->m_index_offset, header->m_data_offset);
@@ -527,58 +533,6 @@ void ResourceCollection::ProcessRCTree()
 
     // Clear the rc tree
     dmm->ClearRootEdges_RC();
-}
-
-void ResourceCollection::ShrinkDataBase()
-{
-    MBConfig config;
-    db_ref.GetDBConfig(config);
-
-    std::string curDir = std::string(db_ref.GetDBDir() + "/shrink");
-    config.mbdir = curDir.c_str();
-
-    // make sure we have directory to work with
-    std::string cmd = std::string("mkdir -p ") + curDir;
-    if(system(cmd.c_str()) != 0) {}
-
-    // cleanup any old files in it
-    cmd = std::string("rm -rf ") + curDir + "/*";
-    if(system(cmd.c_str()) != 0) {}
-
-    // setup new db
-    DB shrinkDB (config);
-
-    if(!shrinkDB.is_open()) {
-        std::cerr << "failed to open db for shrink operation: " << shrinkDB.StatusStr() << "\n";
-    }
-    else
-    {
-        // reset db
-        // shrinkDB.RemoveAll();
-
-        int sucessCount = 0;
-        int failedCount = 0;
-        int rval;
-
-        // read every key from fragmented db and write to new db
-        for(DB::iterator iter = db_ref.begin(); iter != db_ref.end(); ++iter)
-        {
-            // add key with overwrite option enabled
-            rval = shrinkDB.Add(iter.key.c_str(), (int)iter.key.size(),
-                    (const char *)iter.value.buff, (int)iter.value.data_len, true);
-
-            if(rval != MBError::SUCCESS) {
-                Logger::Log(LOG_LEVEL_WARN, "failed to add: %s", MBError::get_error_str(rval));
-                failedCount++;
-            } else {
-                sucessCount++;
-            }
-        }
-        Logger::Log(LOG_LEVEL_WARN, "ShrinkDB failed to add: %d", failedCount);
-        Logger::Log(LOG_LEVEL_WARN, "ShrinkDB successfully added: %d", sucessCount);
-
-        shrinkDB.Close();
-    }
 }
 
 }

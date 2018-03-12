@@ -55,7 +55,6 @@ private:
     bool MoveDataBuffer(int phase, size_t &offset_src, int size);
     int  LRUEviction();
     void ProcessRCTree();
-    void ShrinkDataBase();
 
     int     rc_type;
     int     index_rc_status;
@@ -70,9 +69,9 @@ private:
     // Async writer pointer
     AsyncWriter *async_writer_ptr;
 
-    size_t  min_index_off_rc;
-    size_t  min_data_off_rc;
-
+    // resource collection offsets
+    size_t  rc_index_offset;
+    size_t  rc_data_offset;
     int64_t rc_loop_counter;
 };
 
