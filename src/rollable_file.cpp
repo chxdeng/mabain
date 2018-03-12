@@ -35,9 +35,9 @@
 
 namespace mabain {
 
-#define SLIDING_MEM_SIZE     16LLU*1024*1024
-#define MAX_NUM_BLOCK        2048
-#define RC_OFFSET_PERCENTAGE 75
+#define SLIDING_MEM_SIZE     16LLU*1024*1024    // 16M
+#define MAX_NUM_BLOCK        2*1024             // 2K
+#define RC_OFFSET_PERCENTAGE 75                 // default rc offset is placed at 75% of maximum size
 
 const long RollableFile::page_size = sysconf(_SC_PAGESIZE);
 int RollableFile::ShmSync(uint8_t *addr, int size)

@@ -23,11 +23,11 @@
 #include "dict_mem.h"
 #include "integer_4b_5b.h"
 
-#define PRUNE_TASK_CHECK     100
-#define MAX_PRUNE_COUNT      3
-#define RC_TASK_CHECK        100
-#define NUM_ASYNC_TASK       10
-#define MIN_RC_OFFSET_GAP    256ULL*1024*1024
+#define MAX_PRUNE_COUNT      3                 // maximum lru eviction attempts
+#define NUM_ASYNC_TASK       10                // number of other tasks to be checked during eviction
+#define PRUNE_TASK_CHECK     100               // every Xth eviction check Y number of other tasks
+#define RC_TASK_CHECK        100               // every Xth async task try to reclaim resources
+#define MIN_RC_OFFSET_GAP    256ULL*1024*1024  // 256M
 
 
 namespace mabain {
@@ -273,8 +273,8 @@ void ResourceCollection::Finish()
     if(index_rc_status == MBError::SUCCESS)
     {
         Logger::Log(LOG_LEVEL_INFO, "index buffer size reclaimed: %lld",
-                    (header->rc_m_index_off_pre>index_size) ?
-                    (header->rc_m_index_off_pre-index_size) : 0);
+                    (header->rc_m_index_off_pre > index_size) ?
+                    (header->rc_m_index_off_pre - index_size) : 0);
         header->m_index_offset = index_size;
         header->pending_index_buff_size = 0;
     }
@@ -287,8 +287,8 @@ void ResourceCollection::Finish()
     if(data_rc_status == MBError::SUCCESS)
     {
         Logger::Log(LOG_LEVEL_INFO, "data buffer size reclaimed: %lld",
-                    (header->rc_m_data_off_pre>data_size) ?
-                    (header->rc_m_data_off_pre-data_size) : 0);
+                    (header->rc_m_data_off_pre > data_size) ?
+                    (header->rc_m_data_off_pre - data_size) : 0);
         header->m_data_offset = data_size;
         header->pending_data_buff_size = 0;
     }
