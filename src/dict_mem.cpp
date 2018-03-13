@@ -754,7 +754,7 @@ int DictMem::GetRootEdge_Writer(bool rc_mode, int nt, EdgePtrs &edge_ptrs) const
     if(rc_mode)
     {
         if(root_offset_rc == 0)
-            abort();
+            throw (int) MBError::UNKNOWN_ERROR;
         edge_ptrs.offset = root_offset_rc + NODE_EDGE_KEY_FIRST + NUM_ALPHABET + nt*EDGE_SIZE;
     }
     else

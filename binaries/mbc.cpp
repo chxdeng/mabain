@@ -442,7 +442,10 @@ static int RunCommand(int mode, DB *db, int cmd_id, const std::string &key, cons
             db->PrintHeader();
             break;
         case COMMAND_RECLAIM_RESOURCES:
-            db->CollectResource(1, 1);
+            if(mode & CONSTS::ACCESS_MODE_WRITER)
+                db->CollectResource(1, 1);
+            else
+                std::cout << "writer is not running, can not perform grabage collection" << std::endl;
             break;
         case COMMAND_PARSING_ERROR:
             break;
@@ -622,8 +625,8 @@ int main(int argc, char *argv[])
         exit(1);
     }
 
-    DB::SetLogFile(std::string(db_dir) + "/mabain.log");
-    DB::LogDebug();
+    // DB::SetLogFile(std::string(db_dir) + "/mabain.log");
+    // DB::LogDebug();
 
     if(query_cmd.length() != 0)
     {
