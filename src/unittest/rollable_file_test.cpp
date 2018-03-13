@@ -30,7 +30,7 @@ namespace {
 
 #define ROLLABLE_FILE_TEST_DIR "/var/tmp/mabain_test/"
 #define FAKE_DATA "dsklckk sldk&&sdijds8990s9090230290399&&^^%%sdhsjdhsjdhsjxnmzn  lkvlsdlq;';'a;b; ;;slv; ;;;sdfl; lls;lf;sld;sld;sld;sll;skl;klk;gk;akl;s"
-#define ONE_MEGA 1024*1024
+#define ONE_MEGA 1024*1024ul
 
 class RollableFileTest : public ::testing::Test
 {
@@ -86,7 +86,7 @@ TEST_F(RollableFileTest, RandomWrite_test)
     nbytes = 5;
     offset = 0;
     nbytes = rfile->RandomWrite((const void *)FAKE_DATA, nbytes, offset);
-    EXPECT_EQ(nbytes, 5);
+    EXPECT_EQ(nbytes, 5u);
 
     uint8_t buff[256];
     rfile->RandomRead(buff, nbytes, offset);
@@ -95,7 +95,7 @@ TEST_F(RollableFileTest, RandomWrite_test)
     nbytes = 78;
     offset = ONE_MEGA + 28372;
     nbytes = rfile->RandomWrite((const void *)FAKE_DATA, nbytes, offset);
-    EXPECT_EQ(nbytes, 78);
+    EXPECT_EQ(nbytes, 78u);
     rfile->RandomRead(buff, nbytes, offset);
     EXPECT_EQ(memcmp(buff, FAKE_DATA, nbytes)==0, true);
 }
@@ -114,7 +114,7 @@ TEST_F(RollableFileTest, RandomRead_test)
     nbytes = 15;
     offset = 20;
     nbytes = rfile->RandomWrite((const void *)FAKE_DATA, nbytes, offset);
-    EXPECT_EQ(nbytes, 15);
+    EXPECT_EQ(nbytes, 15u);
 
     uint8_t buff[256];
     rfile->RandomRead(buff, nbytes, offset);
@@ -123,7 +123,7 @@ TEST_F(RollableFileTest, RandomRead_test)
     nbytes = 35;
     offset = 8*ONE_MEGA + 28372;
     nbytes = rfile->RandomWrite((const void *)FAKE_DATA, nbytes, offset);
-    EXPECT_EQ(nbytes, 35);
+    EXPECT_EQ(nbytes, 35u);
     rfile->RandomRead(buff, nbytes, offset);
     EXPECT_EQ(memcmp(buff, FAKE_DATA, nbytes)==0, true);
 }
@@ -144,14 +144,14 @@ TEST_F(RollableFileTest, Reserve_test)
     size = 34; 
     rval = rfile->Reserve(offset, size, ptr, true);
     EXPECT_EQ(rval, MBError::SUCCESS);
-    EXPECT_EQ(offset, 0);
+    EXPECT_EQ(offset, 0u);
     EXPECT_EQ(ptr != NULL, true);
 
     offset = 12123;
     size = 19; 
     rval = rfile->Reserve(offset, size, ptr, true);
     EXPECT_EQ(rval, MBError::SUCCESS);
-    EXPECT_EQ(offset, 12123);
+    EXPECT_EQ(offset, 12123u);
     EXPECT_EQ(ptr != NULL, true);
 }
 
@@ -171,7 +171,7 @@ TEST_F(RollableFileTest, GetShmPtr_test)
     size = 49; 
     rval = rfile->Reserve(offset, size, ptr, true);
     EXPECT_EQ(rval, MBError::SUCCESS);
-    EXPECT_EQ(offset, 42321);
+    EXPECT_EQ(offset, 42321u);
     EXPECT_EQ(ptr != NULL, true);
     EXPECT_EQ(ptr == rfile->GetShmPtr(offset, size), true);
 }
@@ -188,7 +188,7 @@ TEST_F(RollableFileTest, CheckAlignment_test)
     offset = 1001;
     size = 23;
     offset = rfile->CheckAlignment(offset, size);
-    EXPECT_EQ(offset, 1001);
+    EXPECT_EQ(offset, 1001u);
 
     offset = 4*ONE_MEGA-12;
     size = 55;

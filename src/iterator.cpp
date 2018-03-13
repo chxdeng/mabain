@@ -79,9 +79,10 @@ static iterator_node* new_iterator_node(const std::string &key, MBData *mbdata)
 // }
 /////////////////////////////////////////////////////////////////////
 
-const DB::iterator DB::begin(bool check_async_mode) const
+const DB::iterator DB::begin(bool check_async_mode, bool rc_mode) const
 {
     DB::iterator iter = iterator(*this, DB_ITER_STATE_INIT);
+    if(rc_mode) iter.value.options |= CONSTS::OPTION_RC_MODE;
     iter.init(check_async_mode);
 
     return iter;

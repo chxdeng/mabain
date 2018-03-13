@@ -45,6 +45,7 @@
 #define EXCEP_STATUS_RC_NODE       6
 #define EXCEP_STATUS_RC_EDGE_STR   7
 #define EXCEP_STATUS_RC_DATA       8
+#define EXCEP_STATUS_RC_TREE       9
 #define MB_EXCEPTION_BUFF_SIZE     16
 
 namespace mabain {
@@ -88,6 +89,12 @@ typedef struct _IndexHeader
     uint8_t excep_buff[MB_EXCEPTION_BUFF_SIZE];
     size_t  excep_offset;
     size_t  excep_lf_offset;
+
+    // index root offset for insertions during rc
+    size_t               rc_m_index_off_pre;
+    size_t               rc_m_data_off_pre;
+    std::atomic<size_t>  rc_root_offset;
+    int64_t              rc_count;
 } IndexHeader;
 
 // An abstract interface class for Dict and DictMem
@@ -105,11 +112,14 @@ public:
     {
     }
 
-    virtual void WriteData(const uint8_t *buff, unsigned len, size_t offset) const = 0;
-    virtual int  ReadData(uint8_t *buff, unsigned len, size_t offset) const = 0;
+    inline virtual void WriteData(const uint8_t *buff, unsigned len, size_t offset) const = 0;
     inline int Reserve(size_t &offset, int size, uint8_t* &ptr);
     inline uint8_t* GetShmPtr(size_t offset, int size) const;
     inline size_t CheckAlignment(size_t offset, int size) const;
+    inline void CloseKVFiles() const;
+    inline void RemoveUnusedFiles(size_t max_off) const;
+    inline int ReadData(uint8_t *buff, unsigned len, size_t offset) const;
+    inline size_t GetResourceCollectionOffset() const;
 
     FreeList *GetFreeList() const
     {
@@ -127,6 +137,12 @@ protected:
     FreeList *free_lists;
 };
 
+inline void DRMBase::WriteData(const uint8_t *buff, unsigned len, size_t offset) const
+{
+    if(kv_file->RandomWrite(buff, len, offset) != len)
+        throw (int) MBError::WRITE_ERROR;
+}
+
 inline int DRMBase::Reserve(size_t &offset, int size, uint8_t* &ptr)
 {
     return kv_file->Reserve(offset, size, ptr);
@@ -140,6 +156,26 @@ inline uint8_t* DRMBase::GetShmPtr(size_t offset, int size) const
 inline size_t DRMBase::CheckAlignment(size_t offset, int size) const
 {
     return kv_file->CheckAlignment(offset, size);
+}
+
+inline void DRMBase::CloseKVFiles() const
+{
+    kv_file->Close();
+}
+
+inline void DRMBase::RemoveUnusedFiles(size_t max_off) const
+{
+    kv_file->RemoveUnusedFiles(max_off);
+}
+
+inline int DRMBase::ReadData(uint8_t *buff, unsigned len, size_t offset) const
+{
+    return kv_file->RandomRead(buff, len, offset);
+}
+
+inline size_t DRMBase::GetResourceCollectionOffset() const
+{
+     return kv_file->GetResourceCollectionOffset();
 }
 
 }

@@ -71,8 +71,8 @@ public:
                   size_t data_off);
     bool FindNext(const unsigned char *key, int keylen, int &match_len,
                   EdgePtrs &edge_ptr, uint8_t *key_tmp) const;
-    int  GetRootEdge(int nt, EdgePtrs &edge_ptrs) const;
-    int  GetRootEdge_Writer(int nt, EdgePtrs &edge_ptrs) const;
+    int  GetRootEdge(size_t rc_off, int nt, EdgePtrs &edge_ptrs) const;
+    int  GetRootEdge_Writer(bool rc_mode, int nt, EdgePtrs &edge_ptrs) const;
     int  ClearRootEdge(int nt) const;
     void ReserveData(const uint8_t* key, int size, size_t &offset,
                      bool map_new_sliding=true);
@@ -82,7 +82,6 @@ public:
     void InitRootNode();
     inline void WriteEdge(const EdgePtrs &edge_ptrs) const;
     void WriteData(const uint8_t *buff, unsigned len, size_t offset) const;
-    int  ReadData(uint8_t *buff, unsigned len, size_t offset) const;
     inline size_t GetRootOffset() const;
     void ClearMem() const;
     const int* GetNodeSizePtr() const;
@@ -91,6 +90,12 @@ public:
     void InitLockFreePtr(LockFree *lf);
 
     void Flush() const;
+    void CloseHeaderFile();
+    int  OpenHeaderFile();
+
+    // Updates in RC mode
+    size_t InitRootNode_RC();
+    int    ClearRootEdges_RC() const;
 
     // empty edge, used for clearing edges
     static const uint8_t empty_edge[EDGE_SIZE];
@@ -124,6 +129,8 @@ private:
 
     // header file
     MmapFileIO *header_file;
+
+    size_t root_offset_rc;
 };
 
 inline void DictMem::WriteEdge(const EdgePtrs &edge_ptrs) const

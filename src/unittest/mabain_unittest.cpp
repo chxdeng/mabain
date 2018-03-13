@@ -20,12 +20,16 @@
 #include <gtest/tap.h>
 
 #include "../db.h"
+#define MB_DIR "/var/tmp/mabain_test/"
 
 GTEST_API_ int main(int argc, char **argv)
 {
     testing::InitGoogleTest(&argc, argv);
     testing::TestEventListeners& listeners = testing::UnitTest::GetInstance()->listeners();
     listeners.Append(new tap::TapListener());
+
+    mode_t mode = 0777;
+    mkdir(MB_DIR, mode);
 
     mabain::DB::SetLogFile("/var/tmp/mabain_test/mabain.log");
     int rval = RUN_ALL_TESTS();

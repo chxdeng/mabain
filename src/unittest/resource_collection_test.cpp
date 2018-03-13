@@ -52,7 +52,10 @@ public:
         if(db != NULL) delete db;
     }
     virtual void SetUp() {
-        std::string cmd = std::string("rm ") + DB_DIR + "_mabain_*";
+        std::string cmd = std::string("mkdir -p ") + DB_DIR;
+        if(system(cmd.c_str()) != 0) {
+        }
+        cmd = std::string("rm ") + DB_DIR + "_mabain_*";
         if(system(cmd.c_str()) != 0) {
         }
         db = new DB(DB_DIR, CONSTS::ACCESS_MODE_WRITER, 128ULL*1024*1024, 128ULL*1024*1024);

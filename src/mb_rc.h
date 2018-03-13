@@ -26,8 +26,9 @@
 
 #define RESOURCE_COLLECTION_TYPE_INDEX            0x01
 #define RESOURCE_COLLECTION_TYPE_DATA             0x02
-#define RESOURCE_COLLECTION_PHASE_REORDER         1
-#define RESOURCE_COLLECTION_PHASE_COLLECT         2
+
+#define RESOURCE_COLLECTION_PHASE_REORDER         0x01
+#define RESOURCE_COLLECTION_PHASE_COLLECT         0x02
 
 namespace mabain {
 
@@ -53,21 +54,25 @@ private:
     bool MoveIndexBuffer(int phase, size_t &offset_src, int size);
     bool MoveDataBuffer(int phase, size_t &offset_src, int size);
     int  LRUEviction();
+    void ProcessRCTree();
 
-    int      rc_type;
-    int      index_rc_status;
-    int      data_rc_status;
-    int      index_reorder_status;
-    int      data_reorder_status;
+    int     rc_type;
+    int     index_rc_status;
+    int     data_rc_status;
+    int     index_reorder_status;
+    int     data_reorder_status;
 
     // data for print gc stats only
-    int64_t  index_reorder_cnt;
-    int64_t  data_reorder_cnt;
-    size_t   m_index_off_pre;
-    size_t   m_data_off_pre;
+    int64_t index_reorder_cnt;
+    int64_t data_reorder_cnt;
 
     // Async writer pointer
     AsyncWriter *async_writer_ptr;
+
+    // resource collection offsets
+    size_t  rc_index_offset;
+    size_t  rc_data_offset;
+    int64_t rc_loop_counter;
 };
 
 }

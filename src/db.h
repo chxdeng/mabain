@@ -132,6 +132,11 @@ public:
     // Close the DB handle
     int Close();
     void Flush() const;
+    // close file descriptors
+    void CloseDBFiles();
+    // open DB files
+    int  OpenDBFiles();
+
     // Garbage collection
     // min_index_rc_size and min_data_rc_size are the threshold for trigering garbage
     // collector. If the pending index buffer size is less than min_index_rc_size,
@@ -183,8 +188,10 @@ public:
     int   GetDBOptions() const;
     const std::string& GetDBDir() const;
 
+    void GetDBConfig(MBConfig &config) const;
+
     //iterator
-    const iterator begin(bool check_async_mode = true) const;
+    const iterator begin(bool check_async_mode = true, bool rc_mode = false) const;
     const iterator end() const;
 
 private:
@@ -202,6 +209,7 @@ private:
 
     // db lock
     MBLock lock;
+    MBConfig dbConfig;
 
     AsyncWriter *async_writer;
 };

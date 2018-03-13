@@ -2,6 +2,8 @@
 
 [![Build Status](https://travis-ci.org/spadalkar/mabain.svg?branch=master)](https://travis-ci.org/spadalkar/mabain)
 
+[![Coverage Status](https://coveralls.io/repos/github/spadalkar/mabain/badge.svg)](https://coveralls.io/github/spadalkar/mabain)
+
 ## mabain: a key-value store library
 
 Mabain is a light-weighted C++ library that can be used for generic

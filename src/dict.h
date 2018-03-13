@@ -61,7 +61,6 @@ public:
 
     void ReserveData(const uint8_t* buff, int size, size_t &offset);
     void WriteData(const uint8_t *buff, unsigned len, size_t offset) const;
-    int  ReadData(uint8_t *buff, unsigned len, size_t offset) const;
 
     // Print dictinary stats
     void PrintStats(std::ostream *out_stream) const;
@@ -98,7 +97,13 @@ public:
     void Flush() const;
     int  ExceptionRecovery();
 
+    void CloseDBFiles();
+    int  OpenDBFiles();
+    void RemoveUnusedDBFiles();
+
 private:
+    int Find_Internal(size_t root_off, const uint8_t *key, int len, MBData &data);
+    int FindPrefix_Internal(size_t root_off, const uint8_t *key, int len, MBData &data);
     int ReleaseBuffer(size_t offset);
     int UpdateDataBuffer(EdgePtrs &edge_ptrs, bool overwrite, const uint8_t *buff,
                          int len, bool &inc_count);
@@ -116,6 +121,9 @@ private:
     int status;
 
     LockFree lfree;
+
+    // count for removing unsed file descriptors
+    int rm_fd_check;
 };
 
 }

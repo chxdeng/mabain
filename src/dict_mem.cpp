@@ -67,6 +67,7 @@ DictMem::DictMem(const std::string &mbdir, bool init_header, size_t memsize,
                : is_valid(false)
 {
     root_offset = 0;
+    root_offset_rc = 0;
     node_ptr = NULL;
 
     // mmap header file
@@ -82,6 +83,7 @@ DictMem::DictMem(const std::string &mbdir, bool init_header, size_t memsize,
         Logger::Log(LOG_LEVEL_ERROR, "failed to map index header");
         return;
     }
+    header_file->Close();
 
     // Both reader and writer need to open the mmapped file.
     if(!init_header)
@@ -731,9 +733,12 @@ void DictMem::ReleaseBuffer(size_t offset, int size)
     header->pending_index_buff_size += free_lists->GetAlignmentSize(size);
 }
 
-int DictMem::GetRootEdge(int nt, EdgePtrs &edge_ptrs) const
+int DictMem::GetRootEdge(size_t rc_off, int nt, EdgePtrs &edge_ptrs) const
 {
-    edge_ptrs.offset = root_offset + NODE_EDGE_KEY_FIRST + NUM_ALPHABET + nt*EDGE_SIZE;
+    if(rc_off != 0)
+        edge_ptrs.offset = rc_off + NODE_EDGE_KEY_FIRST + NUM_ALPHABET + nt*EDGE_SIZE;
+    else
+        edge_ptrs.offset = root_offset + NODE_EDGE_KEY_FIRST + NUM_ALPHABET + nt*EDGE_SIZE;
     if(ReadData(edge_ptrs.edge_buff, EDGE_SIZE, edge_ptrs.offset) != EDGE_SIZE)
         return MBError::READ_ERROR;
 
@@ -744,9 +749,18 @@ int DictMem::GetRootEdge(int nt, EdgePtrs &edge_ptrs) const
 // The temp edge is written to shared memory for handling segfault situations.
 // When writer restarts from segfault, it will retry WriteEdge so that the DB is
 // maintained consistently.
-int DictMem::GetRootEdge_Writer(int nt, EdgePtrs &edge_ptrs) const
+int DictMem::GetRootEdge_Writer(bool rc_mode, int nt, EdgePtrs &edge_ptrs) const
 {
-    edge_ptrs.offset = root_offset + NODE_EDGE_KEY_FIRST + NUM_ALPHABET + nt*EDGE_SIZE;
+    if(rc_mode)
+    {
+        if(root_offset_rc == 0)
+            throw (int) MBError::UNKNOWN_ERROR;
+        edge_ptrs.offset = root_offset_rc + NODE_EDGE_KEY_FIRST + NUM_ALPHABET + nt*EDGE_SIZE;
+    }
+    else
+    {
+        edge_ptrs.offset = root_offset + NODE_EDGE_KEY_FIRST + NUM_ALPHABET + nt*EDGE_SIZE;
+    }
     if(ReadData(header->excep_buff, EDGE_SIZE, edge_ptrs.offset) != EDGE_SIZE)
         return MBError::READ_ERROR;
 
@@ -757,13 +771,62 @@ int DictMem::GetRootEdge_Writer(int nt, EdgePtrs &edge_ptrs) const
     return MBError::SUCCESS;
 }
 
+/////////////////////////////////////////////
+// Init root node in resource collection mode
+/////////////////////////////////////////////
+size_t DictMem::InitRootNode_RC()
+{
+    bool node_move;
+    uint8_t *root_node;
+
+    node_move = ReserveNode(NUM_ALPHABET-1, root_offset_rc, root_node);
+    root_node[0] = FLAG_NODE_NONE;
+    root_node[1] = NUM_ALPHABET-1;
+    for(int i = 0; i < NUM_ALPHABET; i++)
+    {
+        root_node[NODE_EDGE_KEY_FIRST+i] = static_cast<uint8_t>(i);
+    }
+
+    if(node_move)
+        WriteData(root_node, node_size[NUM_ALPHABET-1], root_offset);
+
+    return root_offset_rc;
+}
+
 // No need to call LokcFree for removing all DB entries.
 // Note readers may get READ_ERROR as return, which should be expected
 // considering the full DB is deleted.
 int DictMem::ClearRootEdge(int nt) const
 {
     size_t offset = root_offset + NODE_EDGE_KEY_FIRST + NUM_ALPHABET + nt*EDGE_SIZE;
+#ifdef __LOCK_FREE__
+    lfree->WriterLockFreeStart(offset);
+#endif
     WriteData(DictMem::empty_edge, EDGE_SIZE, offset);
+#ifdef __LOCK_FREE__
+    lfree->WriterLockFreeStop();
+#endif
+
+    return MBError::SUCCESS;
+}
+
+int DictMem::ClearRootEdges_RC() const
+{
+    if(root_offset_rc == 0)
+        return MBError::INVALID_ARG;
+
+    size_t offset;
+    for(int i = 0; i < NUM_ALPHABET; i++)
+    {
+        offset = root_offset_rc + NODE_EDGE_KEY_FIRST + NUM_ALPHABET + i*EDGE_SIZE;
+#ifdef __LOCK_FREE__
+        lfree->WriterLockFreeStart(offset);
+#endif
+        DRMBase::WriteData(DictMem::empty_edge, EDGE_SIZE, offset);
+#ifdef __LOCK_FREE__
+        lfree->WriterLockFreeStop();
+#endif
+    }
 
     return MBError::SUCCESS;
 }
@@ -1025,7 +1088,7 @@ void DictMem::PrintStats(std::ostream &out_stream) const
     out_stream << "\tEdge size: " << header->n_edges*EDGE_SIZE << std::endl;
     out_stream << "\tException flag: " << header->excep_updating_status << std::endl;
     out_stream << "\tPending Buffer Size: " << header->pending_index_buff_size << std::endl;
-    if(free_lists)
+    if(free_lists != NULL)
         out_stream << "\tTrackable Buffer Size: " << free_lists->GetTotSize() << std::endl;
     kv_file->PrintStats(out_stream);
 }
@@ -1038,7 +1101,8 @@ const int* DictMem::GetNodeSizePtr() const
 void DictMem::ResetSlidingWindow() const
 {
     kv_file->ResetSlidingWindow();
-    header->shm_index_sliding_start.store(0, std::memory_order_relaxed);
+    if(header != NULL)
+        header->shm_index_sliding_start.store(0, std::memory_order_relaxed);
 }
 
 void DictMem::InitLockFreePtr(LockFree *lf)
@@ -1067,12 +1131,32 @@ void DictMem::WriteData(const uint8_t *buff, unsigned len, size_t offset) const
         throw (int) MBError::WRITE_ERROR;
 }
 
-int DictMem::ReadData(uint8_t *buff, unsigned len, size_t offset) const
+void DictMem::CloseHeaderFile()
 {
-    if(offset + len > header->m_index_offset)
-        return 0;
+    header_file->UnMapFile();
+    header_file->Close();
+    header = NULL;
+    lfree = NULL;
+}
 
-    return kv_file->RandomRead(buff, len, offset);
+int DictMem::OpenHeaderFile()
+{
+    if(!header_file->IsOpen())
+        header_file->Open();
+    if(!header_file->IsOpen())
+    {
+        Logger::Log(LOG_LEVEL_ERROR, std::string("failed to open headr file ") + header_file->GetFilePath());
+        return MBError::OPEN_FAILURE;
+    }
+    if(header == NULL)
+        header = (IndexHeader *) header_file->MapFile(sizeof(IndexHeader), 0, false);
+    if(header == NULL)
+    {
+        Logger::Log(LOG_LEVEL_ERROR, std::string("failed to map headr file ") + header_file->GetFilePath());
+        return MBError::MMAP_FAILED;
+    }
+
+    return MBError::SUCCESS;
 }
 
 }

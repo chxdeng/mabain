@@ -4,8 +4,10 @@ sudo: required
 before_install:
   - sudo apt-get install libao-dev
   - sudo apt-get install libcurl4-openssl-dev
-  - sudo apt-get install -y cmake libgtest-dev valgrind
+  - sudo apt-get install -y cmake libgtest-dev valgrind gcovr
   - sudo apt-get install -y exuberant-ctags doxygen graphviz
+  - sudo pip install cpp-coveralls
+  - sudo pip install -U cpp-coveralls
   - cd /var/tmp
   - sudo wget https://github.com/google/googletest/archive/release-1.7.0.tar.gz
   - sudo tar xf release-1.7.0.tar.gz
@@ -16,7 +18,7 @@ before_install:
   - sudo cp -a libgtest_main.so libgtest.so /usr/lib/
   - cd /var/tmp
   - sudo wget https://raw.githubusercontent.com/kinow/gtest-tap-listener/master/src/tap.h
-  - sudo cp tap.h /usr/lib/gtest
+  - sudo cp /var/tmp/tap.h /usr/include/gtest/tap.h
   - which valgrind
   - cd $TRAVIS_BUILD_DIR
 
@@ -34,10 +36,11 @@ install: true
 script:
   - make clean build
   - sudo make install
+  - make unit-test
 
 # Run examples
 after_success:
-  - cd ./examples
+  - cd $TRAVIS_BUILD_DIR/examples
   - make
   - export LD_LIBRARY_PATH=/usr/local/lib/
   - ./mb_insert_test
@@ -46,3 +49,5 @@ after_success:
   - ./mb_lookup_test
   - ./mb_multi_proc_test
   - ./mb_remove_test
+  - cd $TRAVIS_BUILD_DIR
+  - coveralls --root src/ -E "./src/unittest/*" -E "./src/test/*"

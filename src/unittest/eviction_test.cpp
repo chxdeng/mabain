@@ -26,6 +26,9 @@ public:
     }
     virtual ~EvictionTest() {}
     virtual void SetUp() {
+        std::string cmd = std::string("mkdir -p ") + db_dir;
+        if(system(cmd.c_str()) != 0) {
+        }
         mbconf.mbdir = db_dir;
         mbconf.memcap_index = 64*1024*1024LL;
         mbconf.memcap_data = 64*1024*1024LL;

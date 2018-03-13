@@ -31,6 +31,7 @@ public:
     static const int USE_SLIDING_WINDOW;
     static const int OPTION_ALL_PREFIX;
     static const int OPTION_FIND_AND_STORE_PARENT;
+    static const int OPTION_RC_MODE;
     // not init shared memory ptr, not update db counter
     static const int MAX_KEY_LENGHTH;
     static const int MAX_DATA_SIZE;

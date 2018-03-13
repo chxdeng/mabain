@@ -5,8 +5,8 @@ MABAIN_INSTALL_DIR=/usr/local
 endif
 
 build:
-	make -C src
-	make -C binaries
+	make -C src build
+	make -C binaries build
 
 install: build
 	echo "mabain install directory: $(MABAIN_INSTALL_DIR)"
@@ -32,12 +32,18 @@ clean:
 	-make -C src clean
 	-make -C binaries clean
 	-make -C examples clean
+
+distclean: clean
 	-rm -rf doc/*
+	-rm -f tags
 
 index:
-	- ctags -R *
+	-ctags -R *
 	-doxygen doxygen.conf
 	-echo "Generating documentation..."
 	-echo "Use following index file : "
 	-readlink -f doc/html/index.html
 	-echo "Done with doxygen"
+
+unit-test: build
+	make -C src unit-test

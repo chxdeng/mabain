@@ -36,7 +36,7 @@ static std::string mbdir = "/var/tmp/mabain_test/";
 static void* insert_thread(void *arg)
 {
     int curr_key;
-    TestKey mkey(MABAIN_TEST_KEY_TYPE_SHA_256);
+    TestKey mkey(MABAIN_TEST_KEY_TYPE_INT);
     std::string kv;
     DB *db_r = new DB(mbdir.c_str(), CONSTS::ReaderOptions(), 128LL*1024*1024, 128LL*1024*1024);
     // If a reader wants to perform DB update, the async writer pointer must be set.
@@ -76,7 +76,7 @@ static void SetTestStatus(bool success)
 
 static void Lookup()
 {
-    TestKey mkey(MABAIN_TEST_KEY_TYPE_SHA_256);
+    TestKey mkey(MABAIN_TEST_KEY_TYPE_INT);
     std::string kv;
     DB *db_r = new DB(mbdir.c_str(), CONSTS::ReaderOptions(), 128LL*1024*1024, 128LL*1024*1024);
     assert(db_r->is_open());
