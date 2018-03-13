@@ -230,7 +230,7 @@ TEST_F(DictTest, FindPrefix_test)
     EXPECT_EQ(rval, MBError::SUCCESS);
     key_len = 15;
     rval = dict->FindPrefix((const uint8_t *)FAKE_KEY, key_len, mbd);
-    EXPECT_EQ(rval, MBError::SUCCESS);
+    EXPECT_EQ(MBError::SUCCESS, rval);
     EXPECT_EQ(mbd.data_len, 32);
     EXPECT_EQ(memcmp(mbd.buff, FAKE_DATA, mbd.data_len), 0);
 }

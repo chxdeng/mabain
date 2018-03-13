@@ -167,6 +167,10 @@ void DB::InitDB(MBConfig &config)
     if(ValidateConfig(config) != MBError::SUCCESS)
         return;
 
+	// save the configuration
+	memcpy(&dbConfig, &config, sizeof(MBConfig));
+	dbConfig.mbdir = NULL;
+
     // If id not given, use thread ID
     if(config.connect_id == 0)
         config.connect_id = static_cast<uint32_t>(syscall(SYS_gettid));
@@ -277,20 +281,7 @@ int DB::Find(const char* key, int len, MBData &mdata) const
     if(options & CONSTS::ASYNC_WRITER_MODE)
         return MBError::NOT_ALLOWED;
 
-    int rval;
-    rval = dict->Find(reinterpret_cast<const uint8_t*>(key), len, mdata);
-#ifdef __LOCK_FREE__
-    while(rval == MBError::TRY_AGAIN)
-    {
-        nanosleep((const struct timespec[]){{0, 10L}}, NULL);
-        rval = dict->Find(reinterpret_cast<const uint8_t*>(key), len, mdata);
-    }
-#endif
-
-    if(rval == MBError::SUCCESS)
-        mdata.match_len = len;
-
-    return rval;
+    return dict->Find(reinterpret_cast<const uint8_t*>(key), len, mdata);
 }
 
 int DB::Find(const std::string &key, MBData &mdata) const
@@ -329,18 +320,7 @@ int DB::FindLongestPrefix(const char* key, int len, MBData &data) const
 
     data.match_len = 0;
 
-    int rval;
-    rval = dict->FindPrefix(reinterpret_cast<const uint8_t*>(key), len, data);
-#ifdef __LOCK_FREE__
-    while(rval == MBError::TRY_AGAIN)
-    {
-        nanosleep((const struct timespec[]){{0, 10L}}, NULL);
-        data.Clear();
-        rval = dict->FindPrefix(reinterpret_cast<const uint8_t*>(key), len, data);
-    }
-#endif
-
-    return rval;
+    return dict->FindPrefix(reinterpret_cast<const uint8_t*>(key), len, data);
 }
 
 int DB::FindLongestPrefix(const std::string &key, MBData &data) const
@@ -548,6 +528,12 @@ int DB::GetDBOptions() const
 const std::string& DB::GetDBDir() const
 {
     return mb_dir;
+}
+
+void DB::GetDBConfig(MBConfig &config) const
+{
+    memcpy(&config, &dbConfig, sizeof(MBConfig));
+    config.mbdir = NULL;
 }
 
 int DB::SetAsyncWriterPtr(DB *db_writer)

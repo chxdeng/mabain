@@ -39,6 +39,9 @@ public:
     }
     virtual void SetUp() {
         std::string db_dir = "/var/tmp/mabain_test";
+        std::string cmd = std::string("mkdir -p ") + db_dir;
+        if(system(cmd.c_str()) != 0) {
+        }
         unlink((db_dir + "/_mabain_h").c_str());
         unlink((db_dir + "/_dbfl").c_str());
         unlink((db_dir + "/_ibfl").c_str());

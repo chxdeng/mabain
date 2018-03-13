@@ -1,3 +1,8 @@
-TAGS
-doc/*
 tags
+doc/*
+**/*.o
+src/*.so
+binaries/*
+**/*.gcda
+**/*.gcno
+**/*.tap

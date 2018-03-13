@@ -85,6 +85,7 @@ AsyncWriter::AsyncWriter(DB *db_ptr)
     }
 
     is_rc_running = false;
+    rc_backup_dir = NULL;
     // start the thread
     if(pthread_create(&tid, NULL, async_thread_wrapper, this) != 0)
     {
@@ -292,7 +293,7 @@ int  AsyncWriter::CollectResource(int64_t m_index_rc_size, int64_t m_data_rc_siz
 
 // Run a given number of tasks if they are available.
 // This function should only be called by rc or pruner.
-int AsyncWriter::ProcessTask(int ntasks)
+int AsyncWriter::ProcessTask(int ntasks, bool rc_mode)
 {
     AsyncNode *node_ptr;
     MBData mbd;
@@ -313,29 +314,44 @@ int AsyncWriter::ProcessTask(int ntasks)
             switch(node_ptr->type)
             {
                 case MABAIN_ASYNC_TYPE_ADD:
+                    if(rc_mode)
+                        mbd.options = CONSTS::OPTION_RC_MODE;
                     mbd.buff = (uint8_t *) node_ptr->data;
                     mbd.data_len = node_ptr->data_len;
                     rval = dict->Add((uint8_t *)node_ptr->key, node_ptr->key_len, mbd, node_ptr->overwrite);
                     break;
                 case MABAIN_ASYNC_TYPE_REMOVE:
-                    mbd.options |= CONSTS::OPTION_FIND_AND_STORE_PARENT;
-                    rval = dict->Remove((uint8_t *)node_ptr->key, node_ptr->key_len, mbd);
-                    mbd.options &= ~CONSTS::OPTION_FIND_AND_STORE_PARENT;
+                    if(rc_mode)
+                    {
+                        // FIXME
+                        rval = MBError::SUCCESS;
+                    } 
+                    else
+                    {
+                        mbd.options |= CONSTS::OPTION_FIND_AND_STORE_PARENT;
+                        rval = dict->Remove((uint8_t *)node_ptr->key, node_ptr->key_len, mbd);
+                    }
                     break;
                 case MABAIN_ASYNC_TYPE_REMOVE_ALL:
-                    rval = dict->RemoveAll();
+                    if(!rc_mode)
+                        rval = dict->RemoveAll();
+                    else
+                        rval = MBError::SUCCESS;
                     break;
                 case MABAIN_ASYNC_TYPE_RC:
                     // ignore rc task since it is running already.
                     rval = MBError::RC_SKIPPED;
+                    break;
                 case MABAIN_ASYNC_TYPE_NONE:
                     rval = MBError::SUCCESS;
                     break;
                 case MABAIN_ASYNC_TYPE_BACKUP:
-                    {
-                        DBBackup mbbk(*db);
-                        rval = mbbk.Backup((const char*) node_ptr->data);
-                    }
+                    // clean up existing backup dir varibale buffer.
+                    if (rc_backup_dir && node_ptr->data)
+                        free(rc_backup_dir);
+                    rc_backup_dir = (char *) node_ptr->data;
+                    node_ptr->data = NULL;
+                    rval = MBError::SUCCESS;
                     break;
                 default:
                     rval = MBError::INVALID_ARG;
@@ -488,15 +504,25 @@ void* AsyncWriter::async_writer_thread()
 
         if(is_rc_running)
         {
+            rval = MBError::SUCCESS;
             try {
                 ResourceCollection rc = ResourceCollection(*db);
                 rc.ReclaimResource(min_index_size, min_data_size, max_dbsize, max_dbcount, this);
             } catch (int error) {
                 if(error != MBError::RC_SKIPPED)
                     Logger::Log(LOG_LEVEL_WARN, "rc failed :%s", MBError::get_error_str(error));
+                else
+                    rval = error;
             }
 
             is_rc_running = false;
+            if(rc_backup_dir != NULL)
+            {
+                if(rval == MBError::SUCCESS)
+                    Backup(rc_backup_dir);
+                free(rc_backup_dir);
+                rc_backup_dir = NULL;
+            }
         }
     }
 

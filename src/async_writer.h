@@ -65,7 +65,7 @@ public:
                          int64_t max_dbsz, int64_t max_dbcnt);
     int  StopAsyncThread();
     bool Busy() const;
-    int  ProcessTask(int ntasks);
+    int  ProcessTask(int ntasks, bool rc_mode);
 
 private:
     static void *async_thread_wrapper(void *context);
@@ -90,6 +90,7 @@ private:
     uint32_t writer_index;
 
     bool is_rc_running;
+    char *rc_backup_dir;
 };
 
 }

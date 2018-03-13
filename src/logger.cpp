@@ -66,7 +66,7 @@ void Logger::InitLogFile(const std::string &logfile)
     if(!logfile.empty())
     {
         log_file = logfile;
-        log_level_ = LOG_LEVEL_INFO;
+        log_level_ = LOG_LEVEL_DEBUG;
         log_stream = new std::ofstream();
         log_stream->open(log_file.c_str(), std::ios::out | std::ios::app);
     }

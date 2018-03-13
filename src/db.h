@@ -188,8 +188,10 @@ public:
     int   GetDBOptions() const;
     const std::string& GetDBDir() const;
 
+    void GetDBConfig(MBConfig &config) const;
+
     //iterator
-    const iterator begin(bool check_async_mode = true) const;
+    const iterator begin(bool check_async_mode = true, bool rc_mode = false) const;
     const iterator end() const;
 
 private:
@@ -207,6 +209,7 @@ private:
 
     // db lock
     MBLock lock;
+    MBConfig dbConfig;
 
     AsyncWriter *async_writer;
 };

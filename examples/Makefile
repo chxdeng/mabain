@@ -37,6 +37,7 @@ mb_multi_thread_insert_test: mb_multi_thread_insert_test.cpp
 	$(CPP) $(CFLAGS) mb_multi_thread_insert_test.cpp
 	$(CPP) mb_multi_thread_insert_test.o -o mb_multi_thread_insert_test $(LDFLAGS)
 
+build: all
 clean:
 	-rm -f ./*.o ./mb_*_test
 	-rm -rf ./tmp_dir

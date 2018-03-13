@@ -57,7 +57,8 @@ enum mbc_command {
     COMMAND_PRINT_HEADER = 14,
     COMMAND_FIND_HEX = 15,
     COMMAND_FIND_LPREFIX_HEX = 16,
-    COMMAND_PARSING_ERROR = 17,
+    COMMAND_RECLAIM_RESOURCES = 17,
+    COMMAND_PARSING_ERROR = 18,
 };
 
 volatile bool quit_mbc = false;
@@ -107,6 +108,7 @@ static void show_help()
     std::cout << "\tclearWriterCheck\tClear writer count in shared memory header\n";
     std::cout << "\tdecReaderCount\t\tdecrement reader count in shared memory header\n";
     std::cout << "\tprintHeader\t\tPrint shared memory header\n";
+    std::cout << "\treclaimResources\tReclaim deleted resources\n";
 }
 
 static void trim_spaces(const char *cmd, std::string &cmd_trim)
@@ -278,6 +280,10 @@ static int parse_command(std::string &cmd,
                     return COMMAND_PARSING_ERROR;
                 return COMMAND_REPLACE;
             }
+            else if(cmd.compare("reclaimResources") == 0)
+                return COMMAND_RECLAIM_RESOURCES;
+            else
+                return COMMAND_UNKNOWN;
             break;
         case 'h':
             if(cmd.compare("help") == 0)
@@ -434,6 +440,12 @@ static int RunCommand(int mode, DB *db, int cmd_id, const std::string &key, cons
             break;
         case COMMAND_PRINT_HEADER:
             db->PrintHeader();
+            break;
+        case COMMAND_RECLAIM_RESOURCES:
+            if(mode & CONSTS::ACCESS_MODE_WRITER)
+                db->CollectResource(1, 1);
+            else
+                std::cout << "writer is not running, can not perform grabage collection" << std::endl;
             break;
         case COMMAND_PARSING_ERROR:
             break;
@@ -613,6 +625,9 @@ int main(int argc, char *argv[])
         exit(1);
     }
 
+    // DB::SetLogFile("/var/tmp/mabain.log");
+    // DB::LogDebug();
+
     if(query_cmd.length() != 0)
     {
         run_query_command(db, mode, query_cmd);
@@ -627,6 +642,7 @@ int main(int argc, char *argv[])
     }
 
     db->Close();
+    // DB::CloseLogFile();
     delete db;
     return 0;
 }

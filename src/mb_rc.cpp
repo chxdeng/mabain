@@ -23,8 +23,12 @@
 #include "dict_mem.h"
 #include "integer_4b_5b.h"
 
-#define PRUNE_TASK_CHECK     100
-#define MAX_PRUNE_COUNT      3
+#define MAX_PRUNE_COUNT      3                 // maximum lru eviction attempts
+#define NUM_ASYNC_TASK       10                // number of other tasks to be checked during eviction
+#define PRUNE_TASK_CHECK     100               // every Xth eviction check Y number of other tasks
+#define RC_TASK_CHECK        100               // every Xth async task try to reclaim resources
+#define MIN_RC_OFFSET_GAP    256ULL*1024*1024  // 256M
+
 
 namespace mabain {
 
@@ -75,12 +79,15 @@ int ResourceCollection::LRUEviction()
                 pruned++;
         }
 
-        count++;
         if(async_writer_ptr != NULL && (count % PRUNE_TASK_CHECK == 0))
         {
-            rval = async_writer_ptr->ProcessTask(1);
-            if(rval == MBError::RC_SKIPPED)
-                break;
+            if(count++ > PRUNE_TASK_CHECK)
+            {
+                count = 0;
+                rval = async_writer_ptr->ProcessTask(NUM_ASYNC_TASK, false);
+                if(rval == MBError::RC_SKIPPED)
+                    break;
+            }
         }
     }
 
@@ -118,7 +125,7 @@ void ResourceCollection::ReclaimResource(int64_t min_index_size,
 
     // Check LRU eviction first
     if(header->m_data_offset + header->m_index_offset > (size_t) max_dbsz ||
-       header->count > max_dbcnt)
+            header->count > max_dbcnt)
     {
         int cnt = 0;
         gettimeofday(&start,NULL);
@@ -144,14 +151,16 @@ void ResourceCollection::ReclaimResource(int64_t min_index_size,
     if(min_index_size > 0 || min_data_size > 0)
     {
         Prepare(min_index_size, min_data_size);
-        Logger::Log(LOG_LEVEL_INFO, "defragmentation started");
-        gettimeofday(&start,NULL);
+        Logger::Log(LOG_LEVEL_INFO, "defragmentation started for [index - %s] [data - %s]",
+                rc_type & RESOURCE_COLLECTION_TYPE_INDEX ? "yes":"no",
+                rc_type & RESOURCE_COLLECTION_TYPE_DATA ? " yes":"no");
+        gettimeofday(&start, NULL);
 
         ReorderBuffers();
         CollectBuffers();
         Finish();
 
-        gettimeofday(&stop,NULL);
+        gettimeofday(&stop, NULL);
         async_writer_ptr = NULL;
         timediff = (stop.tv_sec - start.tv_sec)*1000000 + (stop.tv_usec - start.tv_usec);
         if(timediff > 1000000)
@@ -173,34 +182,71 @@ void ResourceCollection::ReclaimResource(int64_t min_index_size,
 
 void ResourceCollection::Prepare(int64_t min_index_size, int64_t min_data_size)
 {
-    if(header->pending_index_buff_size < min_index_size)
+    // make sure there is enough grabaged index buffers before initiating collection
+    if(min_index_size == 0 || header->pending_index_buff_size < min_index_size)
     {
         rc_type &= ~RESOURCE_COLLECTION_TYPE_INDEX;
     }
-    if(header->pending_data_buff_size < min_data_size)
+
+    // make sure there is enough grabaged data buffers before initiating collection
+    if(min_data_size == 0 || header->pending_data_buff_size < min_data_size)
     {
         rc_type &= ~RESOURCE_COLLECTION_TYPE_DATA;
     }
+
+    // minimum defragmentation throshold is not reached, skip grabage collection
     if(rc_type == 0)
     {
-        Logger::Log(LOG_LEVEL_DEBUG, "garbage collection skipped since pending "
-                                    "sizes smaller than required");
+        Logger::Log(LOG_LEVEL_DEBUG, "pending_index_buff_size (%llu) min_index_size (%llu)",
+                header->pending_index_buff_size, min_index_size);
+
+        Logger::Log(LOG_LEVEL_DEBUG, "pending_data_buff_size (%llu) min_data_size (%llu)",
+                header->pending_data_buff_size, min_data_size);
+
+        Logger::Log(LOG_LEVEL_DEBUG, "garbage collection skipped since pending"
+                "sizes smaller than required");
         throw (int) MBError::RC_SKIPPED;
     }
 
-    if(rc_type & RESOURCE_COLLECTION_TYPE_INDEX)
-        index_free_lists->Empty();
-    if(rc_type & RESOURCE_COLLECTION_TYPE_DATA)
-        data_free_lists->Empty();
+    index_free_lists->Empty();
+    data_free_lists->Empty();
 
+    rc_loop_counter = 0;
     index_reorder_cnt = 0;
     data_reorder_cnt = 0;
     index_rc_status = MBError::NOT_INITIALIZED;
     data_rc_status = MBError::NOT_INITIALIZED;
     index_reorder_status = MBError::NOT_INITIALIZED;
     data_reorder_status = MBError::NOT_INITIALIZED;
-    m_index_off_pre = header->m_index_offset;
-    m_data_off_pre = header->m_data_offset;
+    header->rc_m_index_off_pre = header->m_index_offset;
+    header->rc_m_data_off_pre = header->m_data_offset;
+
+    if(async_writer_ptr)
+    {
+        // set rc root to at the end of max size
+        rc_index_offset = dmm->GetResourceCollectionOffset();
+        rc_data_offset = dict->GetResourceCollectionOffset();
+
+        // make sure there is 256M space left at the end of current index
+        // [start|....|current_index_offset|...MIN_RC_OFFSET_GAP/more...|rc_index_offset|.....|end]
+        if(rc_index_offset < header->m_index_offset + MIN_RC_OFFSET_GAP ||
+                rc_data_offset < header->m_data_offset + MIN_RC_OFFSET_GAP)
+        {
+            Logger::Log(LOG_LEVEL_WARN, "not enough space for rc");
+            throw (int) MBError::OUT_OF_BOUND;
+        }
+
+        // update current indexs to rc offsets
+        header->m_index_offset = rc_index_offset;
+        header->m_data_offset  = rc_data_offset;
+
+        // create rc root node
+        size_t rc_off = dmm->InitRootNode_RC();
+        header->rc_root_offset.store(rc_off, MEMORY_ORDER_WRITER);
+    }
+
+    Logger::Log(LOG_LEVEL_DEBUG, "setting rc index off start to: %llu", header->m_index_offset);
+    Logger::Log(LOG_LEVEL_DEBUG, "setting rc data off start to: %llu", header->m_data_offset);
 }
 
 void ResourceCollection::CollectBuffers()
@@ -227,17 +273,42 @@ void ResourceCollection::Finish()
     if(index_rc_status == MBError::SUCCESS)
     {
         Logger::Log(LOG_LEVEL_INFO, "index buffer size reclaimed: %lld",
-                    (m_index_off_pre>index_size) ? (m_index_off_pre-index_size) : 0);
+                    (header->rc_m_index_off_pre > index_size) ?
+                    (header->rc_m_index_off_pre - index_size) : 0);
         header->m_index_offset = index_size;
         header->pending_index_buff_size = 0;
+    }
+    else
+    {
+        if(header->rc_m_index_off_pre == 0)
+            throw (int) MBError::INVALID_ARG;
+        header->m_index_offset = header->rc_m_index_off_pre;
     }
     if(data_rc_status == MBError::SUCCESS)
     {
         Logger::Log(LOG_LEVEL_INFO, "data buffer size reclaimed: %lld",
-                    (m_data_off_pre>data_size) ? (m_data_off_pre-data_size) : 0);
+                    (header->rc_m_data_off_pre > data_size) ?
+                    (header->rc_m_data_off_pre - data_size) : 0);
         header->m_data_offset = data_size;
         header->pending_data_buff_size = 0;
     }
+    else
+    {
+        if(header->rc_m_data_off_pre == 0)
+            throw (int) MBError::INVALID_ARG;
+        header->m_data_offset = header->rc_m_data_off_pre;
+    }
+
+    if(async_writer_ptr != NULL)
+    {
+        index_free_lists->Empty();
+        data_free_lists->Empty();
+        ProcessRCTree();
+    }
+
+    header->rc_m_index_off_pre = 0;
+    header->rc_m_data_off_pre = 0;
+    dict->RemoveUnusedDBFiles();
 }
 
 bool ResourceCollection::MoveIndexBuffer(int phase, size_t &offset_src, int size)
@@ -389,6 +460,15 @@ void ResourceCollection::DoTask(int phase, DBTraverseNode &dbt_node)
     }
 
     header->excep_updating_status = 0;
+
+    if(async_writer_ptr != NULL)
+    {
+        if(rc_loop_counter++ > RC_TASK_CHECK)
+        {
+            rc_loop_counter = 0;
+            async_writer_ptr->ProcessTask(NUM_ASYNC_TASK, true);
+        }
+    }
 }
 
 
@@ -419,6 +499,40 @@ void ResourceCollection::ReorderBuffers()
         data_reorder_status = MBError::SUCCESS;
         Logger::Log(LOG_LEVEL_INFO, "number of data buffer reordered: %lld", data_reorder_cnt);
     }
+}
+
+void ResourceCollection::ProcessRCTree()
+{
+    Logger::Log(LOG_LEVEL_INFO, "resource collection done, traversing the rc tree %llu entries", header->rc_count);
+
+    int count = 0;
+    int rval;
+    for(DB::iterator iter = db_ref.begin(false, true); iter != db_ref.end(); ++iter)
+    {
+        iter.value.options = 0;
+        rval = dict->Add((const uint8_t *)iter.key.data(), iter.key.size(), iter.value, true);
+        if(rval != MBError::SUCCESS)
+            Logger::Log(LOG_LEVEL_WARN, "failed to add: %s", MBError::get_error_str(rval));
+        if(count++ > RC_TASK_CHECK)
+        {
+            count = 0;
+            async_writer_ptr->ProcessTask(NUM_ASYNC_TASK, false);
+        }
+
+        if(header->m_index_offset > rc_index_offset ||
+           header->m_data_offset > rc_data_offset)
+        {
+            Logger::Log(LOG_LEVEL_ERROR, "not enough space for insertion: %llu, %llu",
+                        header->m_index_offset, header->m_data_offset);
+            break;
+        }
+    }
+
+    header->rc_count = 0;
+    header->rc_root_offset.store(0, MEMORY_ORDER_WRITER);
+
+    // Clear the rc tree
+    dmm->ClearRootEdges_RC();
 }
 
 }

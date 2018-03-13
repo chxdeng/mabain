@@ -30,6 +30,7 @@
 #define MAX_DATA_BUFFER_RESERVE_SIZE    0xFFFF
 #define NUM_DATA_BUFFER_RESERVE         MAX_DATA_BUFFER_RESERVE_SIZE/DATA_BUFFER_ALIGNMENT
 #define DATA_HEADER_SIZE                32
+#define RC_FD_CHECK_COUNT               1
 
 #define READER_LOCK_FREE_START               \
     LockFreeData snapshot;                   \
@@ -51,6 +52,7 @@ Dict::Dict(const std::string &mbdir, bool init_header, int datasize,
            mm(mbdir, init_header, memsize_index, db_options, block_sz_idx, max_num_index_blk)
 {
     status = MBError::NOT_INITIALIZED;
+    rm_fd_check = 0;
 
     header = mm.GetHeaderPtr();
     if(header == NULL)
@@ -205,8 +207,10 @@ int Dict::Add(const uint8_t *key, int len, MBData &data, bool overwrite)
         return MBError::OUT_OF_BOUND;
 
     EdgePtrs edge_ptrs;
-    int rval = mm.GetRootEdge_Writer(key[0], edge_ptrs);
     size_t data_offset = 0;
+    int rval;
+
+    rval = mm.GetRootEdge_Writer(data.options & CONSTS::OPTION_RC_MODE, key[0], edge_ptrs);
     if(rval != MBError::SUCCESS)
         return rval;
 
@@ -215,8 +219,16 @@ int Dict::Add(const uint8_t *key, int len, MBData &data, bool overwrite)
         ReserveData(data.buff, data.data_len, data_offset);
         // Add the first edge along this edge
         mm.AddRootEdge(edge_ptrs, key, len, data_offset);
-        header->count++;
-        header->num_update++;
+        if(data.options & CONSTS::OPTION_RC_MODE)
+        {
+            header->rc_count++;
+        }
+        else
+        {
+            header->count++;
+            header->num_update++;
+        }
+        
         return MBError::SUCCESS;
     }
 
@@ -315,10 +327,18 @@ int Dict::Add(const uint8_t *key, int len, MBData &data, bool overwrite)
         }
     }
 
-    if(inc_count)
-        header->count++;
-    if(rval == MBError::SUCCESS)
-        header->num_update++;
+    if(data.options & CONSTS::OPTION_RC_MODE)
+    {
+        if(rval == MBError::SUCCESS)
+            header->rc_count++;
+    }
+    else
+    {
+        if(rval == MBError::SUCCESS)
+            header->num_update++;
+        if(inc_count)
+            header->count++;
+    }
     return rval;
 }
 
@@ -448,6 +468,53 @@ int Dict::ReadDataFromNode(MBData &data, const uint8_t *node_ptr) const
 
 int Dict::FindPrefix(const uint8_t *key, int len, MBData &data)
 {
+    int rval;
+    MBData data_rc;
+    size_t rc_root_offset = header->rc_root_offset.load(MEMORY_ORDER_READER);
+    if(rc_root_offset != 0)
+    {
+        rm_fd_check++;
+        rval = FindPrefix_Internal(rc_root_offset, key, len, data_rc);
+#ifdef __LOCK_FREE__
+        while(rval == MBError::TRY_AGAIN)
+        {
+            nanosleep((const struct timespec[]){{0, 10L}}, NULL);
+            data_rc.Clear();
+            rval = FindPrefix_Internal(rc_root_offset, key, len, data_rc);
+        }
+#endif
+        if(rval != MBError::NOT_EXIST && rval != MBError::SUCCESS)
+            return rval;
+    }
+    else if(rm_fd_check > RC_FD_CHECK_COUNT)
+    {
+        rm_fd_check = 0;
+        RemoveUnusedDBFiles();
+    }
+
+    rval = FindPrefix_Internal(0, key, len, data);
+#ifdef __LOCK_FREE__
+    while(rval == MBError::TRY_AGAIN)
+    {
+        nanosleep((const struct timespec[]){{0, 10L}}, NULL);
+        data.Clear();
+        rval = FindPrefix_Internal(0, key, len, data);
+    }
+#endif
+
+    // The longer match wins.
+    if(data_rc.match_len > data.match_len)
+    {
+        data_rc.TransferValueTo(data.buff, data.data_len);
+        rval = MBError::SUCCESS;
+    }
+    return rval;
+
+}
+
+int Dict::FindPrefix_Internal(size_t root_off, const uint8_t *key, int len, MBData &data)
+{
+    int rval;
     data.next = false;
     EdgePtrs &edge_ptrs = data.edge_ptrs;
 #ifdef __LOCK_FREE__
@@ -456,7 +523,8 @@ int Dict::FindPrefix(const uint8_t *key, int len, MBData &data)
 
     if(data.match_len == 0)
     {
-        if(mm.GetRootEdge(key[0], edge_ptrs) != MBError::SUCCESS)
+        rval = mm.GetRootEdge(data.options & CONSTS::OPTION_RC_MODE, key[0], edge_ptrs);
+        if(rval != MBError::SUCCESS)
             return MBError::READ_ERROR;
 
         if(edge_ptrs.len_ptr[0] == 0)
@@ -491,7 +559,7 @@ int Dict::FindPrefix(const uint8_t *key, int len, MBData &data)
         key_buff = edge_ptrs.ptr;
     }
 
-    int rval = MBError::NOT_EXIST;
+    rval = MBError::NOT_EXIST;
     if(edge_len < len)
     {
         if(edge_len > 1 && memcmp(key_buff, key+1, edge_len_m1) != 0)
@@ -606,11 +674,58 @@ int Dict::FindPrefix(const uint8_t *key, int len, MBData &data)
 
 int Dict::Find(const uint8_t *key, int len, MBData &data)
 {
+    int rval;
+    size_t rc_root_offset = header->rc_root_offset.load(MEMORY_ORDER_READER);
+    if(rc_root_offset != 0)
+    {
+        rm_fd_check++;
+        rval = Find_Internal(rc_root_offset, key, len, data);
+#ifdef __LOCK_FREE__
+        while(rval == MBError::TRY_AGAIN)
+        {
+            nanosleep((const struct timespec[]){{0, 10L}}, NULL);
+            rval = Find_Internal(rc_root_offset, key, len, data);
+        }
+#endif
+        if(rval == MBError::SUCCESS)
+        {
+            data.match_len = len;
+            return rval;
+        }
+        else if(rval != MBError::NOT_EXIST)
+            return rval;
+        data.options &= ~CONSTS::OPTION_RC_MODE;
+    }
+    else if(rm_fd_check > RC_FD_CHECK_COUNT)
+    {
+        rm_fd_check = 0;
+        RemoveUnusedDBFiles();
+    }
+
+    rval = Find_Internal(0, key, len, data);
+#ifdef __LOCK_FREE__
+    while(rval == MBError::TRY_AGAIN)
+    {
+        nanosleep((const struct timespec[]){{0, 10L}}, NULL);
+        rval = Find_Internal(0, key, len, data);
+    }
+#endif
+    if(rval == MBError::SUCCESS)
+        data.match_len = len;
+
+    return rval;
+}
+
+int Dict::Find_Internal(size_t root_off, const uint8_t *key, int len, MBData &data)
+{
     EdgePtrs &edge_ptrs = data.edge_ptrs;
 #ifdef __LOCK_FREE__
     READER_LOCK_FREE_START
 #endif
-    if(mm.GetRootEdge(key[0], edge_ptrs) != MBError::SUCCESS)
+    int rval;
+    rval = mm.GetRootEdge(root_off, key[0], edge_ptrs);
+
+    if(rval != MBError::SUCCESS)
         return MBError::READ_ERROR;
     if(edge_ptrs.len_ptr[0] == 0)
     {
@@ -626,8 +741,8 @@ int Dict::Find(const uint8_t *key, int len, MBData &data)
     const uint8_t *p = key;
     int edge_len = edge_ptrs.len_ptr[0];
     int edge_len_m1 = edge_len - 1;
-    int rval = MBError::NOT_EXIST;
 
+    rval = MBError::NOT_EXIST;
     if(edge_len > LOCAL_EDGE_LEN)
     {
         size_t edge_str_off_lf = Get5BInteger(edge_ptrs.ptr);
@@ -783,33 +898,33 @@ void Dict::PrintHeader(std::ostream &out_stream) const
     if(header == NULL)
         return;
 
-    out_stream << "---------------- START OF HEADER ----------------\n";
+    out_stream << "---------------- START OF HEADER ----------------" << std::endl;
     out_stream << "version: " << header->version[0] << "." <<
                                  header->version[1] << "." <<
-                                 header->version[2] << "\n";
-    out_stream << "data size: " << header->data_size << "\n";
-    out_stream << "db count: " << header->count << "\n";
-    out_stream << "max data offset: " << header->m_data_offset << "\n";
-    out_stream << "max index offset: " << header->m_index_offset << "\n";
-    out_stream << "pending data buffer size: " << header->pending_data_buff_size << "\n";
-    out_stream << "pending index buffer size: " << header->pending_index_buff_size << "\n";
-    out_stream << "node count: " << header->n_states << "\n";
-    out_stream << "edge count: " << header->n_edges << "\n";
-    out_stream << "edge string size: " << header->edge_str_size << "\n";
-    out_stream << "writer count: " << header->num_writer << "\n";
-    out_stream << "reader count: " << header->num_reader << "\n";
-    out_stream << "data sliding start: " << header->shm_data_sliding_start << "\n";
-    out_stream << "index sliding start: " << header->shm_index_sliding_start << "\n";
-    out_stream << "data block size: " << header->data_block_size << "\n";
-    out_stream << "index block size: " << header->index_block_size << "\n";
-    out_stream << "lock free data: " << "\n";
-    out_stream << "\tcounter: " << header->lock_free.counter << "\n";
-    out_stream << "\toffset: " << header->lock_free.offset << "\n";
-    out_stream << "Number of updates: "  << header->num_update << std::endl;
-    out_stream << "Entry count per bucket: "  << header->entry_per_bucket << std::endl;
-    out_stream << "Eviction bucket index: "  << header->eviction_bucket_index << std::endl;
-    out_stream << "exception data: " << "\n";
-    out_stream << "\tupdating status: " << header->excep_updating_status << "\n";
+                                 header->version[2] << std::endl;
+    out_stream << "data size: " << header->data_size << std::endl;
+    out_stream << "db count: " << header->count << std::endl;
+    out_stream << "max data offset: " << header->m_data_offset << std::endl;
+    out_stream << "max index offset: " << header->m_index_offset << std::endl;
+    out_stream << "pending data buffer size: " << header->pending_data_buff_size << std::endl;
+    out_stream << "pending index buffer size: " << header->pending_index_buff_size << std::endl;
+    out_stream << "node count: " << header->n_states << std::endl;
+    out_stream << "edge count: " << header->n_edges << std::endl;
+    out_stream << "edge string size: " << header->edge_str_size << std::endl;
+    out_stream << "writer count: " << header->num_writer << std::endl;
+    out_stream << "reader count: " << header->num_reader << std::endl;
+    out_stream << "data sliding start: " << header->shm_data_sliding_start << std::endl;
+    out_stream << "index sliding start: " << header->shm_index_sliding_start << std::endl;
+    out_stream << "data block size: " << header->data_block_size << std::endl;
+    out_stream << "index block size: " << header->index_block_size << std::endl;
+    out_stream << "lock free data: " << std::endl;
+    out_stream << "\tcounter: " << header->lock_free.counter << std::endl;
+    out_stream << "\toffset: " << header->lock_free.offset << std::endl;
+    out_stream << "number of updates: "  << header->num_update << std::endl;
+    out_stream << "entry count per bucket: "  << header->entry_per_bucket << std::endl;
+    out_stream << "eviction bucket index: "  << header->eviction_bucket_index << std::endl;
+    out_stream << "exception data: " << std::endl;
+    out_stream << "\tupdating status: " << header->excep_updating_status << std::endl;
     out_stream << "\texception data buffer: ";
     char data_str_buff[MB_EXCEPTION_BUFF_SIZE*3 + 1];
     for(int i = 0; i < MB_EXCEPTION_BUFF_SIZE; i++)
@@ -817,10 +932,14 @@ void Dict::PrintHeader(std::ostream &out_stream) const
         sprintf(data_str_buff + 3*i, "%2x ", header->excep_buff[i]);
     }
     data_str_buff[MB_EXCEPTION_BUFF_SIZE*3] = '\0';
-    out_stream << data_str_buff << "\n";
-    out_stream << "\toffset: " << header->excep_offset << "\n";
-    out_stream << "\tlock free offset: " << header->excep_lf_offset << "\n";
-    out_stream << "---------------- END OF HEADER ----------------\n";
+    out_stream << data_str_buff << std::endl;
+    out_stream << "\toffset: " << header->excep_offset << std::endl;
+    out_stream << "\tlock free offset: " << header->excep_lf_offset << std::endl;
+    out_stream << "max index offset before rc: " << header->rc_m_index_off_pre << std::endl;
+    out_stream << "max data offset before rc: " << header->rc_m_data_off_pre << std::endl;
+    out_stream << "rc root offset: " << header->rc_root_offset << std::endl;
+    out_stream << "rc count: " << header->rc_count << std::endl;
+    out_stream << "---------------- END OF HEADER ----------------" << std::endl;
 }
 
 int64_t Dict::Count() const
@@ -968,7 +1087,12 @@ size_t Dict::GetRootOffset() const
 int Dict::ReadRootNode(uint8_t *node_buff, EdgePtrs &edge_ptrs, int &match,
                        MBData &data) const
 {
-    return ReadNode(mm.GetRootOffset(), node_buff, edge_ptrs, match, data);
+    size_t root_off;
+    if(data.options & CONSTS::OPTION_RC_MODE)
+        root_off = header->rc_root_offset;
+    else
+        root_off = mm.GetRootOffset();
+    return ReadNode(root_off, node_buff, edge_ptrs, match, data);
 }
 
 int Dict::Remove(const uint8_t *key, int len)
@@ -981,6 +1105,11 @@ int Dict::Remove(const uint8_t *key, int len, MBData &data)
 {
     if(!(options & CONSTS::ACCESS_MODE_WRITER))
         return MBError::NOT_ALLOWED;
+    if(data.options & CONSTS::OPTION_RC_MODE)
+    {
+        // FIXME Remove in RC mode not implemented yet!!!
+        return MBError::INVALID_ARG;
+    }
 
     // The DELETE flag must be set
     if(!(data.options & CONSTS::OPTION_FIND_AND_STORE_PARENT))
@@ -1303,7 +1432,7 @@ int Dict::ExceptionRecovery()
         return MBError::NOT_INITIALIZED;
 
     int rval = MBError::SUCCESS;
-    if(header->excep_updating_status == EXCEP_STATUS_NONE)
+    if(header->excep_updating_status == EXCEP_STATUS_NONE && header->rc_root_offset == 0)
     {
         Logger::Log(LOG_LEVEL_INFO, "writer was shutdown successfully previously");
         return rval;
@@ -1383,6 +1512,16 @@ int Dict::ExceptionRecovery()
     lfree.WriterLockFreeStop();
 #endif
 
+    if(header->rc_root_offset != 0)
+    {
+        // Only perform the simplest recovery for now.
+        // This will ignore all newly added KV pairs during rc.
+        header->rc_root_offset = 0;
+        header->rc_count = 0;
+        header->m_index_offset = header->rc_m_index_off_pre;
+        header->m_data_offset = header->rc_m_data_off_pre;
+    }
+
     if(rval == MBError::SUCCESS)
     {
         header->excep_updating_status = EXCEP_STATUS_NONE;
@@ -1407,14 +1546,6 @@ void Dict::WriteData(const uint8_t *buff, unsigned len, size_t offset) const
 
     if(kv_file->RandomWrite(buff, len, offset) != len)
         throw (int) MBError::WRITE_ERROR;
-}
-
-int Dict::ReadData(uint8_t *buff, unsigned len, size_t offset) const
-{
-    if(offset + len > header->m_data_offset)
-        return 0;
-
-    return kv_file->RandomRead(buff, len, offset);
 }
 
 void Dict::CloseDBFiles()
@@ -1451,6 +1582,14 @@ int Dict::OpenDBFiles()
     mm.InitLockFreePtr(&lfree);
     status = MBError::SUCCESS;
     return status;
+}
+
+void Dict::RemoveUnusedDBFiles()
+{
+    if(header == NULL)
+        return;
+    RemoveUnusedFiles(header->m_data_offset);
+    mm.RemoveUnusedFiles(header->m_index_offset); 
 }
 
 }
