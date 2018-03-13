@@ -36,7 +36,7 @@ mabain::DB *db = NULL;
 #define ONE_MILLION 1000000
 
 static const char *db_dir   = "/var/tmp/db_test/";
-static int num_kv           = 20 * ONE_MILLION;
+static int num_kv           = 1 * ONE_MILLION;
 static int n_reader         = 7;
 static int key_type         = 0;
 static bool sync_on_write   = false;
