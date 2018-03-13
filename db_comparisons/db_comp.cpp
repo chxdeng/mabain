@@ -397,11 +397,13 @@ static void *Writer(void *arg)
         db->Put(opts, key, val);
 #elif MABAIN
         db->Add(key.c_str(), key.length(), val.c_str(), val.length());
+#ifdef DEFRAG
         if((i+1) % (2*ONE_MILLION)== 0) {
             std::cout<<"\nRC SCHEDULED " << std::endl;
             // db->CollectResource(2*ONE_MILLION, 64*ONE_MILLION);
             db->CollectResource(1, 1);
         }
+#endif
 #endif
 
         if((i+1) % ONE_MILLION == 0) {
@@ -557,7 +559,7 @@ int main(int argc, char *argv[])
 {
 #ifdef MABAIN
     mabain::DB::SetLogFile("/var/tmp/mabain_test/mabain.log");
-    mabain::DB::SetLogLevel(2);
+    // mabain::DB::SetLogLevel(2);
 #endif
     for(int i = 1; i < argc; i++) {
         if(strcmp(argv[i], "-n") == 0) {
@@ -601,8 +603,6 @@ int main(int argc, char *argv[])
     InitTestDir();
     RemoveDB();
 
-if(0){
-
     InitDB();
     Add(num_kv);
     DestroyDB();
@@ -616,7 +616,7 @@ if(0){
     DestroyDB();
 
     RemoveDB();
-}
+
     InitDB();
     ConcurrencyTest(num_kv, n_reader);
     DestroyDB();
