@@ -625,7 +625,7 @@ int main(int argc, char *argv[])
         exit(1);
     }
 
-    // DB::SetLogFile(std::string(db_dir) + "/mabain.log");
+    // DB::SetLogFile("/var/tmp/mabain.log");
     // DB::LogDebug();
 
     if(query_cmd.length() != 0)
@@ -642,7 +642,7 @@ int main(int argc, char *argv[])
     }
 
     db->Close();
-    DB::CloseLogFile();
+    // DB::CloseLogFile();
     delete db;
     return 0;
 }
