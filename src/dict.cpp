@@ -1364,9 +1364,14 @@ int Dict::UpdateNumWriter(int delta) const
     {
         // Only one writer allowed
         if(header->num_writer > 0)
-            return MBError::WRITER_EXIST;
+        {
+            if(options & CONSTS::NO_RUNNING_WRITER_CHECK)
+                Logger::Log(LOG_LEVEL_WARN, "number of writer is not zero: %d", header->num_writer);
+            else
+                return MBError::WRITER_EXIST;
+        }
 
-        header->num_writer++;
+        header->num_writer = 1;
     }
     else if(delta < 0)
     {
@@ -1374,8 +1379,7 @@ int Dict::UpdateNumWriter(int delta) const
         header->lock_free.offset = MAX_6B_OFFSET;
     }
 
-    Logger::Log(LOG_LEVEL_INFO, "number of writer is set to: %d",
-                             header->num_writer);
+    Logger::Log(LOG_LEVEL_INFO, "number of writer is set to: %d", header->num_writer);
     return MBError::SUCCESS;
 }
 
