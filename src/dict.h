@@ -97,10 +97,6 @@ public:
     void Flush() const;
     int  ExceptionRecovery();
 
-    void CloseDBFiles();
-    int  OpenDBFiles();
-    void RemoveUnusedDBFiles();
-
 private:
     int Find_Internal(size_t root_off, const uint8_t *key, int len, MBData &data);
     int FindPrefix_Internal(size_t root_off, const uint8_t *key, int len, MBData &data);
@@ -121,9 +117,6 @@ private:
     int status;
 
     LockFree lfree;
-
-    // count for removing unsed file descriptors
-    int rm_fd_check;
 };
 
 }

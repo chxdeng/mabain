@@ -116,8 +116,6 @@ public:
     inline int Reserve(size_t &offset, int size, uint8_t* &ptr);
     inline uint8_t* GetShmPtr(size_t offset, int size) const;
     inline size_t CheckAlignment(size_t offset, int size) const;
-    inline void CloseKVFiles() const;
-    inline void RemoveUnusedFiles(size_t max_off) const;
     inline int ReadData(uint8_t *buff, unsigned len, size_t offset) const;
     inline size_t GetResourceCollectionOffset() const;
 
@@ -156,16 +154,6 @@ inline uint8_t* DRMBase::GetShmPtr(size_t offset, int size) const
 inline size_t DRMBase::CheckAlignment(size_t offset, int size) const
 {
     return kv_file->CheckAlignment(offset, size);
-}
-
-inline void DRMBase::CloseKVFiles() const
-{
-    kv_file->Close();
-}
-
-inline void DRMBase::RemoveUnusedFiles(size_t max_off) const
-{
-    kv_file->RemoveUnusedFiles(max_off);
 }
 
 inline int DRMBase::ReadData(uint8_t *buff, unsigned len, size_t offset) const

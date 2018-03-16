@@ -25,6 +25,7 @@
 #include <sys/mman.h>
 #include <assert.h>
 #include <atomic>
+#include <memory>
 
 #include "mmap_file.h"
 #include "logger.h"
@@ -49,7 +50,6 @@ public:
     void     ResetSlidingWindow();
 
     void     Flush();
-    void     RemoveUnusedFiles(size_t max_offset);
     size_t   GetResourceCollectionOffset() const;
 
     static const long page_size;
@@ -75,7 +75,7 @@ private:
 
     long max_num_block;
 
-    std::vector<MmapFileIO*> files;
+    std::vector<std::shared_ptr<MmapFileIO>> files;
     uint8_t* sliding_addr;
     size_t sliding_size;
     off_t sliding_start;

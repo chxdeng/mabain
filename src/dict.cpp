@@ -52,7 +52,6 @@ Dict::Dict(const std::string &mbdir, bool init_header, int datasize,
            mm(mbdir, init_header, memsize_index, db_options, block_sz_idx, max_num_index_blk)
 {
     status = MBError::NOT_INITIALIZED;
-    rm_fd_check = 0;
 
     header = mm.GetHeaderPtr();
     if(header == NULL)
@@ -473,7 +472,6 @@ int Dict::FindPrefix(const uint8_t *key, int len, MBData &data)
     size_t rc_root_offset = header->rc_root_offset.load(MEMORY_ORDER_READER);
     if(rc_root_offset != 0)
     {
-        rm_fd_check++;
         rval = FindPrefix_Internal(rc_root_offset, key, len, data_rc);
 #ifdef __LOCK_FREE__
         while(rval == MBError::TRY_AGAIN)
@@ -485,11 +483,6 @@ int Dict::FindPrefix(const uint8_t *key, int len, MBData &data)
 #endif
         if(rval != MBError::NOT_EXIST && rval != MBError::SUCCESS)
             return rval;
-    }
-    else if(rm_fd_check > RC_FD_CHECK_COUNT)
-    {
-        rm_fd_check = 0;
-        RemoveUnusedDBFiles();
     }
 
     rval = FindPrefix_Internal(0, key, len, data);
@@ -678,7 +671,6 @@ int Dict::Find(const uint8_t *key, int len, MBData &data)
     size_t rc_root_offset = header->rc_root_offset.load(MEMORY_ORDER_READER);
     if(rc_root_offset != 0)
     {
-        rm_fd_check++;
         rval = Find_Internal(rc_root_offset, key, len, data);
 #ifdef __LOCK_FREE__
         while(rval == MBError::TRY_AGAIN)
@@ -695,11 +687,6 @@ int Dict::Find(const uint8_t *key, int len, MBData &data)
         else if(rval != MBError::NOT_EXIST)
             return rval;
         data.options &= ~CONSTS::OPTION_RC_MODE;
-    }
-    else if(rm_fd_check > RC_FD_CHECK_COUNT)
-    {
-        rm_fd_check = 0;
-        RemoveUnusedDBFiles();
     }
 
     rval = Find_Internal(0, key, len, data);
@@ -1546,50 +1533,6 @@ void Dict::WriteData(const uint8_t *buff, unsigned len, size_t offset) const
 
     if(kv_file->RandomWrite(buff, len, offset) != len)
         throw (int) MBError::WRITE_ERROR;
-}
-
-void Dict::CloseDBFiles()
-{
-    if(status != MBError::SUCCESS)
-        return;
-
-    mm.CloseHeaderFile();
-    header = NULL;
-    mm.CloseKVFiles();
-    CloseKVFiles();
-
-    // unset lock free pointer in header
-    lfree.LockFreeInit(NULL, CONSTS::ACCESS_MODE_READER);
-    status = MBError::DB_CLOSED;
-}
-
-int Dict::OpenDBFiles()
-{
-    // Proceed only when the status is DB_CLOSED.
-    if(status != MBError::DB_CLOSED)
-        return status;
-
-    int rval = mm.OpenHeaderFile();
-    if(rval != MBError::SUCCESS)
-        return rval;
-
-    header = mm.GetHeaderPtr();
-    if(header == NULL)
-        return MBError::MMAP_FAILED;
-
-    // set lock free pointer in header
-    lfree.LockFreeInit(&header->lock_free, options);
-    mm.InitLockFreePtr(&lfree);
-    status = MBError::SUCCESS;
-    return status;
-}
-
-void Dict::RemoveUnusedDBFiles()
-{
-    if(header == NULL)
-        return;
-    RemoveUnusedFiles(header->m_data_offset);
-    mm.RemoveUnusedFiles(header->m_index_offset); 
 }
 
 }

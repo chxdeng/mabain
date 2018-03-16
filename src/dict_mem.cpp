@@ -26,6 +26,7 @@
 #include "error.h"
 #include "integer_4b_5b.h"
 #include "version.h"
+#include "resource_pool.h"
 
 #define OFFSET_SIZE_P1             7
 
@@ -70,20 +71,15 @@ DictMem::DictMem(const std::string &mbdir, bool init_header, size_t memsize,
     root_offset_rc = 0;
     node_ptr = NULL;
 
-    // mmap header file
-    int hdr_mode = O_RDWR;
-    if(init_header)
-        hdr_mode |= O_CREAT;
     assert(sizeof(IndexHeader) <= (unsigned) RollableFile::page_size);
-    header_file = new MmapFileIO(mbdir + "_mabain_h", hdr_mode,
-                      RollableFile::page_size, false);
-    header = (IndexHeader *) header_file->MapFile(sizeof(IndexHeader), 0, false);
+    bool map_hdr = true;
+    header_file = ResourcePool::getInstance().OpenFile(mbdir + "_mabain_h",
+                                                       mode,
+                                                       RollableFile::page_size,
+                                                       map_hdr);
+    header = (IndexHeader *) header_file->GetMapAddr();
     if(header == NULL)
-    {
-        Logger::Log(LOG_LEVEL_ERROR, "failed to map index header");
         return;
-    }
-    header_file->Close();
 
     // Both reader and writer need to open the mmapped file.
     if(!init_header)
@@ -184,9 +180,6 @@ DictMem::~DictMem()
 
 void DictMem::Destroy()
 {
-    if(header_file != NULL)
-        delete header_file;
-
     if(kv_file != NULL)
         delete kv_file;
 
@@ -1129,34 +1122,6 @@ void DictMem::WriteData(const uint8_t *buff, unsigned len, size_t offset) const
 
     if(kv_file->RandomWrite(buff, len, offset) != len)
         throw (int) MBError::WRITE_ERROR;
-}
-
-void DictMem::CloseHeaderFile()
-{
-    header_file->UnMapFile();
-    header_file->Close();
-    header = NULL;
-    lfree = NULL;
-}
-
-int DictMem::OpenHeaderFile()
-{
-    if(!header_file->IsOpen())
-        header_file->Open();
-    if(!header_file->IsOpen())
-    {
-        Logger::Log(LOG_LEVEL_ERROR, std::string("failed to open headr file ") + header_file->GetFilePath());
-        return MBError::OPEN_FAILURE;
-    }
-    if(header == NULL)
-        header = (IndexHeader *) header_file->MapFile(sizeof(IndexHeader), 0, false);
-    if(header == NULL)
-    {
-        Logger::Log(LOG_LEVEL_ERROR, std::string("failed to map headr file ") + header_file->GetFilePath());
-        return MBError::MMAP_FAILED;
-    }
-
-    return MBError::SUCCESS;
 }
 
 }

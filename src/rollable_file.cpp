@@ -32,6 +32,7 @@
 #include "rollable_file.h"
 #include "logger.h"
 #include "error.h"
+#include "resource_pool.h"
 
 namespace mabain {
 
@@ -115,16 +116,6 @@ void RollableFile::InitShmSlidingAddr(std::atomic<size_t> *shm_sliding_addr)
 
 void RollableFile::Close()
 {
-    for (std::vector<MmapFileIO*>::iterator it = files.begin();
-         it != files.end(); ++it)
-    {
-        if(*it != NULL)
-        {
-            delete *it;
-            *it = NULL;
-        }
-    }
-
     if(sliding_addr != NULL)
     {
         munmap(sliding_addr, sliding_size);
@@ -155,41 +146,18 @@ int RollableFile::OpenAndMapBlockFile(int block_order)
     assert(files[block_order] == NULL);
 #endif
 
-    if(mode & CONSTS::ACCESS_MODE_WRITER)
-    {
-        files[block_order] = new MmapFileIO(path+ss.str(), O_RDWR | O_CREAT, block_size,
-                                            mode & CONSTS::SYNC_ON_WRITE);
-    }
-    else
-    {
-        int rw_mode = O_RDONLY;
-        files[block_order] = new MmapFileIO(path+ss.str(), rw_mode, 0, mode & CONSTS::SYNC_ON_WRITE);
-    }
-
-    if(!files[block_order]->IsOpen())
-    {
-        delete files[block_order];
-        files[block_order] = NULL;
-        return MBError::OPEN_FAILURE;
-    }
-
+    bool map_file;
     if(mmap_mem > mem_used)
-    {
-        if(files[block_order]->MapFile(block_size, 0) != NULL)
-        {
-            mem_used += block_size;
-            // If file is mmaped, close file descriptor
-            files[block_order]->Close();
-        }
-        else
-        {
-            char err_buf[32];
-            rval = MBError::MMAP_FAILED;
-            Logger::Log(LOG_LEVEL_WARN, "failed to mmap file %s:%s", (path+ss.str()).c_str(),
-                    strerror_r(errno, err_buf, sizeof(err_buf)));
-        }
-    }
+        map_file = true; 
+    else
+        map_file = false;
 
+    files[block_order] = ResourcePool::getInstance().OpenFile(path+ss.str(),
+                                                              mode,
+                                                              block_size,
+                                                              map_file);
+    if(map_file)
+        mem_used += block_size;
     return rval;
 }
 
@@ -448,35 +416,12 @@ void RollableFile::ResetSlidingWindow()
 
 void RollableFile::Flush()
 {
-    for (std::vector<MmapFileIO*>::iterator it = files.begin();
+    for (std::vector<std::shared_ptr<MmapFileIO>>::iterator it = files.begin();
          it != files.end(); ++it)
     {
         if(*it != NULL)
         {
             (*it)->Flush();
-        }
-    }
-}
-
-void RollableFile::RemoveUnusedFiles(size_t max_offset)
-{
-    size_t start_off = 0;
-    for(unsigned i = 1; i < files.size(); i++)
-    {
-        start_off += block_size;
-
-        if(start_off > max_offset && files[i] != NULL)
-        {
-            if(files[i]->IsMapped())
-            {
-                if(mem_used > block_size)
-                    mem_used -= block_size;
-                else
-                    mem_used = 0;
-            }
-
-            delete files[i];
-            files[i] = NULL;
         }
     }
 }

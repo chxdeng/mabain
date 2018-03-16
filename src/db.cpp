@@ -32,6 +32,7 @@
 #include "integer_4b_5b.h"
 #include "async_writer.h"
 #include "mb_backup.h"
+#include "resource_pool.h"
 
 namespace mabain {
 
@@ -71,6 +72,7 @@ int DB::Close()
         rval = status;
     }
 
+    ResourcePool::getInstance().DecRefCountByDB(mb_dir + "_mabain_");
     status = MBError::DB_CLOSED;
     Logger::Log(LOG_LEVEL_INFO, "connector %u disconnected from DB", identifier);
     return rval;
@@ -167,9 +169,9 @@ void DB::InitDB(MBConfig &config)
     if(ValidateConfig(config) != MBError::SUCCESS)
         return;
 
-	// save the configuration
-	memcpy(&dbConfig, &config, sizeof(MBConfig));
-	dbConfig.mbdir = NULL;
+    // save the configuration
+    memcpy(&dbConfig, &config, sizeof(MBConfig));
+    dbConfig.mbdir = NULL;
 
     // If id not given, use thread ID
     if(config.connect_id == 0)
@@ -596,36 +598,6 @@ void DB::SetLogFile(const std::string &log_file)
 void DB::CloseLogFile()
 {
     Logger::Close();
-}
-
-void DB::CloseDBFiles()
-{
-    // Only do this for non async writer mode or reader mode
-    if((options & CONSTS::CONSTS::ACCESS_MODE_WRITER) && async_writer != NULL)
-        return;
-
-    if(status != MBError::SUCCESS)
-        return;
-    dict->CloseDBFiles();
-    lock.Init(NULL);
-    status = MBError::DB_CLOSED;
-}
-
-int DB::OpenDBFiles()
-{
-    // Only do this for non async writer mode or reader mode
-    if((options & CONSTS::CONSTS::ACCESS_MODE_WRITER) && async_writer != NULL)
-        return MBError::SUCCESS;
-
-    if(status != MBError::DB_CLOSED)
-        return status;
-    int rval = dict->OpenDBFiles();
-    if(rval == MBError::SUCCESS)
-        status = MBError::SUCCESS;
-
-    lock.Init(dict->GetShmLockPtrs());
-
-    return rval;
 }
 
 } // namespace mabain

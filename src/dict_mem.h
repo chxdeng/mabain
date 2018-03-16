@@ -20,6 +20,7 @@
 #define __DICTMEM_H__
 
 #include <string>
+#include <memory>
 #include <stdint.h>
 #include <string.h>
 #include <pthread.h>
@@ -90,8 +91,6 @@ public:
     void InitLockFreePtr(LockFree *lf);
 
     void Flush() const;
-    void CloseHeaderFile();
-    int  OpenHeaderFile();
 
     // Updates in RC mode
     size_t InitRootNode_RC();
@@ -128,7 +127,7 @@ private:
     LockFree *lfree;
 
     // header file
-    MmapFileIO *header_file;
+    std::shared_ptr<MmapFileIO> header_file;
 
     size_t root_offset_rc;
 };

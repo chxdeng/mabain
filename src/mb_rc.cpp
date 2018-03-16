@@ -308,7 +308,6 @@ void ResourceCollection::Finish()
 
     header->rc_m_index_off_pre = 0;
     header->rc_m_data_off_pre = 0;
-    dict->RemoveUnusedDBFiles();
 }
 
 bool ResourceCollection::MoveIndexBuffer(int phase, size_t &offset_src, int size)

@@ -44,6 +44,7 @@ public:
 
         mbconf.options = CONSTS::ACCESS_MODE_READER | CONSTS::USE_SLIDING_WINDOW;
         db = new DB(mbconf);
+std::cout<<"DDDDDDDD "<<db->Status()<<"\n";
         assert(db->is_open());
         assert(db->SetAsyncWriterPtr(db_async) == MBError::SUCCESS);
         assert(db->AsyncWriterEnabled());
