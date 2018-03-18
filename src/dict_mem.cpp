@@ -781,7 +781,7 @@ size_t DictMem::InitRootNode_RC()
     }
 
     if(node_move)
-        WriteData(root_node, node_size[NUM_ALPHABET-1], root_offset);
+        WriteData(root_node, node_size[NUM_ALPHABET-1], root_offset_rc);
 
     return root_offset_rc;
 }
