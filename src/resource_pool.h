@@ -21,6 +21,7 @@
 
 #include <map>
 #include <memory>
+#include <string>
 #include <pthread.h>
 
 #include "mmap_file.h"
@@ -37,8 +38,11 @@ public:
     ~ResourcePool();
 
     std::shared_ptr<MmapFileIO> OpenFile(const std::string &fpath, int mode,
-                                         size_t file_size, bool &map_file);
-    void DecRefCountByDB(const std::string &db_path);
+                                         size_t file_size, bool &map_file,
+                                         bool create_file);
+    void RemoveResourceByDB(const std::string &db_path);
+    void RemoveAll();
+    bool CheckExistence(const std::string &header_path);
 
     static ResourcePool& getInstance() {
         static ResourcePool instance; // only one instance per process

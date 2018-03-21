@@ -72,7 +72,6 @@ int DB::Close()
         rval = status;
     }
 
-    ResourcePool::getInstance().DecRefCountByDB(mb_dir + "_mabain_");
     status = MBError::DB_CLOSED;
     Logger::Log(LOG_LEVEL_INFO, "connector %u disconnected from DB", identifier);
     return rval;
@@ -182,27 +181,8 @@ void DB::InitDB(MBConfig &config)
         mb_dir += "/";
     options = config.options;
 
-    // Check if the DB directory exist with proper permission
-    if(access(mb_dir.c_str(), F_OK))
-    {
-        char err_buf[32];
-        std::cerr << "database directory check for " + mb_dir + " failed: " +
-                     strerror_r(errno, err_buf, sizeof(err_buf)) << std::endl;
-        status = MBError::NO_DB;
-        return;
-    }
-
-    Logger::Log(LOG_LEVEL_INFO, "connector %u DB options: %d",
-                config.connect_id, config.options);
-
-    // Check if DB exist. This can be done by check existence of the first index file.
-    // If this is the first time the DB is opened and it is in writer mode, then we
-    // need to update the header for the first time. If only reader access mode is
-    // required and the file does not exist, we should bail here and the DB open will
-    // not be successful.
     bool init_header = false;
-    std::string header_file = mb_dir + "_mabain_h";
-    if(access(header_file.c_str(), R_OK))
+    if(config.options & CONSTS::MEMORY_ONLY_MODE)
     {
         if(config.options & CONSTS::ACCESS_MODE_WRITER)
         {
@@ -210,10 +190,42 @@ void DB::InitDB(MBConfig &config)
         }
         else
         {
-            Logger::Log(LOG_LEVEL_ERROR, "database " + mb_dir + ": check failed");
+            init_header = false;
+            if(!ResourcePool::getInstance().CheckExistence(mb_dir + "_mabain_h"))
+                status = MBError::NO_DB;
+        }
+    }
+    else
+    {
+        // Check if the DB directory exist with proper permission
+        if(access(mb_dir.c_str(), F_OK))
+        {
+            char err_buf[32];
+            std::cerr << "database directory check for " + mb_dir + " failed: " +
+                         strerror_r(errno, err_buf, sizeof(err_buf)) << std::endl;
             status = MBError::NO_DB;
             return;
         }
+        Logger::Log(LOG_LEVEL_INFO, "connector %u DB options: %d",
+                    config.connect_id, config.options);
+        // Check if DB exist. This can be done by check existence of the first index file.
+        // If this is the first time the DB is opened and it is in writer mode, then we
+        // need to update the header for the first time. If only reader access mode is
+        // required and the file does not exist, we should bail here and the DB open will
+        // not be successful.
+        std::string header_file = mb_dir + "_mabain_h";
+        if(access(header_file.c_str(), R_OK))
+        {
+            if(config.options & CONSTS::ACCESS_MODE_WRITER)
+                init_header = true;
+            else
+                status = MBError::NO_DB;
+        }
+    }
+    if(status == MBError::NO_DB)
+    {
+        Logger::Log(LOG_LEVEL_ERROR, "database " + mb_dir + ": check failed");
+        return;
     }
 
     dict = new Dict(mb_dir, init_header, config.data_size, config.options,
@@ -406,6 +418,8 @@ int DB::Backup(const char *bk_dir)
 {
     if(status != MBError::SUCCESS)
         return MBError::NOT_INITIALIZED;
+    if(options & MMAP_ANONYMOUS_MODE)
+        return MBError::NOT_ALLOWED;
 
     if(async_writer != NULL)
         return async_writer->Backup(bk_dir);

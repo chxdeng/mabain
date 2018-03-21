@@ -100,8 +100,6 @@ RollableFile::RollableFile(const std::string &fpath, size_t blocksize, size_t me
     }
 
     files.assign(3, NULL);
-    // Add the first file
-    OpenAndMapBlockFile(0);
     if(mode & CONSTS::SYNC_ON_WRITE)
         Logger::Log(LOG_LEVEL_INFO, "Sync is turned on for " + fpath);
 }
@@ -128,7 +126,7 @@ RollableFile::~RollableFile()
     Close();
 }
 
-int RollableFile::OpenAndMapBlockFile(int block_order)
+int RollableFile::OpenAndMapBlockFile(int block_order, bool create_file)
 {
     if(block_order >= max_num_block)
     {
@@ -151,13 +149,18 @@ int RollableFile::OpenAndMapBlockFile(int block_order)
         map_file = true; 
     else
         map_file = false;
+    if(!map_file && (mode & CONSTS::MEMORY_ONLY_MODE))
+        return MBError::NO_MEMORY;
 
     files[block_order] = ResourcePool::getInstance().OpenFile(path+ss.str(),
                                                               mode,
                                                               block_size,
-                                                              map_file);
+                                                              map_file,
+                                                              create_file);
     if(map_file)
         mem_used += block_size;
+    else if(mode & CONSTS::MEMORY_ONLY_MODE)
+        rval = MBError::MMAP_FAILED;
     return rval;
 }
 
@@ -177,7 +180,7 @@ size_t RollableFile::CheckAlignment(size_t offset, int size)
     return offset;
 }
 
-int RollableFile::CheckAndOpenFile(int order)
+int RollableFile::CheckAndOpenFile(int order, bool create_file)
 {
     int rval = MBError::SUCCESS;
 
@@ -185,7 +188,7 @@ int RollableFile::CheckAndOpenFile(int order)
         files.resize(order+3, NULL);
 
     if(files[order] == NULL)
-        rval = OpenAndMapBlockFile(order);
+        rval = OpenAndMapBlockFile(order, create_file);
 
     return rval;
 }
@@ -195,7 +198,7 @@ int RollableFile::CheckAndOpenFile(int order)
 uint8_t* RollableFile::GetShmPtr(size_t offset, int size)
 {
     int order = offset / block_size;
-    int rval = CheckAndOpenFile(order);
+    int rval = CheckAndOpenFile(order, false);
 
     if(rval != MBError::SUCCESS)
         return NULL;
@@ -226,7 +229,7 @@ int RollableFile::Reserve(size_t &offset, int size, uint8_t* &ptr, bool map_new_
     offset = CheckAlignment(offset, size);
 
     int order = offset / block_size;
-    rval = CheckAndOpenFile(order);
+    rval = CheckAndOpenFile(order, true);
     if(rval != MBError::SUCCESS)
         return rval;
 
@@ -317,7 +320,7 @@ uint8_t* RollableFile::NewSlidingMapAddr(int order, size_t offset, int size)
 size_t RollableFile::RandomWrite(const void *data, size_t size, off_t offset)
 {
     int order = offset / block_size;
-    int rval = CheckAndOpenFile(order);
+    int rval = CheckAndOpenFile(order, false);
     if(rval != MBError::SUCCESS)
         return 0;
 
@@ -368,7 +371,7 @@ void* RollableFile::NewReaderSlidingMap(int order)
 size_t RollableFile::RandomRead(void *buff, size_t size, off_t offset)
 {
     int order = offset / block_size;
-    int rval = CheckAndOpenFile(order);
+    int rval = CheckAndOpenFile(order, false);
     if(rval != MBError::SUCCESS && rval != MBError::MMAP_FAILED)
         return 0;
 

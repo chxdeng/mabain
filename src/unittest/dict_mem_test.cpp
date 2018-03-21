@@ -23,6 +23,7 @@
 #include "../dict_mem.h"
 #include "../drm_base.h"
 #include "../integer_4b_5b.h"
+#include "../resource_pool.h"
 
 using namespace mabain;
 
@@ -66,6 +67,7 @@ public:
     }
 
     void DestroyDMM() {
+        ResourcePool::getInstance().RemoveAll();
         if(dmm != NULL) {
             dmm->Destroy();
             delete dmm;

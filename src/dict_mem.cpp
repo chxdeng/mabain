@@ -73,10 +73,14 @@ DictMem::DictMem(const std::string &mbdir, bool init_header, size_t memsize,
 
     assert(sizeof(IndexHeader) <= (unsigned) RollableFile::page_size);
     bool map_hdr = true;
+    bool create_hdr = false;
+    if(mode & CONSTS::ACCESS_MODE_WRITER)
+        create_hdr = true;
     header_file = ResourcePool::getInstance().OpenFile(mbdir + "_mabain_h",
                                                        mode,
                                                        RollableFile::page_size,
-                                                       map_hdr);
+                                                       map_hdr,
+                                                       create_hdr);
     header = (IndexHeader *) header_file->GetMapAddr();
     if(header == NULL)
         return;

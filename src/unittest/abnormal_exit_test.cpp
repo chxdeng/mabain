@@ -23,6 +23,7 @@
 #include "../dict.h"
 #include "../dict_mem.h"
 #include "./test_key.h"
+#include "../resource_pool.h"
 
 using namespace mabain;
 
@@ -57,6 +58,7 @@ public:
             delete db;
             db = NULL;
         }
+        ResourcePool::getInstance().RemoveAll();
     }
 
     void Populate(int count) {

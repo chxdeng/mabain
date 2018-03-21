@@ -20,6 +20,7 @@
 
 #include "resource_pool.h"
 #include "mabain_consts.h"
+#include "mmap_file.h"
 
 namespace mabain {
 
@@ -33,8 +34,24 @@ ResourcePool::~ResourcePool()
     pthread_mutex_destroy(&pool_mutex);
 }
 
-// decrement reference count for shared pointer
-void ResourcePool::DecRefCountByDB(const std::string &db_path)
+void ResourcePool::RemoveAll()
+{
+   pthread_mutex_lock(&pool_mutex);
+   file_pool.clear();
+   pthread_mutex_unlock(&pool_mutex);
+}
+
+// check if a in-memory db already exists
+bool ResourcePool::CheckExistence(const std::string &header_path)
+{
+    pthread_mutex_lock(&pool_mutex);
+    auto search = file_pool.find(header_path);
+    pthread_mutex_unlock(&pool_mutex);
+
+    return (search != file_pool.end());
+}
+
+void ResourcePool::RemoveResourceByDB(const std::string &db_path)
 {
     pthread_mutex_lock(&pool_mutex);
 
@@ -52,7 +69,8 @@ void ResourcePool::DecRefCountByDB(const std::string &db_path)
 std::shared_ptr<MmapFileIO> ResourcePool::OpenFile(const std::string &fpath,
                                                    int mode,
                                                    size_t file_size,
-                                                   bool &map_file)
+                                                   bool &map_file,
+                                                   bool create_file)
 {
     std::shared_ptr<MmapFileIO> mmap_file;
 
@@ -61,25 +79,29 @@ std::shared_ptr<MmapFileIO> ResourcePool::OpenFile(const std::string &fpath,
     auto search = file_pool.find(fpath);
     if(search == file_pool.end())
     {
+        int flags = O_RDWR;
+        if(create_file)
+            flags |= O_CREAT;
+        if(mode & CONSTS::MEMORY_ONLY_MODE)
+            flags |= MMAP_ANONYMOUS_MODE;
+
         mmap_file = std::shared_ptr<MmapFileIO>
                     (
-                         new MmapFileIO(fpath,
-                                        O_RDWR | O_CREAT,
-                                        file_size,
-                                        mode & CONSTS::SYNC_ON_WRITE)
+                        new MmapFileIO(fpath,
+                                       flags,
+                                       file_size,
+                                       mode & CONSTS::SYNC_ON_WRITE)
                     );
         if(map_file)
         {
             if(mmap_file->MapFile(file_size, 0) != NULL)
             {
-                mmap_file->Close();
+                if(!(mode & CONSTS::MEMORY_ONLY_MODE))
+                    mmap_file->Close();
             }
             else
             {
-                char err_buf[32];
                 map_file = false;
-                Logger::Log(LOG_LEVEL_WARN, "failed to mmap file %s:%s", fpath.c_str(),
-                    strerror_r(errno, err_buf, sizeof(err_buf)));
             }
         }
 

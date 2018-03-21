@@ -56,8 +56,8 @@ public:
     static int ShmSync(uint8_t *addr, int size);
 
 private:
-    int      OpenAndMapBlockFile(int block_order);
-    int      CheckAndOpenFile(int block_order);
+    int      OpenAndMapBlockFile(int block_order, bool create_file);
+    int      CheckAndOpenFile(int block_order, bool create_file);
     uint8_t* NewSlidingMapAddr(int order, size_t offset, int size);
     void*    NewReaderSlidingMap(int order);
 

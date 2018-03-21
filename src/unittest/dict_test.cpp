@@ -51,7 +51,7 @@ public:
         }
     }
     virtual void TearDown() {
-        ResourcePool::getInstance().DecRefCountByDB(std::string(DICT_TEST_DIR) + "_mabain_");
+        ResourcePool::getInstance().RemoveAll();
         std::string cmd = std::string("rm -rf ") + DICT_TEST_DIR + "/_*";
         if(system(cmd.c_str()) != 0) {
         }
@@ -311,6 +311,7 @@ TEST_F(DictTest, WriteData_test)
     data_size = 14;
     offset = 111;
     header->m_data_offset = offset + data_size;
+    dict->Reserve(offset, data_size, shm_ptr);
     dict->WriteData((const uint8_t *)FAKE_DATA, data_size, offset);
     shm_ptr = dict->GetShmPtr(offset, data_size); 
     EXPECT_EQ(memcmp(shm_ptr, FAKE_DATA, data_size), 0);

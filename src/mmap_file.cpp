@@ -44,6 +44,12 @@ MmapFileIO::MmapFileIO(const std::string &fpath, int mode, off_t filesize, bool 
     max_offset = 0;
     curr_offset = 0;
 
+    if(options & MMAP_ANONYMOUS_MODE)
+    {
+        // Do not open file in anonymous mode.
+        return;
+    }
+
     Logger::Log(LOG_LEVEL_DEBUG, "opening file " + fpath);
 
     int fd = Open();
@@ -77,16 +83,28 @@ uint8_t* MmapFileIO::MapFile(size_t size, off_t offset, bool sliding)
 {
     int mode = PROT_READ;
     if(options & O_RDWR)
-    {
         mode |= PROT_WRITE;
+
+    if(options & MMAP_ANONYMOUS_MODE)
+    {
+        assert(offset == 0 && !sliding);
+        addr = static_cast<unsigned char *>(mmap(NULL, size, mode,
+                                  MAP_SHARED | MAP_ANONYMOUS, -1, 0));
     }
-    addr = static_cast<unsigned char *>(FileIO::MapFile(size, mode, MAP_SHARED, offset));
+    else
+    {
+        addr = static_cast<unsigned char *>(FileIO::MapFile(size, mode,
+                                  MAP_SHARED, offset));
+    }
+
     if(addr == MAP_FAILED)
     {
-        Logger::Log(LOG_LEVEL_WARN, "mmap (%s) failed errno=%d offset=%llu size=%llu",
+        Logger::Log(LOG_LEVEL_WARN, "%s mmap (%s) failed errno=%d offset=%llu size=%llu",
+                    (options & MMAP_ANONYMOUS_MODE) ? "anon":"",
                     path.c_str(), errno, offset, size);
         return NULL;
     }
+
     if(!sliding)
     {
         mmap_file = true;
@@ -313,6 +331,9 @@ uint8_t* MmapFileIO::GetMapAddr() const
 
 void MmapFileIO::Flush()
 {
+    if(options & MMAP_ANONYMOUS_MODE)
+        return;
+
     if(addr != NULL)
 	msync(addr, mmap_size, MS_SYNC);
     FileIO::Flush();
