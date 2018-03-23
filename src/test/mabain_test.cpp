@@ -630,7 +630,7 @@ int main(int argc, char *argv[])
 
         if(remove_db) {
             clean_db_dir();
-            ResourcePool::getInstance().RemoveResourceByDB(std::string(MB_DIR) + "_mabain_"); // need to remove resouce for next run
+            ResourcePool::getInstance().RemoveAll(); // need to remove resouce for next run
             mbconf.block_size_index += BLOCK_SIZE_ALIGN;
             mbconf.block_size_data  += BLOCK_SIZE_ALIGN;
         }
