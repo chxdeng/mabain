@@ -130,8 +130,9 @@ public:
     int Backup(const char *backup_dir);
 
     // Close the DB handle
-    int Close();
+    int  Close();
     void Flush() const;
+    static void ClearResources(const std::string &path);
 
     // Garbage collection
     // min_index_rc_size and min_data_rc_size are the threshold for trigering garbage

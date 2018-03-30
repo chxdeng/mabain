@@ -549,6 +549,7 @@ static void RemoveDB()
     cmd += "lmdb/*";
 #elif MABAIN
     cmd += "mabain/*";
+    mabain::DB::ClearResources(std::string("/var/tmp/"));
 #endif
 
     if(system(cmd.c_str()) != 0) {

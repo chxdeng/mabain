@@ -289,6 +289,8 @@ const char* DB::StatusStr() const
 // Find the exact key match
 int DB::Find(const char* key, int len, MBData &mdata) const
 {
+    if(key == NULL)
+        return MBError::INVALID_ARG;
     if(status != MBError::SUCCESS)
         return MBError::NOT_INITIALIZED;
     // Writer in async mode cannot be used for lookup
@@ -307,6 +309,8 @@ int DB::Find(const std::string &key, MBData &mdata) const
 // repeatedly if data.next is true.
 int DB::FindPrefix(const char* key, int len, MBData &data) const
 {
+    if(key == NULL)
+        return MBError::INVALID_ARG;
     if(status != MBError::SUCCESS)
         return MBError::NOT_INITIALIZED;
     // Writer in async mode cannot be used for lookup
@@ -326,6 +330,8 @@ int DB::FindPrefix(const char* key, int len, MBData &data) const
 // Find the longest prefix match
 int DB::FindLongestPrefix(const char* key, int len, MBData &data) const
 {
+    if(key == NULL)
+        return MBError::INVALID_ARG;
     if(status != MBError::SUCCESS)
         return MBError::NOT_INITIALIZED;
     // Writer in async mode cannot be used for lookup
@@ -345,6 +351,8 @@ int DB::FindLongestPrefix(const std::string &key, MBData &data) const
 // Add a key-value pair
 int DB::Add(const char* key, int len, MBData &mbdata, bool overwrite)
 {
+    if(key == NULL)
+        return MBError::INVALID_ARG;
     if(status != MBError::SUCCESS)
         return MBError::NOT_INITIALIZED;
 
@@ -360,6 +368,8 @@ int DB::Add(const char* key, int len, MBData &mbdata, bool overwrite)
 
 int DB::Add(const char* key, int len, const char* data, int data_len, bool overwrite)
 {
+    if(key == NULL || data == NULL)
+        return MBError::INVALID_ARG;
     if(status != MBError::SUCCESS)
         return MBError::NOT_INITIALIZED;
 
@@ -384,6 +394,8 @@ int DB::Add(const std::string &key, const std::string &value, bool overwrite)
 
 int DB::Remove(const char *key, int len)
 {
+    if(key == NULL)
+        return MBError::INVALID_ARG;
     if(status != MBError::SUCCESS)
         return MBError::NOT_INITIALIZED;
 
@@ -416,6 +428,8 @@ int DB::RemoveAll()
 
 int DB::Backup(const char *bk_dir)
 {
+    if(bk_dir == NULL)
+        return MBError::INVALID_ARG;
     if(status != MBError::SUCCESS)
         return MBError::NOT_INITIALIZED;
     if(options & MMAP_ANONYMOUS_MODE)
@@ -612,6 +626,11 @@ void DB::SetLogFile(const std::string &log_file)
 void DB::CloseLogFile()
 {
     Logger::Close();
+}
+
+void DB::ClearResources(const std::string &path)
+{
+    ResourcePool::getInstance().RemoveResourceByDB(path);
 }
 
 } // namespace mabain
