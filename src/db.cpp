@@ -200,9 +200,8 @@ void DB::InitDB(MBConfig &config)
         // Check if the DB directory exist with proper permission
         if(access(mb_dir.c_str(), F_OK))
         {
-            char err_buf[32];
-            std::cerr << "database directory check for " + mb_dir + " failed: " +
-                         strerror_r(errno, err_buf, sizeof(err_buf)) << std::endl;
+            std::cerr << "database directory check for " + mb_dir + " failed errno: " +
+                          std::to_string(errno) << std::endl;
             status = MBError::NO_DB;
             return;
         }
