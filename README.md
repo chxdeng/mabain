@@ -24,11 +24,11 @@ Concurrent insertion and queries are supported internally using a lock-free mech
 Programs using the library DO NOT need to perform any locking on concurrent insertion
 and lookup in the multi-thread or multi-process reader/writer scenario.
 
-## Library Dependencies
+#### Library Dependencies
 ###
-    GLIBC
-    GNU readline library
-    C++ compiler that supports C++11 standard. GCC 4.8.1 was the first feature-complete implementation of the 2011 C++ standard, previously known as C++0x.
+    1. GLIBC
+    2. GNU readline library
+    3. C++ compiler that supports C++11 standard.
 
 ## Build and Install Mabain Library
 
