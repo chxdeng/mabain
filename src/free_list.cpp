@@ -194,10 +194,8 @@ int FreeList::LoadListFromDisk()
             return MBError::SUCCESS;
         }
 
-        char err_buf[32];
-        Logger::Log(LOG_LEVEL_ERROR, "cannot access %s with full permission: ",
-                                 list_path.c_str(),
-                                 strerror_r(errno, err_buf, sizeof(err_buf)));
+        Logger::Log(LOG_LEVEL_ERROR, "cannot access %s with full permission: %d",
+                    list_path.c_str(), errno);
         return MBError::NOT_ALLOWED;
     }
 
@@ -230,9 +228,8 @@ int FreeList::LoadListFromDisk()
     // Remove the file
     if(unlink(list_path.c_str()) != 0)
     {
-        char err_buf[32];
-        Logger::Log(LOG_LEVEL_ERROR, "failed to delete file %s: %s ", list_path.c_str(),
-                    strerror_r(errno, err_buf, sizeof(err_buf)));
+        Logger::Log(LOG_LEVEL_ERROR, "failed to delete file %s: %d ",
+                    list_path.c_str(), errno);
         return MBError::WRITE_ERROR;
     }
 
