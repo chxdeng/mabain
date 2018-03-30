@@ -9,7 +9,7 @@
 Mabain is a light-weighted C++ library that can be used for generic
 key-value store based on radix tree. It supports multi-thread and multi-process concurrency.
 Mabain can be used for exact and common prefix key match. Please see the examples in
-examples directory. Wildcard support is currently under development.
+examples directory.
 
 #### Shared Memory and Memcap
 
@@ -24,6 +24,12 @@ Concurrent insertion and queries are supported internally using a lock-free mech
 Programs using the library DO NOT need to perform any locking on concurrent insertion
 and lookup in the multi-thread or multi-process reader/writer scenario.
 
+## Library Dependencies
+###
+    GLIBC
+    GNU readline library
+    C++ compiler that supports C++11 standard. GCC 4.8.1 was the first feature-complete implementation of the 2011 C++ standard, previously known as C++0x.
+
 ## Build and Install Mabain Library
 
 You should be able to build mabain on any modern linux machines. Please setup the mabain
@@ -37,11 +43,13 @@ in /usr/local. To build and install run following commands in mabain home
 
     The command-line client is in ./binaries directory.
 
-    Usage: mbc -d mabain-directory [-im index-memcap] [-dm data-memcap] [-w]
+    Usage: mbc -d mabain-directory [-im index-memcap] [-dm data-memcap] [-w] [-e query] [-s script-file]
 	-d mabain databse directory
 	-im index memcap
 	-dm data memcap
 	-w running in writer mode
+        -e run query on command line
+	-s run queries in a file 
 
 ## Examples
 
