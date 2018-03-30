@@ -7,6 +7,7 @@
 #include "../async_writer.h"
 #include "../db.h"
 #include "./test_key.h"
+#include "../resource_pool.h"
 
 using namespace mabain;
 const char *db_dir = "/var/tmp/mabain_test/";
@@ -20,6 +21,7 @@ public:
         db_async = NULL;
         db = NULL;
         memset(&mbconf, 0, sizeof(mbconf));
+        ResourcePool::getInstance().RemoveAll();
         std::string cmd = std::string("rm ") + db_dir + "_mabain_*";
         if(system(cmd.c_str()) != 0) {
         }
