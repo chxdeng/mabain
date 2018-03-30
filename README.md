@@ -1,8 +1,8 @@
 # mabain
 
-[![Build Status](https://travis-ci.org/spadalkar/mabain.svg?branch=master)](https://travis-ci.org/spadalkar/mabain)
+[![Build Status](https://travis-ci.org/chxdeng/mabain.svg?branch=master)](https://travis-ci.org/chxdeng/mabain)
 
-[![Coverage Status](https://coveralls.io/repos/github/spadalkar/mabain/badge.svg)](https://coveralls.io/github/spadalkar/mabain)
+[![Coverage Status](https://coveralls.io/repos/github/chxdeng/mabain/badge.svg)](https://coveralls.io/github/chxdeng/mabain)
 
 ## mabain: a key-value store library
 
