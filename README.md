@@ -48,7 +48,7 @@ in /usr/local. To build and install run following commands in mabain home
 	-im index memcap
 	-dm data memcap
 	-w running in writer mode
-        -e run query on command line
+	-e run query on command line
 	-s run queries in a file 
 
 ## Examples
