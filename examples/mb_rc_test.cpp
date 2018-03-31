@@ -35,6 +35,7 @@ static std::atomic<int> write_index;
 static bool stop_processing = false;
 static std::string mbdir = "/var/tmp/mabain_test/";
 
+static int key_list_size = 10;
 std::string key_list[] = {
     "facebook",
     "facetime",
@@ -114,7 +115,7 @@ static void GarbageLookup()
     assert(db_r->is_open());
     MBData mbd;
 
-    for(int i = 0; i < 10; i++) {
+    for(int i = 0; i < key_list_size; i++) {
         int rval = db_r->Find(key_list[i], mbd);
         if(rval != MBError::SUCCESS) {
             std::cout << key_list[i] << ": " << MBError::get_error_str(rval) << std::endl;
@@ -163,7 +164,7 @@ static void GarbageCollectResources()
 
     db->CollectResource(1, 1);
 
-    for(int i = 0; i < max_key; i++) {
+    for(int i = 0; i < key_list_size; i++) {
         assert(db->Add(key_list[i], key_list[i]) == MBError::SUCCESS);
     }
 
