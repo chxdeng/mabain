@@ -33,6 +33,7 @@
 #include "async_writer.h"
 #include "mb_backup.h"
 #include "resource_pool.h"
+#include "util/shm_mutex.h"
 
 namespace mabain {
 
@@ -237,9 +238,7 @@ void DB::InitDB(MBConfig &config)
     {
         Logger::Log(LOG_LEVEL_INFO, "open a new db %s", mb_dir.c_str());
         dict->Init(identifier);
-#ifdef __SHM_LOCK__
-        dict->InitShmMutex();
-#endif
+        dict->InitShmObjects();
     }
 
     if(dict->Status() != MBError::SUCCESS)
@@ -355,9 +354,11 @@ int DB::Add(const char* key, int len, MBData &mbdata, bool overwrite)
     if(status != MBError::SUCCESS)
         return MBError::NOT_INITIALIZED;
 
+#ifndef __SHM_QUEUE__
     if(async_writer != NULL)
         return async_writer->Add(key, len, reinterpret_cast<const char *>(mbdata.buff),
                                  mbdata.data_len, overwrite);
+#endif
 
     int rval;
     rval = dict->Add(reinterpret_cast<const uint8_t*>(key), len, mbdata, overwrite);
@@ -372,8 +373,10 @@ int DB::Add(const char* key, int len, const char* data, int data_len, bool overw
     if(status != MBError::SUCCESS)
         return MBError::NOT_INITIALIZED;
 
+#ifndef __SHM_QUEUE__
     if(async_writer != NULL)
         return async_writer->Add(key, len, data, data_len, overwrite);
+#endif
 
     MBData mbdata;
     mbdata.data_len = data_len;
@@ -398,8 +401,10 @@ int DB::Remove(const char *key, int len)
     if(status != MBError::SUCCESS)
         return MBError::NOT_INITIALIZED;
 
+#ifndef __SHM_QUEUE__
     if(async_writer != NULL)
         return async_writer->Remove(key, len);
+#endif
 
     int rval;
     rval = dict->Remove(reinterpret_cast<const uint8_t*>(key), len);
@@ -417,8 +422,10 @@ int DB::RemoveAll()
     if(status != MBError::SUCCESS)
         return MBError::NOT_INITIALIZED;
 
+#ifndef __SHM_QUEUE__
     if(async_writer != NULL)
         return async_writer->RemoveAll();
+#endif
 
     int rval;
     rval = dict->RemoveAll();
@@ -427,6 +434,9 @@ int DB::RemoveAll()
 
 int DB::Backup(const char *bk_dir)
 {
+    if(options & CONSTS::MEMORY_ONLY_MODE)
+        return MBError::NOT_ALLOWED;
+
     if(bk_dir == NULL)
         return MBError::INVALID_ARG;
     if(status != MBError::SUCCESS)
@@ -434,8 +444,10 @@ int DB::Backup(const char *bk_dir)
     if(options & MMAP_ANONYMOUS_MODE)
         return MBError::NOT_ALLOWED;
 
+#ifndef __SHM_QUEUE__
     if(async_writer != NULL)
         return async_writer->Backup(bk_dir);
+#endif
         
     int rval;
     try {
@@ -450,8 +462,12 @@ int DB::Backup(const char *bk_dir)
 
 void DB::Flush() const
 {
+    if(options & CONSTS::MEMORY_ONLY_MODE)
+        return;
+
     if(status != MBError::SUCCESS)
         return;
+
     dict->Flush();
 }
 
@@ -461,9 +477,11 @@ int DB::CollectResource(int64_t min_index_rc_size, int64_t min_data_rc_size,
     if(status != MBError::SUCCESS)
         return status;
 
+#ifndef __SHM_QUEUE__
     if(async_writer != NULL)
         return async_writer->CollectResource(min_index_rc_size, min_data_rc_size,
                                              max_dbsz, max_dbcnt);
+#endif
 
     try {
         ResourceCollection rc(*this);
@@ -525,7 +543,10 @@ int DB::ClearLock() const
 {
 #ifdef __SHM_LOCK__
     // No db handler should hold mutex when this is called.
-    return dict->InitShmMutex();
+    if(status != MBError::SUCCESS)
+        return status;
+    IndexHeader *hdr = dict->GetHeaderPtr();
+    return InitShmRWLock(&hdr->mb_rw_lock);
 #else
     // Nothing needs to be done if we don't use shared memory mutex.
     return MBError::SUCCESS;
@@ -567,6 +588,7 @@ void DB::GetDBConfig(MBConfig &config) const
 
 int DB::SetAsyncWriterPtr(DB *db_writer)
 {
+#ifndef __SHM_QUEUE__
     if(db_writer == NULL)
         return MBError::INVALID_ARG;
     if(options & CONSTS::ACCESS_MODE_WRITER)
@@ -582,11 +604,13 @@ int DB::SetAsyncWriterPtr(DB *db_writer)
 
    db_writer->async_writer->UpdateNumUsers(1);
    async_writer = db_writer->async_writer;
+#endif
    return MBError::SUCCESS;
 }
 
 int DB::UnsetAsyncWriterPtr(DB *db_writer)
 {
+#ifndef __SHM_QUEUE__
     if(db_writer == NULL)
         return MBError::INVALID_ARG;
     if(options & CONSTS::ACCESS_MODE_WRITER)
@@ -602,19 +626,28 @@ int DB::UnsetAsyncWriterPtr(DB *db_writer)
 
     db_writer->async_writer->UpdateNumUsers(-1);
     async_writer = NULL;
+#endif
     return MBError::SUCCESS;
 }
 
 bool DB::AsyncWriterEnabled() const
 {
+#ifdef __SHM_QUEUE__
+    return true;
+#else
     return (async_writer != NULL);
+#endif
 }
 
 bool DB::AsyncWriterBusy() const
 {
+#ifdef __SHM_QUEUE__
+    return dict->SHMQ_Busy();
+#else
     if(async_writer != NULL)
         return async_writer->Busy();
-    return false;
+    return true;
+#endif
 }
 
 void DB::SetLogFile(const std::string &log_file)
