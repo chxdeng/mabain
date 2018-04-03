@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2017 Cisco Inc.
+ * Copyright (C) 2018 Cisco Inc.
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU General Public License, version 2,
@@ -26,6 +26,9 @@
 #include "mb_rc.h"
 #include "integer_4b_5b.h"
 #include "dict.h"
+#ifdef __SHM_QUEUE__
+#include "./util/shm_mutex.h"
+#endif
 
 namespace mabain {
 
@@ -73,7 +76,7 @@ AsyncWriter::AsyncWriter(DB *db_ptr)
         throw (int) MBError::NOT_INITIALIZED;
 
 #ifdef __SHM_QUEUE__
-    // initialize shared memory queue
+    // initialize shared memory queue pointer
     header = dict->GetHeaderPtr();
     if(header == NULL)
         throw (int) MBError::NOT_INITIALIZED;
@@ -348,8 +351,10 @@ int AsyncWriter::ProcessTask(int ntasks, bool rc_mode)
         rval = pthread_mutex_timedlock(&node_ptr->mutex, &tm_exp);
         if(rval == ETIMEDOUT)
         {
-            //TODOOO
-            abort();
+            Logger::Log(LOG_LEVEL_WARN, "mutex lock timeout, need to re-intialize");
+            InitShmMutex(&node_ptr->mutex);
+            count = ntasks;
+            continue;
         }
         else if(rval != 0)
 #else
@@ -416,14 +421,14 @@ int AsyncWriter::ProcessTask(int ntasks, bool rc_mode)
                     break;
             }
 
-            free_async_node(node_ptr);
-            node_ptr->in_use.store(false, std::memory_order_release);
-            pthread_cond_signal(&node_ptr->cond);
 #ifdef __SHM_QUEUE__
             header->writer_index++;
 #else
             writer_index++;
 #endif
+            free_async_node(node_ptr);
+            node_ptr->in_use.store(false, std::memory_order_release);
+            pthread_cond_signal(&node_ptr->cond);
             mbd.Clear();
             count++;
         }
@@ -451,6 +456,27 @@ int AsyncWriter::ProcessTask(int ntasks, bool rc_mode)
     return MBError::SUCCESS;
 }
 
+#ifdef __SHM_QUEUE__
+uint32_t AsyncWriter::NextShmSlot(uint32_t windex, uint32_t qindex)
+{
+    int cnt = 0;
+    while(windex != qindex)
+    {
+        if(queue[windex % MB_MAX_NUM_SHM_QUEUE_NODE].in_use.load(std::memory_order_consume))
+            break;
+        if(++cnt > MB_MAX_NUM_SHM_QUEUE_NODE)
+        {
+            windex = qindex;
+            break;
+        }
+
+        windex++;
+    }
+
+    return windex;
+}
+#endif
+
 void* AsyncWriter::async_writer_thread()
 {
     AsyncNode *node_ptr;
@@ -462,6 +488,7 @@ void* AsyncWriter::async_writer_thread()
     int64_t max_dbcount = MAX_6B_OFFSET;
 #ifdef __SHM_QUEUE__
     struct timespec tm_exp;
+    bool skip;
 #endif
 
     Logger::Log(LOG_LEVEL_INFO, "async writer started");
@@ -474,8 +501,10 @@ void* AsyncWriter::async_writer_thread()
         rval = pthread_mutex_timedlock(&node_ptr->mutex, &tm_exp);
         if(rval == ETIMEDOUT)
         {
-            //TODOOO
-            abort();
+            Logger::Log(LOG_LEVEL_WARN, "async writer shared memory mutex lock timeout, need to re-intialize");
+            InitShmMutex(&node_ptr->mutex);
+            header->writer_index++;
+            continue;
         }
         else if(rval != 0)
 #else
@@ -483,15 +512,40 @@ void* AsyncWriter::async_writer_thread()
         if(pthread_mutex_lock(&node_ptr->mutex) != 0)
 #endif
         {
-            Logger::Log(LOG_LEVEL_ERROR, "failed to lock mutex");
+            Logger::Log(LOG_LEVEL_ERROR, "async writer failed to lock shared memory mutex");
             throw (int) MBError::MUTEX_ERROR;
         }
 
+#ifdef __SHM_QUEUE__
+        skip = false;
+#endif
         while(!node_ptr->in_use.load(std::memory_order_consume))
         {
             if(stop_processing)
                 break;
+#ifdef __SHM_QUEUE__
+            uint32_t windex = header->writer_index;
+            uint32_t qindex = header->queue_index.load(std::memory_order_consume);
+            if(windex == qindex)
+            {
+                tm_exp.tv_sec = time(NULL) + MB_ASYNC_SHM_LOCK_TMOUT;
+                tm_exp.tv_nsec = 0; 
+                pthread_cond_timedwait(&node_ptr->cond, &node_ptr->mutex, &tm_exp);
+                if(node_ptr->in_use.load(std::memory_order_consume))
+                    break;
+                continue;
+            }
+            else
+            {
+                pthread_mutex_unlock(&node_ptr->mutex);
+                // Reader process may have exited unexpectedly. Recover index.
+                header->writer_index = NextShmSlot(windex, qindex);
+                skip = true;
+                break;
+            }
+#else
             pthread_cond_wait(&node_ptr->cond, &node_ptr->mutex);
+#endif
         }
 
         if(stop_processing && !node_ptr->in_use.load(std::memory_order_consume))
@@ -499,7 +553,10 @@ void* AsyncWriter::async_writer_thread()
             pthread_mutex_unlock(&node_ptr->mutex);
             break;
         }
-
+#ifdef __SHM_QUEUE__
+        if(skip)
+            continue;
+#endif
         // process the node
         switch(node_ptr->type)
         {
@@ -562,6 +619,11 @@ void* AsyncWriter::async_writer_thread()
                 break;
         }
 
+#ifdef __SHM_QUEUE__
+        header->writer_index++;
+#else
+        writer_index++;
+#endif
         free_async_node(node_ptr);
         node_ptr->in_use.store(false, std::memory_order_release);
         pthread_cond_signal(&node_ptr->cond);
@@ -577,11 +639,6 @@ void* AsyncWriter::async_writer_thread()
                         (int)node_ptr->type, MBError::get_error_str(rval));
         }
 
-#ifdef __SHM_QUEUE__
-        header->writer_index++;
-#else
-        writer_index++;
-#endif
         mbd.Clear();
 
         if(is_rc_running)

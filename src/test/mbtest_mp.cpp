@@ -1,7 +1,9 @@
+#include <string.h>
 #include <assert.h>
 #include <unistd.h>
 
-#include <../db.h>
+#include "../db.h"
+#include "./test_key.h"
 
 const char *db_dir = "/var/tmp/mabain_test";
 
@@ -13,6 +15,7 @@ int main(int argc, char *argv[])
     int options = CONSTS::ReaderOptions();
     int duration = 0; // in seconds
     int n0 = 0;
+    int key_type = MABAIN_TEST_KEY_TYPE_INT;
     for(int i = 1; i < argc; i++) {
         if(strcmp(argv[i], "-w") == 0) {
             options |= CONSTS::WriterOptions() | CONSTS::ASYNC_WRITER_MODE;
@@ -28,26 +31,44 @@ int main(int argc, char *argv[])
         } else if(strcmp(argv[i], "-t") == 0) {
             if(++i >= argc) abort();
             duration = atoi(argv[i]);
+        } else if(strcmp(argv[i], "-k") == 0) {
+            if(++i >= argc) abort();
+	    if(strcmp(argv[i], "int") == 0) {
+                key_type = MABAIN_TEST_KEY_TYPE_INT;
+            } else if(strcmp(argv[i], "sha1") == 0) {
+                key_type = MABAIN_TEST_KEY_TYPE_SHA_128;
+            } else {
+                key_type = MABAIN_TEST_KEY_TYPE_SHA_256;
+            }
         } else {
             std::cout << "unknown argument " << argv[i] << "\n";
         }
     }
 
-    uint32_t tm_stop = time(NULL) + duration;
-
+    DB::SetLogFile(std::string(db_dir) + "/mabain.log");
     DB *db = new DB(db_dir, options);
+    TestKey tkey(key_type);
     assert(db->is_open());
 
     for(int i = 0; i < num; i++) {
-        std::string kv = std::to_string(n0 + i);
+        std::string kv = tkey.get_key(n0 + i);
         db->Add(kv, kv);
     }
 
-    while(time(NULL) < tm_stop) {
-
-        sleep(1);
+    if(duration > 0) {
+        uint32_t tm_stop = time(NULL) + duration;
+        int tm_diff = tm_stop - time(NULL);
+        std::cout << "async writer will be running for " << tm_diff << " seconds.\n";
+        while(tm_diff > 0) {
+            //if(tm_diff % 60 == 0)
+            //    std::cout << "async writer will stop in " << (int)tm_diff << " seconds\n";
+            sleep(1);
+            tm_diff = tm_stop - time(NULL); 
+        }
+        std::cout << "async writer exited\n";
     }
 
     db->Close();
+    DB::CloseLogFile();
     return 0;
 }

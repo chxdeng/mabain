@@ -86,6 +86,9 @@ private:
     AsyncNode* AcquireSlot();
     int PrepareSlot(AsyncNode *node_ptr) const;
     void* async_writer_thread();
+#ifdef __SHM_QUEUE__
+    uint32_t NextShmSlot(uint32_t windex, uint32_t qindex);
+#endif
 
     // db pointer
     DB *db;

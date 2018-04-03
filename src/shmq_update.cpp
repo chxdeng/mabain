@@ -26,14 +26,10 @@
 
 namespace mabain {
 
-int Dict::SHMQ_Add(const char *key,
-                   int key_len,
-                   const char *data,
-                   int data_len,
+int Dict::SHMQ_Add(const char *key, int key_len, const char *data, int data_len,
                    bool overwrite)
 {
-    if(key_len > MB_ASYNC_SHM_KEY_SIZE ||
-       data_len > MB_ASYNC_SHM_DATA_SIZE)
+    if(key_len > MB_ASYNC_SHM_KEY_SIZE || data_len > MB_ASYNC_SHM_DATA_SIZE)
     {
         return MBError::OUT_OF_BOUND;
     }
@@ -114,21 +110,35 @@ int Dict::SHMQ_CollectResource(int64_t m_index_rc_size,
 
 AsyncNode* Dict::SHMQ_AcquireSlot() const
 {
-    struct timespec tm_exp;
     uint32_t index = header->queue_index.fetch_add(1, std::memory_order_release);
     AsyncNode *node_ptr = queue + (index % MB_MAX_NUM_SHM_QUEUE_NODE);
 
+    struct timespec tm_exp;
     tm_exp.tv_sec = time(NULL) + MB_ASYNC_SHM_LOCK_TMOUT;
     tm_exp.tv_nsec = 0;
     int rval = pthread_mutex_timedlock(&node_ptr->mutex, &tm_exp);
     if(rval != 0)
     {
-        Logger::Log(LOG_LEVEL_ERROR, "shm mutex lock failed: %d", rval);
+        Logger::Log(LOG_LEVEL_ERROR, "shared memory mutex lock failed: %d", rval);
         return NULL;
     }
+
     while(node_ptr->in_use.load(std::memory_order_consume))
     {
-        pthread_cond_wait(&node_ptr->cond, &node_ptr->mutex);
+        tm_exp.tv_sec += MB_ASYNC_SHM_LOCK_TMOUT;
+        rval =  pthread_cond_timedwait(&node_ptr->cond, &node_ptr->mutex, &tm_exp);
+        if(rval != 0)
+        {
+            Logger::Log(LOG_LEVEL_ERROR, "shared memory conditional wait failed: %d", rval);
+            if(rval == ETIMEDOUT)
+            {
+                 Logger::Log(LOG_LEVEL_INFO, "pthread_cond_timedwait timedout, "
+                             "check if async writer is running");
+            }
+            if((rval = pthread_mutex_unlock(&node_ptr->mutex)) != 0)
+                Logger::Log(LOG_LEVEL_ERROR, "shm mutex unlock failed: %d", rval);
+            return NULL;
+        }
     }
 
     return node_ptr;
@@ -140,14 +150,15 @@ int Dict::SHMQ_PrepareSlot(AsyncNode *node_ptr) const
     pthread_cond_signal(&node_ptr->cond);
     if(pthread_mutex_unlock(&node_ptr->mutex) != 0)
         return MBError::MUTEX_ERROR;
+
     return MBError::SUCCESS;
 }
 
 bool Dict::SHMQ_Busy() const
 {
-    uint32_t index = header->queue_index.load(std::memory_order_consume);
-    if(index != header->writer_index)
+    if(header->queue_index.load(std::memory_order_consume) != header->writer_index)
         return true;
+
     size_t rc_off = header->rc_root_offset.load(std::memory_order_consume);
     return rc_off != 0;
 }
