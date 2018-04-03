@@ -524,38 +524,43 @@ void* AsyncWriter::async_writer_thread()
             if(stop_processing)
                 break;
 #ifdef __SHM_QUEUE__
+            tm_exp.tv_sec = time(NULL) + MB_ASYNC_SHM_LOCK_TMOUT;
+            tm_exp.tv_nsec = 0; 
+            pthread_cond_timedwait(&node_ptr->cond, &node_ptr->mutex, &tm_exp);
+
             uint32_t windex = header->writer_index;
             uint32_t qindex = header->queue_index.load(std::memory_order_consume);
-            if(windex == qindex)
+            if(windex != qindex)
             {
-                tm_exp.tv_sec = time(NULL) + MB_ASYNC_SHM_LOCK_TMOUT;
-                tm_exp.tv_nsec = 0; 
-                pthread_cond_timedwait(&node_ptr->cond, &node_ptr->mutex, &tm_exp);
-                if(node_ptr->in_use.load(std::memory_order_consume))
-                    break;
-                continue;
-            }
-            else
-            {
-                pthread_mutex_unlock(&node_ptr->mutex);
                 // Reader process may have exited unexpectedly. Recover index.
-                header->writer_index = NextShmSlot(windex, qindex);
                 skip = true;
+                header->writer_index = NextShmSlot(windex, qindex);
                 break;
             }
+            continue;
 #else
             pthread_cond_wait(&node_ptr->cond, &node_ptr->mutex);
 #endif
         }
 
+#ifdef __SHM_QUEUE__
+        if(skip || stop_processing)
+        {
+            if(pthread_mutex_unlock(&node_ptr->mutex) != 0)
+            {
+                Logger::Log(LOG_LEVEL_ERROR, "async writer failed to unlock shared memory mutex");
+                throw (int) MBError::MUTEX_ERROR;
+            }
+            if(stop_processing)
+                break;
+            continue;
+        }
+#else
         if(stop_processing && !node_ptr->in_use.load(std::memory_order_consume))
         {
             pthread_mutex_unlock(&node_ptr->mutex);
             break;
         }
-#ifdef __SHM_QUEUE__
-        if(skip)
-            continue;
 #endif
         // process the node
         switch(node_ptr->type)

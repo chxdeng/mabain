@@ -52,16 +52,16 @@ int main(int argc, char *argv[])
 
     for(int i = 0; i < num; i++) {
         std::string kv = tkey.get_key(n0 + i);
-        db->Add(kv, kv);
+        int rval = db->Add(kv, kv);
+        if(rval != MBError::SUCCESS) {
+            std::cout << "failed to add " << kv << " :" << MBError::get_error_str(rval) << std::endl;
+        }
     }
 
     if(duration > 0) {
         uint32_t tm_stop = time(NULL) + duration;
         int tm_diff = tm_stop - time(NULL);
-        std::cout << "async writer will be running for " << tm_diff << " seconds.\n";
         while(tm_diff > 0) {
-            //if(tm_diff % 60 == 0)
-            //    std::cout << "async writer will stop in " << (int)tm_diff << " seconds\n";
             sleep(1);
             tm_diff = tm_stop - time(NULL); 
         }
