@@ -47,3 +47,7 @@ index:
 
 unit-test: build
 	make -C src unit-test
+
+.PHONY: docker
+docker:
+	docker build --rm -t chxdeng/mabain:latest .
