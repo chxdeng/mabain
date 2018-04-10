@@ -227,7 +227,7 @@ int Dict::Add(const uint8_t *key, int len, MBData &data, bool overwrite)
             header->count++;
             header->num_update++;
         }
-        
+
         return MBError::SUCCESS;
     }
 
@@ -1502,16 +1502,6 @@ int Dict::ExceptionRecovery()
 #ifdef __LOCK_FREE__
     lfree.WriterLockFreeStop();
 #endif
-
-    if(header->rc_root_offset != 0)
-    {
-        // Only perform the simplest recovery for now.
-        // This will ignore all newly added KV pairs during rc.
-        header->rc_root_offset = 0;
-        header->rc_count = 0;
-        header->m_index_offset = header->rc_m_index_off_pre;
-        header->m_data_offset = header->rc_m_data_off_pre;
-    }
 
     if(rval == MBError::SUCCESS)
     {
