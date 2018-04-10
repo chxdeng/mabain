@@ -269,9 +269,12 @@ void DB::InitDB(MBConfig &config)
                 (config.options & CONSTS::ACCESS_MODE_WRITER) ? "writing":"reading");
     status = MBError::SUCCESS;
 
-    // Run rc exception recovery
-    ResourceCollection rc(*this);
-    rc.ExceptionRecovery();
+    if(config.options & CONSTS::ACCESS_MODE_WRITER)
+    {
+        // Run rc exception recovery
+        ResourceCollection rc(*this);
+        rc.ExceptionRecovery();
+    }
 }
 
 int DB::Status() const

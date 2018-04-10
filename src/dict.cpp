@@ -1423,7 +1423,7 @@ int Dict::ExceptionRecovery()
         return MBError::NOT_INITIALIZED;
 
     int rval = MBError::SUCCESS;
-    if(header->excep_updating_status == EXCEP_STATUS_NONE && header->rc_root_offset == 0)
+    if(header->excep_updating_status == EXCEP_STATUS_NONE)
     {
         Logger::Log(LOG_LEVEL_INFO, "writer was shutdown successfully previously");
         return rval;

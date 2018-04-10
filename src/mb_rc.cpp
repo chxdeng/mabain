@@ -544,7 +544,7 @@ int ResourceCollection::ExceptionRecovery()
     {
         Logger::Log(LOG_LEVEL_WARN, "previous rc was not completed successfully, retrying...");
         try {
-            // This is a blocking call and should be when writer starts up.
+            // This is a blocking call and should be called when writer starts up.
             ReclaimResource(1, 1, 0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF, NULL);
         } catch (int err) {
             if(err != MBError::RC_SKIPPED)
