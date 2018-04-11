@@ -58,13 +58,13 @@ int ResourceCollection::LRUEviction()
     if(index_diff < 655)
         prune_diff = uint16_t(prune_diff * 0.35); // prune 35%
     else if(index_diff < 3276)
-        prune_diff = uint16_t(prune_diff * 0.25); // prune 25%
+        prune_diff = uint16_t(prune_diff * 0.30); // prune 30%
     else if(index_diff < 6554)
-        prune_diff = uint16_t(prune_diff * 0.15); // prune 15%
+        prune_diff = uint16_t(prune_diff * 0.25); // prune 25%
     else if(index_diff < 9830)
-        prune_diff = uint16_t(prune_diff * 0.10); // prune 10%
+        prune_diff = uint16_t(prune_diff * 0.20); // prune 20%
     else
-        prune_diff = uint16_t(prune_diff * 0.05); // prune 5%
+        prune_diff = uint16_t(prune_diff * 0.15); // prune 15%
     if(prune_diff == 0)
         prune_diff = 1;
 
