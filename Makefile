@@ -51,3 +51,4 @@ unit-test: build
 .PHONY: docker
 docker:
 	docker build --rm -t chxdeng/mabain:latest .
+	docker rmi $$(docker images -q -f dangling=true)
