@@ -25,6 +25,7 @@
 #include "mb_data.h"
 #include "error.h"
 #include "lock.h"
+#include "integer_4b_5b.h"
 
 namespace mabain {
 
@@ -142,7 +143,7 @@ public:
     // eviction will be ignored if db size is less than 0xFFFFFFFFFFFF and db count is
     // less than 0xFFFFFFFFFFFF.
     int CollectResource(int64_t min_index_rc_size = 33554432 , int64_t min_data_rc_size = 33554432,
-                        int64_t max_dbsiz = 0xFFFFFFFFFFFF, int64_t max_dbcnt = 0xFFFFFFFFFFFF);
+                        int64_t max_dbsiz = MAX_6B_OFFSET, int64_t max_dbcnt = MAX_6B_OFFSET);
 
     // Multi-thread update using async thread
     // FOR THIS TO WORK, WRITER MUST BE THE LAST ONE TO CLOSE HANDLE.

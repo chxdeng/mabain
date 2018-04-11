@@ -179,18 +179,12 @@ static void load_key_ids()
 
 static void store_key_ids()
 {
-    //std::ofstream ofs;
-    //std::string path = mbdir + "/key_id";
-    //ofs.open (mbdir.c_str(), std::ofstream::out);
-    //ofs << key_low << "\n";
-    //ofs << key_high << "\n";
-    //ofs.close();
-
     std::string path = mbdir + "/key_id";
     FILE *fp;
     fp = fopen(path.c_str(), "w");
     if(!fp) return;
-    fprintf(fp, "%d\n%d", (int)key_low.load(std::memory_order_consume), (int)key_high.load(std::memory_order_consume));
+    fprintf(fp, "%d\n%d", (int)key_low.load(std::memory_order_consume),
+                          (int)key_high.load(std::memory_order_consume));
     fclose(fp);
 }
 
@@ -245,7 +239,7 @@ void stop_mb_test()
     if(wid != 0) {
         if(pthread_join(wid, NULL) != 0) {
             std::cout << "cannot join mbtest thread\n";
-	}
+	      }
     }
 }
 
@@ -291,10 +285,9 @@ static void* run_mb_test(void *arg)
 
             std::cout << key_low.load(std::memory_order_consume) << ": "
                       << key_high.load(std::memory_order_consume) << std::endl;
-
             Prune(*db, nupdates);
 
-            int rval = db->CollectResource(32LL*1024*1024, 32LL*1024*1024, 96LL*1024*1024, 0xFFFFFFFFFFFF);
+            int rval = db->CollectResource(8LL*1024*1024, 8LL*1024*1024, 96LL*1024*1024, 0xFFFFFFFFFFFF);
             if(rval == MBError::SUCCESS) {
                 rcn++;
                 if(rcn % 57 == 0 && !(options & CONSTS::ASYNC_WRITER_MODE)) {
@@ -307,9 +300,9 @@ static void* run_mb_test(void *arg)
 		                db = new DB(mbdir.c_str(), options, memcap_i, memcap_d);
 		                if(!db->is_open()) {
 	                      delete db;
-			                  abort();
+		                    abort();
 		                }
-		            } else if(rcn % 20000523 == 0) {
+                } else if(rcn % 20000523 == 0) {
                     if(system("reboot") != 0) {
                     }
                 }
