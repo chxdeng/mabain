@@ -145,7 +145,7 @@ void ResourceCollection::ReclaimResource(int64_t min_index_size,
         {
             Logger::Log(LOG_LEVEL_INFO, "LRU eviction finished in %lf milliseconds",
                     timediff/1000.);
-        } 
+        }
     }
 
     if(min_index_size > 0 || min_data_size > 0)
@@ -532,6 +532,36 @@ void ResourceCollection::ProcessRCTree()
 
     // Clear the rc tree
     dmm->ClearRootEdges_RC();
+}
+
+int ResourceCollection::ExceptionRecovery()
+{
+    if(!db_ref.is_open())
+        return db_ref.Status();
+
+    int rval = MBError::SUCCESS;
+    if(header->rc_m_index_off_pre != 0 && header->rc_m_data_off_pre != 0)
+    {
+        Logger::Log(LOG_LEVEL_WARN, "previous rc was not completed successfully, retrying...");
+        try {
+            // This is a blocking call and should be called when writer starts up.
+            ReclaimResource(1, 1, MAX_6B_OFFSET, MAX_6B_OFFSET, NULL);
+        } catch (int err) {
+            if(err != MBError::RC_SKIPPED)
+                rval = err;
+        }
+
+        if(rval != MBError::SUCCESS)
+        {
+            Logger::Log(LOG_LEVEL_ERROR, "failed to run rc recovery: %s, clear db!!!", MBError::get_error_str(rval));
+            dict->RemoveAll();
+        }
+    }
+
+    header->rc_root_offset = 0;
+    header->rc_count = 0;
+
+    return rval;
 }
 
 }

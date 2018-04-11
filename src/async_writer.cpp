@@ -36,14 +36,14 @@ static void free_async_node(AsyncNode *node_ptr)
     {
         free(node_ptr->key);
         node_ptr->key = NULL;
-        node_ptr->key_len = 0; 
+        node_ptr->key_len = 0;
     }
 
     if(node_ptr->data != NULL)
     {
         free(node_ptr->data);
         node_ptr->data = NULL;
-        node_ptr->data_len = 0; 
+        node_ptr->data_len = 0;
     }
 
     node_ptr->type = MABAIN_ASYNC_TYPE_NONE;
@@ -64,7 +64,7 @@ AsyncWriter::AsyncWriter(DB *db_ptr)
     if(db == NULL)
         throw (int) MBError::INVALID_ARG;
     dict = db->GetDictPtr();
-    if(dict == NULL) 
+    if(dict == NULL)
         throw (int) MBError::NOT_INITIALIZED;
 
     queue = new AsyncNode[max_num_queue_node];
@@ -76,7 +76,7 @@ AsyncWriter::AsyncWriter(DB *db_ptr)
         {
             Logger::Log(LOG_LEVEL_ERROR, "failed to init mutex");
             throw (int) MBError::MUTEX_ERROR;
-        } 
+        }
         if(pthread_cond_init(&queue[i].cond, NULL) != 0)
         {
             Logger::Log(LOG_LEVEL_ERROR, "failed to init conditional variable");
@@ -125,7 +125,7 @@ int AsyncWriter::StopAsyncThread()
 
     if(tid != 0)
     {
-        Logger::Log(LOG_LEVEL_INFO, "joining async writer thread"); 
+        Logger::Log(LOG_LEVEL_INFO, "joining async writer thread");
         pthread_join(tid, NULL);
     }
 
@@ -232,8 +232,8 @@ int AsyncWriter::Remove(const char *key, int len)
 int AsyncWriter::Backup(const char *backup_dir)
 {
     if(backup_dir == NULL)
-        return MBError::INVALID_ARG; 
-    
+        return MBError::INVALID_ARG;
+
     if(stop_processing)
         return MBError::DB_CLOSED;
 
@@ -302,7 +302,7 @@ int AsyncWriter::ProcessTask(int ntasks, bool rc_mode)
 
     while(count < ntasks)
     {
-        node_ptr = &queue[writer_index % max_num_queue_node]; 
+        node_ptr = &queue[writer_index % max_num_queue_node];
         if(pthread_mutex_lock(&node_ptr->mutex) != 0)
         {
             Logger::Log(LOG_LEVEL_ERROR, "failed to lock mutex");
@@ -321,16 +321,15 @@ int AsyncWriter::ProcessTask(int ntasks, bool rc_mode)
                     rval = dict->Add((uint8_t *)node_ptr->key, node_ptr->key_len, mbd, node_ptr->overwrite);
                     break;
                 case MABAIN_ASYNC_TYPE_REMOVE:
-                    if(rc_mode)
-                    {
-                        // FIXME
-                        rval = MBError::SUCCESS;
-                    } 
-                    else
-                    {
-                        mbd.options |= CONSTS::OPTION_FIND_AND_STORE_PARENT;
-                        rval = dict->Remove((uint8_t *)node_ptr->key, node_ptr->key_len, mbd);
-                    }
+                    // FIXME
+                    // Removing entries during rc is currently not supported.
+                    // The index or data index could have been reset in fucntion ResourceColletion::Finish.
+                    // However, the deletion may be run for some entry which still exist in the rc root tree.
+                    // This requires modifying buffer in high end, where the offset for writing is greather than
+                    // header->m_index_offset. This causes exception thrown from DictMem::WriteData.
+                    // Note this is not a problem for Dict::Add since Add does not modify buffers in high end.
+                    // This problem will be fixed when resolving issue: https://github.com/chxdeng/mabain/issues/21
+                    rval = MBError::SUCCESS;
                     break;
                 case MABAIN_ASYNC_TYPE_REMOVE_ALL:
                     if(!rc_mode)
@@ -467,7 +466,7 @@ void* AsyncWriter::async_writer_thread()
                     max_dbsize = data_ptr[2];
                     max_dbcount = data_ptr[3];
                 }
-                break; 
+                break;
             case MABAIN_ASYNC_TYPE_NONE:
                 rval = MBError::SUCCESS;
                 break;
@@ -492,7 +491,7 @@ void* AsyncWriter::async_writer_thread()
             Logger::Log(LOG_LEVEL_ERROR, "failed to unlock mutex");
             throw (int) MBError::MUTEX_ERROR;
         }
-        
+
         if(rval != MBError::SUCCESS)
         {
             Logger::Log(LOG_LEVEL_DEBUG, "failed to run update %d: %s",
