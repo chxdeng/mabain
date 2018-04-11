@@ -13,7 +13,7 @@ using namespace mabain;
 
 static std::atomic<int64_t> key_low;
 static std::atomic<int64_t> key_high;
-static int64_t key_diff = 3000000;
+static int64_t key_diff = 300000;
 static int64_t memcap_i = 256*1024*1024;
 static int64_t memcap_d = 256*1024*1024;
 static pthread_t wid = 0;
@@ -46,18 +46,18 @@ static void* Reader(void *arg)
 
 	if(key_high.load(std::memory_order_consume) == key_low.load(std::memory_order_consume))
 	    continue;
-        ikey = key_low.load(std::memory_order_consume); 
+        ikey = key_low.load(std::memory_order_consume);
         ikey += rand() % (key_high.load(std::memory_order_consume) - key_low.load(std::memory_order_consume));
- 
+
         ktype = rand() % 3;
         switch(ktype) {
-        case 0: 
+        case 0:
             keystr = tkey_int.get_key(ikey);
             break;
-        case 1: 
+        case 1:
             keystr = tkey_sha1.get_key(ikey);
             break;
-        case 2: 
+        case 2:
             keystr = tkey_sha2.get_key(ikey);
             break;
         }
@@ -75,7 +75,7 @@ static void* Reader(void *arg)
             std::cout << "unexpected return from Find: " << rval << "\n";
             abort();
         }
-    }    
+    }
 
     db.Close();
     return NULL;
@@ -140,7 +140,7 @@ static void* AddThread(void *arg)
 }
 
 static void Populate(DB &db, int nt)
-{   
+{
     pthread_t tid[256];
     assert(nt < 256);
     for(int i = 0; i < nt; i++) {
@@ -149,7 +149,7 @@ static void Populate(DB &db, int nt)
             abort();
         }
     }
-    
+
     for(int i = 0; i < nt; i++) {
         if(pthread_join(tid[i], NULL) != 0) {
             std::cout << "failed to join MultiThreadAdd thread\n";
@@ -179,12 +179,13 @@ static void load_key_ids()
 
 static void store_key_ids()
 {
-    std::ofstream ofs;
     std::string path = mbdir + "/key_id";
-    ofs.open (mbdir.c_str(), std::ofstream::out);
-    ofs << key_low << "\n";
-    ofs << key_high << "\n";
-    ofs.close();
+    FILE *fp;
+    fp = fopen(path.c_str(), "w");
+    if(!fp) return;
+    fprintf(fp, "%d\n%d", (int)key_low.load(std::memory_order_consume),
+                          (int)key_high.load(std::memory_order_consume));
+    fclose(fp);
 }
 
 static void* DeleteThread(void *arg)
@@ -238,7 +239,7 @@ void stop_mb_test()
     if(wid != 0) {
         if(pthread_join(wid, NULL) != 0) {
             std::cout << "cannot join mbtest thread\n";
-	}
+	      }
     }
 }
 
@@ -279,32 +280,29 @@ static void* run_mb_test(void *arg)
         if(key_high - key_low < key_diff) {
             Populate(*db, nupdates);
         } else {
-            if(db->Count() < key_diff*3 - 1000)
-                continue;
+            //if(db->Count() < key_diff*3 - 1000)
+            //    continue;
 
             std::cout << key_low.load(std::memory_order_consume) << ": "
                       << key_high.load(std::memory_order_consume) << std::endl;
-
             Prune(*db, nupdates);
 
-            int rval = db->CollectResource(10LL*1024*1024, 10LL*1024*1024, 0xFFFFFFFFFFFF, 0xFFFFFFFFFFFF);
+            int rval = db->CollectResource(8LL*1024*1024, 8LL*1024*1024, 96LL*1024*1024, 0xFFFFFFFFFFFF);
             if(rval == MBError::SUCCESS) {
                 rcn++;
                 if(rcn % 57 == 0 && !(options & CONSTS::ASYNC_WRITER_MODE)) {
                     // Note if in async mode, the DB handle cannot be used for lookup.
                     std::cout << "Verifying after rc" << std::endl;
                     Verify(*db);
-                }
-		else if(rcn % 100 == 0) {
-		    db->Close();
-		    delete db;
-		    db = new DB(mbdir.c_str(), options, memcap_i, memcap_d);
-		    if(!db->is_open()) {
-	                delete db;
-			abort();
-		    }
-		}
-                else if(rcn % 20000523 == 0) {
+                } else if(rcn % 100 == 0) {
+		                db->Close();
+		                delete db;
+		                db = new DB(mbdir.c_str(), options, memcap_i, memcap_d);
+		                if(!db->is_open()) {
+	                      delete db;
+		                    abort();
+		                }
+                } else if(rcn % 20000523 == 0) {
                     if(system("reboot") != 0) {
                     }
                 }
@@ -312,7 +310,7 @@ static void* run_mb_test(void *arg)
         }
 
         if(time(NULL) >= run_stop_time) {
-            stop_processing = true;   
+            stop_processing = true;
         }
     }
 
@@ -320,7 +318,7 @@ static void* run_mb_test(void *arg)
     delete db;
     store_key_ids();
 
-    
+
     return NULL;
 }
 

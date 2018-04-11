@@ -24,6 +24,7 @@
 #include "../dict_mem.h"
 #include "./test_key.h"
 #include "../resource_pool.h"
+#include "../mb_rc.h"
 
 using namespace mabain;
 
@@ -414,6 +415,110 @@ TEST_F(AbnormalExitTest, KEY_TYPE_SHA_256_REMOVE_EVEN_test)
 
     failed_cnt = CheckHalfDBConsistency(count, false);
     EXPECT_EQ(failed_cnt, 0);
+}
+
+TEST_F(AbnormalExitTest, RC_RECOVERY_test)
+{
+    int count = 1123;
+    key_type = MABAIN_TEST_KEY_TYPE_SHA_128;
+    Populate(count);
+
+    Dict *dict = db->GetDictPtr();
+    IndexHeader *header = dict->GetHeaderPtr();
+
+    //Reset m_index_offset and m_data_offset to simulate RC process
+    header->rc_m_index_off_pre = header->m_index_offset;
+    header->rc_m_data_off_pre = header->m_data_offset;
+    if(header->pending_index_buff_size == 0) {
+        header->pending_index_buff_size = 100U;
+    }
+    if(header->pending_data_buff_size == 0) {
+        header->pending_data_buff_size = 100U;
+    }
+    header->m_index_offset += 150LL*1024*1024;
+    header->m_data_offset += 92LL*1024*1024;
+    // Now add some more
+    int count1 = 15846;
+    TestKey tkey(key_type);
+    std::string key_str;
+    for(int key = 1; key <= count1; key++) {
+        key_str = tkey.get_key(count + key);
+        int rval = db->Add(key_str, key_str);
+        if(rval != MBError::SUCCESS) {
+            std::cout << "failed to add " << key_str << "\n";
+        }
+    }
+
+    ResourceCollection rc(*db);
+    rc.ExceptionRecovery();
+
+    // Verify
+    EXPECT_EQ(count+count1, dict->Count());
+    EXPECT_EQ(841614U, header->m_index_offset);
+    EXPECT_EQ(610916U, header->m_data_offset);    
+    EXPECT_EQ(0U, header->pending_index_buff_size);
+    EXPECT_EQ(0U, header->pending_data_buff_size);
+    EXPECT_EQ(0U, header->rc_m_index_off_pre);
+    EXPECT_EQ(0U, header->rc_m_data_off_pre);
+    EXPECT_EQ(0U, header->rc_root_offset);
+    EXPECT_EQ(0, header->rc_count);
+}
+
+TEST_F(AbnormalExitTest, RC_RECOVERY_RC_ROOT_TREE_test)
+{
+    int count = 23451;
+    key_type = MABAIN_TEST_KEY_TYPE_SHA_128;
+    Populate(count);
+
+    Dict *dict = db->GetDictPtr();
+    IndexHeader *header = dict->GetHeaderPtr();
+    DictMem *dmm = dict->GetMM();
+
+    // Reset m_index_offset and m_data_offset to simulate RC process
+    header->rc_m_index_off_pre = header->m_index_offset;
+    header->rc_m_data_off_pre = header->m_data_offset;
+    if(header->pending_index_buff_size == 0) {
+        header->pending_index_buff_size = 100U;
+    }
+    if(header->pending_data_buff_size == 0) {
+        header->pending_data_buff_size = 100U;
+    }
+    header->m_index_offset += 250LL*1024*1024;
+    header->m_data_offset += 292LL*1024*1024;
+    size_t rc_off = dmm->InitRootNode_RC();
+    header->rc_root_offset.store(rc_off, MEMORY_ORDER_WRITER);
+
+    // Now add some more
+    int count1 = 2233;
+    TestKey tkey(key_type);
+    std::string key_str;
+    MBData mbd;
+    mbd.options = CONSTS::OPTION_RC_MODE;
+    for(int key = 1; key <= count1; key++) {
+        key_str = tkey.get_key(count + key);
+        mbd.buff = (uint8_t *) key_str.c_str();
+        mbd.data_len = key_str.size();
+
+        int rval = dict->Add((const uint8_t *)key_str.c_str(), key_str.size(), mbd, false);
+        if(rval != MBError::SUCCESS) {
+            std::cout << "failed to add " << key_str << "\n";
+        }
+        mbd.buff = NULL;
+    }
+
+    ResourceCollection rc(*db);
+    rc.ExceptionRecovery();
+
+    // Note the new entries added during rc will be ignored is expection occurs.
+    EXPECT_EQ(count, dict->Count());
+    EXPECT_EQ(1149932U, header->m_index_offset);
+    EXPECT_EQ(844268U, header->m_data_offset);    
+    EXPECT_EQ(0U, header->pending_index_buff_size);
+    EXPECT_EQ(0U, header->pending_data_buff_size);
+    EXPECT_EQ(0U, header->rc_m_index_off_pre);
+    EXPECT_EQ(0U, header->rc_m_data_off_pre);
+    EXPECT_EQ(0U, header->rc_root_offset);
+    EXPECT_EQ(0, header->rc_count);
 }
 
 }
