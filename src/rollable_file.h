@@ -51,6 +51,7 @@ public:
 
     void     Flush();
     size_t   GetResourceCollectionOffset() const;
+    void     RemoveUnused(size_t max_size, bool writer_mode);
 
     static const long page_size;
     static int ShmSync(uint8_t *addr, int size);

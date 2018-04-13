@@ -76,6 +76,10 @@ private:
     size_t  rc_index_offset;
     size_t  rc_data_offset;
     int64_t rc_loop_counter;
+
+    int64_t db_cnt;
+    size_t  edge_str_size;
+    int64_t node_cnt;
 };
 
 }

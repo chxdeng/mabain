@@ -117,6 +117,8 @@ private:
     int status;
 
     LockFree lfree;
+
+    size_t reader_rc_off;
 };
 
 }
