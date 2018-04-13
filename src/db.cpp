@@ -107,7 +107,7 @@ DB::DB(const char *db_path,
     config.options = db_options;
     config.memcap_index = memcap_index;
     config.memcap_data = memcap_data;
-    config.connect_id = id; 
+    config.connect_id = id;
 
     InitDB(config);
 }
@@ -138,7 +138,7 @@ int DB::ValidateConfig(MBConfig &config)
         if(config.num_entry_per_bucket < 8)
         {
             std::cerr << "count in eviction bucket must be greater than 7\n";
-            return MBError::INVALID_ARG; 
+            return MBError::INVALID_ARG;
         }
     }
 
@@ -267,6 +267,13 @@ void DB::InitDB(MBConfig &config)
                 identifier, mb_dir.c_str(),
                 (config.options & CONSTS::ACCESS_MODE_WRITER) ? "writing":"reading");
     status = MBError::SUCCESS;
+
+    if(config.options & CONSTS::ACCESS_MODE_WRITER)
+    {
+        // Run rc exception recovery
+        ResourceCollection rc(*this);
+        rc.ExceptionRecovery();
+    }
 }
 
 int DB::Status() const
@@ -444,7 +451,6 @@ int DB::Backup(const char *bk_dir)
     if(options & MMAP_ANONYMOUS_MODE)
         return MBError::NOT_ALLOWED;
 
-#ifndef __SHM_QUEUE__
     if(async_writer != NULL)
         return async_writer->Backup(bk_dir);
 #endif

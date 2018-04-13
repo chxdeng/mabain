@@ -45,6 +45,9 @@ public:
                          int64_t max_dbsz, int64_t max_dbcnt,
                          AsyncWriter *awr = NULL);
 
+    // This function should be called when writer starts up.
+    int  ExceptionRecovery();
+
 private:
     void DoTask(int phase, DBTraverseNode &dbt_node);
     void Prepare(int64_t min_index_size, int64_t min_data_size);
@@ -73,6 +76,10 @@ private:
     size_t  rc_index_offset;
     size_t  rc_data_offset;
     int64_t rc_loop_counter;
+
+    int64_t db_cnt;
+    size_t  edge_str_size;
+    int64_t node_cnt;
 };
 
 }

@@ -51,6 +51,13 @@ bool ResourcePool::CheckExistence(const std::string &header_path)
     return (search != file_pool.end());
 }
 
+void ResourcePool::RemoveResourceByPath(const std::string &path)
+{
+    pthread_mutex_lock(&pool_mutex);
+    file_pool.erase(path);
+    pthread_mutex_unlock(&pool_mutex);
+}
+
 void ResourcePool::RemoveResourceByDB(const std::string &db_path)
 {
     pthread_mutex_lock(&pool_mutex);

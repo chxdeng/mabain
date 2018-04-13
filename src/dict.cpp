@@ -58,6 +58,7 @@ Dict::Dict(const std::string &mbdir, bool init_header, int datasize,
 #endif
 {
     status = MBError::NOT_INITIALIZED;
+    reader_rc_off = 0;
 
     header = mm.GetHeaderPtr();
     if(header == NULL)
@@ -220,7 +221,8 @@ int Dict::Add(const uint8_t *key, int len, MBData &data, bool overwrite)
         return MBError::NOT_ALLOWED;
 #endif
     }
-    if(len > CONSTS::MAX_KEY_LENGHTH || data.data_len > CONSTS::MAX_DATA_SIZE)
+    if(len > CONSTS::MAX_KEY_LENGHTH || data.data_len > CONSTS::MAX_DATA_SIZE ||
+       len <= 0 || data.data_len <= 0)
         return MBError::OUT_OF_BOUND;
 
     EdgePtrs edge_ptrs;
@@ -245,7 +247,7 @@ int Dict::Add(const uint8_t *key, int len, MBData &data, bool overwrite)
             header->count++;
             header->num_update++;
         }
-        
+
         return MBError::SUCCESS;
     }
 
@@ -450,6 +452,10 @@ int Dict::DeleteDataFromEdge(MBData &data, EdgePtrs &edge_ptrs)
             header->pending_data_buff_size += rel_size;
             free_lists->ReleaseBuffer(data_off, rel_size);
         }
+        else
+        {
+            rval = MBError::NOT_EXIST;
+        }
     }
 
     return rval;
@@ -490,6 +496,7 @@ int Dict::FindPrefix(const uint8_t *key, int len, MBData &data)
     size_t rc_root_offset = header->rc_root_offset.load(MEMORY_ORDER_READER);
     if(rc_root_offset != 0)
     {
+        reader_rc_off = rc_root_offset;
         rval = FindPrefix_Internal(rc_root_offset, key, len, data_rc);
 #ifdef __LOCK_FREE__
         while(rval == MBError::TRY_AGAIN)
@@ -501,6 +508,15 @@ int Dict::FindPrefix(const uint8_t *key, int len, MBData &data)
 #endif
         if(rval != MBError::NOT_EXIST && rval != MBError::SUCCESS)
             return rval;
+    }
+    else
+    {
+        if(reader_rc_off != 0)
+        {
+            reader_rc_off = 0;
+            RemoveUnused(0);
+            mm.RemoveUnused(0);
+        }
     }
 
     rval = FindPrefix_Internal(0, key, len, data);
@@ -689,6 +705,7 @@ int Dict::Find(const uint8_t *key, int len, MBData &data)
     size_t rc_root_offset = header->rc_root_offset.load(MEMORY_ORDER_READER);
     if(rc_root_offset != 0)
     {
+        reader_rc_off = rc_root_offset;
         rval = Find_Internal(rc_root_offset, key, len, data);
 #ifdef __LOCK_FREE__
         while(rval == MBError::TRY_AGAIN)
@@ -705,6 +722,15 @@ int Dict::Find(const uint8_t *key, int len, MBData &data)
         else if(rval != MBError::NOT_EXIST)
             return rval;
         data.options &= ~CONSTS::OPTION_RC_MODE;
+    }
+    else
+    {
+        if(reader_rc_off != 0)
+        {
+            reader_rc_off = 0;
+            RemoveUnused(0);
+            mm.RemoveUnused(0);
+        }
     }
 
     rval = Find_Internal(0, key, len, data);
@@ -1443,7 +1469,7 @@ int Dict::ExceptionRecovery()
         return MBError::NOT_INITIALIZED;
 
     int rval = MBError::SUCCESS;
-    if(header->excep_updating_status == EXCEP_STATUS_NONE && header->rc_root_offset == 0)
+    if(header->excep_updating_status == EXCEP_STATUS_NONE)
     {
         Logger::Log(LOG_LEVEL_INFO, "writer was shutdown successfully previously");
         return rval;
@@ -1522,16 +1548,6 @@ int Dict::ExceptionRecovery()
 #ifdef __LOCK_FREE__
     lfree.WriterLockFreeStop();
 #endif
-
-    if(header->rc_root_offset != 0)
-    {
-        // Only perform the simplest recovery for now.
-        // This will ignore all newly added KV pairs during rc.
-        header->rc_root_offset = 0;
-        header->rc_count = 0;
-        header->m_index_offset = header->rc_m_index_off_pre;
-        header->m_data_offset = header->rc_m_data_off_pre;
-    }
 
     if(rval == MBError::SUCCESS)
     {

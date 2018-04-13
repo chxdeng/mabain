@@ -27,7 +27,7 @@
 #define NUM_ASYNC_TASK       10                // number of other tasks to be checked during eviction
 #define PRUNE_TASK_CHECK     100               // every Xth eviction check Y number of other tasks
 #define RC_TASK_CHECK        100               // every Xth async task try to reclaim resources
-#define MIN_RC_OFFSET_GAP    256ULL*1024*1024  // 256M
+#define MIN_RC_OFFSET_GAP    1ULL*1024*1024    // 1M
 
 
 namespace mabain {
@@ -58,13 +58,13 @@ int ResourceCollection::LRUEviction()
     if(index_diff < 655)
         prune_diff = uint16_t(prune_diff * 0.35); // prune 35%
     else if(index_diff < 3276)
-        prune_diff = uint16_t(prune_diff * 0.25); // prune 25%
+        prune_diff = uint16_t(prune_diff * 0.30); // prune 30%
     else if(index_diff < 6554)
-        prune_diff = uint16_t(prune_diff * 0.15); // prune 15%
+        prune_diff = uint16_t(prune_diff * 0.25); // prune 25%
     else if(index_diff < 9830)
-        prune_diff = uint16_t(prune_diff * 0.10); // prune 10%
+        prune_diff = uint16_t(prune_diff * 0.20); // prune 20%
     else
-        prune_diff = uint16_t(prune_diff * 0.05); // prune 5%
+        prune_diff = uint16_t(prune_diff * 0.15); // prune 15%
     if(prune_diff == 0)
         prune_diff = 1;
 
@@ -145,7 +145,7 @@ void ResourceCollection::ReclaimResource(int64_t min_index_size,
         {
             Logger::Log(LOG_LEVEL_INFO, "LRU eviction finished in %lf milliseconds",
                     timediff/1000.);
-        } 
+        }
     }
 
     if(min_index_size > 0 || min_data_size > 0)
@@ -227,12 +227,15 @@ void ResourceCollection::Prepare(int64_t min_index_size, int64_t min_data_size)
         rc_index_offset = dmm->GetResourceCollectionOffset();
         rc_data_offset = dict->GetResourceCollectionOffset();
 
-        // make sure there is 256M space left at the end of current index
+        // make sure there is some space left at the end of current index
         // [start|....|current_index_offset|...MIN_RC_OFFSET_GAP/more...|rc_index_offset|.....|end]
         if(rc_index_offset < header->m_index_offset + MIN_RC_OFFSET_GAP ||
                 rc_data_offset < header->m_data_offset + MIN_RC_OFFSET_GAP)
         {
-            Logger::Log(LOG_LEVEL_WARN, "not enough space for rc");
+            Logger::Log(LOG_LEVEL_WARN, "not enough space for rc, index: "
+                        "%llu %d, %llu, data: %llu %d, %llu",
+                        header->m_index_offset, MIN_RC_OFFSET_GAP, rc_index_offset,
+                        header->m_data_offset, MIN_RC_OFFSET_GAP, rc_data_offset);
             throw (int) MBError::OUT_OF_BOUND;
         }
 
@@ -308,6 +311,9 @@ void ResourceCollection::Finish()
 
     header->rc_m_index_off_pre = 0;
     header->rc_m_data_off_pre = 0;
+
+    dict->RemoveUnused(header->m_data_offset, true);
+    dmm->RemoveUnused(header->m_index_offset, true);
 }
 
 bool ResourceCollection::MoveIndexBuffer(int phase, size_t &offset_src, int size)
@@ -391,6 +397,17 @@ bool ResourceCollection::MoveDataBuffer(int phase, size_t &offset_src, int size)
 
 void ResourceCollection::DoTask(int phase, DBTraverseNode &dbt_node)
 {
+    if(phase == RESOURCE_COLLECTION_PHASE_REORDER)
+    {
+        // collect stats for adjusting values in header
+        if(dbt_node.buffer_type & BUFFER_TYPE_DATA)
+            db_cnt++;
+        if(dbt_node.buffer_type & BUFFER_TYPE_EDGE_STR)
+            edge_str_size += dbt_node.edgestr_size;
+        if(dbt_node.buffer_type & BUFFER_TYPE_NODE)
+            node_cnt++;
+    }
+
     header->excep_lf_offset = dbt_node.edge_offset;
     if(rc_type & RESOURCE_COLLECTION_TYPE_INDEX)
     {
@@ -481,6 +498,9 @@ void ResourceCollection::ReorderBuffers()
     if(rc_type & RESOURCE_COLLECTION_TYPE_DATA)
         Logger::Log(LOG_LEVEL_INFO, "data size before reorder: %llu", header->m_data_offset);
 
+    db_cnt = 0;
+    edge_str_size = 0;
+    node_cnt = 0;
     TraverseDB(RESOURCE_COLLECTION_PHASE_REORDER);
 
     if(rc_type & RESOURCE_COLLECTION_TYPE_INDEX)
@@ -498,6 +518,14 @@ void ResourceCollection::ReorderBuffers()
         data_reorder_status = MBError::SUCCESS;
         Logger::Log(LOG_LEVEL_INFO, "number of data buffer reordered: %lld", data_reorder_cnt);
     }
+
+    if(db_cnt != header->count)
+    {
+        Logger::Log(LOG_LEVEL_INFO, "adjusting db count to %lld from %lld", db_cnt, header->count);
+        header->count = db_cnt;
+    }
+    header->edge_str_size = edge_str_size;
+    header->n_states = node_cnt;
 }
 
 void ResourceCollection::ProcessRCTree()
@@ -532,6 +560,36 @@ void ResourceCollection::ProcessRCTree()
 
     // Clear the rc tree
     dmm->ClearRootEdges_RC();
+}
+
+int ResourceCollection::ExceptionRecovery()
+{
+    if(!db_ref.is_open())
+        return db_ref.Status();
+
+    int rval = MBError::SUCCESS;
+    if(header->rc_m_index_off_pre != 0 && header->rc_m_data_off_pre != 0)
+    {
+        Logger::Log(LOG_LEVEL_WARN, "previous rc was not completed successfully, retrying...");
+        try {
+            // This is a blocking call and should be called when writer starts up.
+            ReclaimResource(1, 1, MAX_6B_OFFSET, MAX_6B_OFFSET, NULL);
+        } catch (int err) {
+            if(err != MBError::RC_SKIPPED)
+                rval = err;
+        }
+
+        if(rval != MBError::SUCCESS)
+        {
+            Logger::Log(LOG_LEVEL_ERROR, "failed to run rc recovery: %s, clear db!!!", MBError::get_error_str(rval));
+            dict->RemoveAll();
+        }
+    }
+
+    header->rc_root_offset = 0;
+    header->rc_count = 0;
+
+    return rval;
 }
 
 }

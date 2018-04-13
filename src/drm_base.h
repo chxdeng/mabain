@@ -123,6 +123,7 @@ public:
     inline size_t CheckAlignment(size_t offset, int size) const;
     inline int ReadData(uint8_t *buff, unsigned len, size_t offset) const;
     inline size_t GetResourceCollectionOffset() const;
+    inline void RemoveUnused(size_t max_size, bool writer_mode = false);
 
     FreeList *GetFreeList() const
     {
@@ -168,7 +169,12 @@ inline int DRMBase::ReadData(uint8_t *buff, unsigned len, size_t offset) const
 
 inline size_t DRMBase::GetResourceCollectionOffset() const
 {
-     return kv_file->GetResourceCollectionOffset();
+    return kv_file->GetResourceCollectionOffset();
+}
+
+inline void DRMBase::RemoveUnused(size_t max_size, bool writer_mode)
+{
+    return kv_file->RemoveUnused(max_size, writer_mode); 
 }
 
 }

@@ -139,6 +139,7 @@ private:
 
     LockFree lfree;
 
+    size_t reader_rc_off;
 #ifdef __SHM_QUEUE__
     AsyncNode *queue;
 #endif
