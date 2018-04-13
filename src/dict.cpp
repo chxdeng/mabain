@@ -203,7 +203,8 @@ int Dict::Add(const uint8_t *key, int len, MBData &data, bool overwrite)
 {
     if(!(options & CONSTS::ACCESS_MODE_WRITER))
         return MBError::NOT_ALLOWED;
-    if(len > CONSTS::MAX_KEY_LENGHTH || data.data_len > CONSTS::MAX_DATA_SIZE)
+    if(len > CONSTS::MAX_KEY_LENGHTH || data.data_len > CONSTS::MAX_DATA_SIZE ||
+       len <= 0 || data.data_len <= 0)
         return MBError::OUT_OF_BOUND;
 
     EdgePtrs edge_ptrs;
