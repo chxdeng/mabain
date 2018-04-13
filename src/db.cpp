@@ -451,10 +451,11 @@ int DB::Backup(const char *bk_dir)
     if(options & MMAP_ANONYMOUS_MODE)
         return MBError::NOT_ALLOWED;
 
+#ifndef __SHM_QUEUE__
     if(async_writer != NULL)
         return async_writer->Backup(bk_dir);
 #endif
-        
+
     int rval;
     try {
         DBBackup bk(*this);
