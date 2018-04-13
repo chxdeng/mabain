@@ -26,7 +26,7 @@
 #include "error.h"
 #include "lock_free.h"
 
-#define MAX_BUFFER_PER_LIST    16384
+#define MAX_BUFFER_PER_LIST    256
 
 // Manage resource allocation/free using linked list
 namespace mabain {

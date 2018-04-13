@@ -13,7 +13,6 @@ using namespace mabain;
 
 static std::atomic<int64_t> key_low;
 static std::atomic<int64_t> key_high;
-static int64_t key_diff = 300000;
 static int64_t memcap_i = 256*1024*1024;
 static int64_t memcap_d = 256*1024*1024;
 static pthread_t wid = 0;
@@ -117,7 +116,7 @@ static void Verify(DB &db)
 static void* AddThread(void *arg)
 {
     DB *db = (DB *) arg;
-    int num = rand() % 50;
+    int num = rand() % 2500;
 
     int64_t key;
     TestKey tkey_int(MABAIN_TEST_KEY_TYPE_INT);
@@ -191,7 +190,7 @@ static void store_key_ids()
 static void* DeleteThread(void *arg)
 {
     DB *db = (DB *) arg;
-    int num = rand() % 10000;
+    int num = rand() % 5;
 
     int64_t key;
     TestKey tkey_int(MABAIN_TEST_KEY_TYPE_INT);
@@ -243,6 +242,18 @@ void stop_mb_test()
     }
 }
 
+static void CheckCount(DB *db)
+{
+    if(db == NULL) return;
+
+    int64_t count = 0;
+    for(DB::iterator iter = db->begin(false, false); iter != db->end(); ++iter) {
+        count++;
+    }
+    std::cout << "Count using iterator: " << count << "\tcount from API: "
+              << db->Count() << "\n";
+}
+
 void start_mb_test()
 {
     if(pthread_create(&wid, NULL, run_mb_test, NULL) != 0) {
@@ -259,8 +270,20 @@ static void* run_mb_test(void *arg)
 
     load_key_ids();
 
+    MBConfig mbconf;
     int options = CONSTS::WriterOptions() | CONSTS::ASYNC_WRITER_MODE;
-    DB *db = new DB(mbdir.c_str(), options, memcap_i, memcap_d);
+    memset(&mbconf, 0, sizeof(mbconf));
+    mbconf.mbdir = mbdir.c_str();
+    options = CONSTS::WriterOptions() | CONSTS::ASYNC_WRITER_MODE;
+    mbconf.options = options;
+    mbconf.memcap_index = 128ULL*1024*1024;
+    mbconf.memcap_data = 128ULL*1024*1024;
+    mbconf.block_size_index = 64U*1024*1024;
+    mbconf.block_size_data = 64U*1024*1024;
+    mbconf.max_num_data_block = 3;
+    mbconf.max_num_index_block = 3;
+    mbconf.num_entry_per_bucket = 500;
+    DB *db = new DB(mbconf);
     if(!db->is_open()) {
         std::cerr << "failed to open writer db" << std::endl;
 	delete db;
@@ -276,32 +299,31 @@ static void* run_mb_test(void *arg)
     }
 
     int rcn = 0;
+    int64_t loop_cnt = 0;
     while(!stop_processing) {
-        if(key_high - key_low < key_diff) {
-            Populate(*db, nupdates);
-        } else {
-            //if(db->Count() < key_diff*3 - 1000)
-            //    continue;
+        Populate(*db, nupdates);
+        Prune(*db, nupdates);
 
-            std::cout << key_low.load(std::memory_order_consume) << ": "
-                      << key_high.load(std::memory_order_consume) << std::endl;
-            Prune(*db, nupdates);
-
-            int rval = db->CollectResource(8LL*1024*1024, 8LL*1024*1024, 96LL*1024*1024, 0xFFFFFFFFFFFF);
+        std::cout << "LOOP " << loop_cnt << ": " << db->Count() << "\n";
+        if(loop_cnt % 7 == 0) {
+            std::cout << "RUN RC\n";
+            int rval = db->CollectResource(24LL*1024*1024, 24LL*1024*1024, 128LL*1024*1024, 0xFFFFFFFFFFFF);
             if(rval == MBError::SUCCESS) {
                 rcn++;
                 if(rcn % 57 == 0 && !(options & CONSTS::ASYNC_WRITER_MODE)) {
                     // Note if in async mode, the DB handle cannot be used for lookup.
                     std::cout << "Verifying after rc" << std::endl;
                     Verify(*db);
-                } else if(rcn % 100 == 0) {
-		                db->Close();
-		                delete db;
-		                db = new DB(mbdir.c_str(), options, memcap_i, memcap_d);
-		                if(!db->is_open()) {
-	                      delete db;
-		                    abort();
-		                }
+                } else if(rcn % 20 == 0) {
+                    db->Close();
+	            delete db;
+                    mbconf.options = options;
+	            db = new DB(mbconf);
+	            if(!db->is_open()) {
+	                delete db;
+	                abort();
+	            }
+                    CheckCount(db);
                 } else if(rcn % 20000523 == 0) {
                     if(system("reboot") != 0) {
                     }
@@ -309,6 +331,8 @@ static void* run_mb_test(void *arg)
             }
         }
 
+        sleep(1);
+        loop_cnt++;
         if(time(NULL) >= run_stop_time) {
             stop_processing = true;
         }

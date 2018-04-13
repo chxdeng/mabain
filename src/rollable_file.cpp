@@ -434,4 +434,23 @@ size_t RollableFile::GetResourceCollectionOffset() const
     return int((rc_offset_percentage / 100.0f) * max_num_block) * block_size;
 }
 
+void RollableFile::RemoveUnused(size_t max_size, bool writer_mode)
+{
+    unsigned ibeg = max_size/(block_size + 1) + 1;
+    for(auto i = ibeg; i < files.size(); i++)
+    {
+        if(files[i] != NULL)
+        {
+            if(files[i]->IsMapped() && mem_used > block_size)
+                mem_used -= block_size;
+            if(writer_mode)
+            {
+                ResourcePool::getInstance().RemoveResourceByPath(files[i]->GetFilePath());
+                unlink(files[i]->GetFilePath().c_str());
+            }
+            files[i] = NULL;
+        }
+    }
+}
+
 }

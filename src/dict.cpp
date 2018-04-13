@@ -52,6 +52,7 @@ Dict::Dict(const std::string &mbdir, bool init_header, int datasize,
            mm(mbdir, init_header, memsize_index, db_options, block_sz_idx, max_num_index_blk)
 {
     status = MBError::NOT_INITIALIZED;
+    reader_rc_off = 0;
 
     header = mm.GetHeaderPtr();
     if(header == NULL)
@@ -202,7 +203,8 @@ int Dict::Add(const uint8_t *key, int len, MBData &data, bool overwrite)
 {
     if(!(options & CONSTS::ACCESS_MODE_WRITER))
         return MBError::NOT_ALLOWED;
-    if(len > CONSTS::MAX_KEY_LENGHTH || data.data_len > CONSTS::MAX_DATA_SIZE)
+    if(len > CONSTS::MAX_KEY_LENGHTH || data.data_len > CONSTS::MAX_DATA_SIZE ||
+       len <= 0 || data.data_len <= 0)
         return MBError::OUT_OF_BOUND;
 
     EdgePtrs edge_ptrs;
@@ -432,6 +434,10 @@ int Dict::DeleteDataFromEdge(MBData &data, EdgePtrs &edge_ptrs)
             header->pending_data_buff_size += rel_size;
             free_lists->ReleaseBuffer(data_off, rel_size);
         }
+        else
+        {
+            rval = MBError::NOT_EXIST;
+        }
     }
 
     return rval;
@@ -472,6 +478,7 @@ int Dict::FindPrefix(const uint8_t *key, int len, MBData &data)
     size_t rc_root_offset = header->rc_root_offset.load(MEMORY_ORDER_READER);
     if(rc_root_offset != 0)
     {
+        reader_rc_off = rc_root_offset;
         rval = FindPrefix_Internal(rc_root_offset, key, len, data_rc);
 #ifdef __LOCK_FREE__
         while(rval == MBError::TRY_AGAIN)
@@ -483,6 +490,15 @@ int Dict::FindPrefix(const uint8_t *key, int len, MBData &data)
 #endif
         if(rval != MBError::NOT_EXIST && rval != MBError::SUCCESS)
             return rval;
+    }
+    else
+    {
+        if(reader_rc_off != 0)
+        {
+            reader_rc_off = 0;
+            RemoveUnused(0);
+            mm.RemoveUnused(0);
+        }
     }
 
     rval = FindPrefix_Internal(0, key, len, data);
@@ -671,6 +687,7 @@ int Dict::Find(const uint8_t *key, int len, MBData &data)
     size_t rc_root_offset = header->rc_root_offset.load(MEMORY_ORDER_READER);
     if(rc_root_offset != 0)
     {
+        reader_rc_off = rc_root_offset;
         rval = Find_Internal(rc_root_offset, key, len, data);
 #ifdef __LOCK_FREE__
         while(rval == MBError::TRY_AGAIN)
@@ -687,6 +704,15 @@ int Dict::Find(const uint8_t *key, int len, MBData &data)
         else if(rval != MBError::NOT_EXIST)
             return rval;
         data.options &= ~CONSTS::OPTION_RC_MODE;
+    }
+    else
+    {
+        if(reader_rc_off != 0)
+        {
+            reader_rc_off = 0;
+            RemoveUnused(0);
+            mm.RemoveUnused(0);
+        }
     }
 
     rval = Find_Internal(0, key, len, data);
