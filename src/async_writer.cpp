@@ -318,7 +318,13 @@ int AsyncWriter::ProcessTask(int ntasks, bool rc_mode)
                         mbd.options = CONSTS::OPTION_RC_MODE;
                     mbd.buff = (uint8_t *) node_ptr->data;
                     mbd.data_len = node_ptr->data_len;
-                    rval = dict->Add((uint8_t *)node_ptr->key, node_ptr->key_len, mbd, node_ptr->overwrite);
+                    try {
+                        rval = dict->Add((uint8_t *)node_ptr->key, node_ptr->key_len, mbd, node_ptr->overwrite);
+                    } catch (int err) {
+                        rval = err;
+                        Logger::Log(LOG_LEVEL_ERROR, "dict->Add throws error %s",
+                                MBError::get_error_str(err));
+                    }
                     break;
                 case MABAIN_ASYNC_TYPE_REMOVE:
                     // FIXME
@@ -333,9 +339,19 @@ int AsyncWriter::ProcessTask(int ntasks, bool rc_mode)
                     break;
                 case MABAIN_ASYNC_TYPE_REMOVE_ALL:
                     if(!rc_mode)
-                        rval = dict->RemoveAll();
+                    {
+                        try {
+                            rval = dict->RemoveAll();
+                        } catch (int err) {
+                            Logger::Log(LOG_LEVEL_ERROR, "dict->Add throws error %s",
+                                        MBError::get_error_str(err));
+                            rval = err;
+                        }
+                    }
                     else
+                    {
                         rval = MBError::SUCCESS;
+                    }
                     break;
                 case MABAIN_ASYNC_TYPE_RC:
                     // ignore rc task since it is running already.
