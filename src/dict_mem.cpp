@@ -840,10 +840,14 @@ void DictMem::ClearMem() const
 }
 
 int DictMem::NextEdge(const uint8_t *key, EdgePtrs &edge_ptrs, uint8_t *node_buff,
-                      bool update_parent_info) const
+                      MBData &mbdata) const
 {
     size_t node_off;
-    node_off = Get6BInteger(edge_ptrs.offset_ptr);
+    // Check if need to read saved edge
+    if((mbdata.options & CONSTS::OPTION_READ_SAVED_EDGE) && edge_ptrs.offset == mbdata.edge_ptrs.offset)
+        node_off = Get6BInteger(mbdata.edge_ptrs.offset_ptr);
+    else
+        node_off = Get6BInteger(edge_ptrs.offset_ptr);
 
     int byte_read;
     byte_read = ReadData(node_buff, NODE_EDGE_KEY_FIRST, node_off);
@@ -860,7 +864,7 @@ int DictMem::NextEdge(const uint8_t *key, EdgePtrs &edge_ptrs, uint8_t *node_buf
     {
         if(node_buff[i+NODE_EDGE_KEY_FIRST] == key[0])
         {
-            if(update_parent_info)
+            if(mbdata.options & CONSTS::OPTION_FIND_AND_STORE_PARENT)
             {
                 // update parent node/edge info for deletion
                 edge_ptrs.curr_nt = nt;

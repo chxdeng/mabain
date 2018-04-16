@@ -23,6 +23,8 @@
 #include <string.h>
 #include <atomic>
 
+#include "mb_data.h"
+
 namespace mabain {
 
 // C++11 std::atomic shared memory variable for lock-free
@@ -32,6 +34,9 @@ namespace mabain {
 #define MAX_OFFSET_CACHE_2 2*MAX_OFFSET_CACHE
 #define MEMORY_ORDER_WRITER std::memory_order_release
 #define MEMORY_ORDER_READER std::memory_order_consume
+
+struct _IndexHeader;
+typedef struct _IndexHeader IndexHeader;
 
 typedef struct _LockFreeData
 {
@@ -52,15 +57,17 @@ public:
     LockFree();
     ~LockFree();
 
-    void LockFreeInit(LockFreeShmData *lock_free_ptr, int mode = 0);
+    void LockFreeInit(LockFreeShmData *lock_free_ptr, IndexHeader *hdr, int mode = 0);
     inline void WriterLockFreeStart(size_t offset);
     void WriterLockFreeStop();
     inline void ReaderLockFreeStart(LockFreeData &snapshot);
     // If there was race condition, this function returns MBError::TRY_AGAIN.
-    int  ReaderLockFreeStop(const LockFreeData &snapshot, size_t reader_offset);
+    int  ReaderLockFreeStop(const LockFreeData &snapshot, size_t reader_offset,
+             MBData &mbdata);
 
 private:
     LockFreeShmData *shm_data_ptr;
+    const IndexHeader *header;
 };
 
 inline void LockFree::WriterLockFreeStart(size_t offset)

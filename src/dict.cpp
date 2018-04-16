@@ -36,10 +36,10 @@
     LockFreeData snapshot;                   \
     int lf_ret;                              \
     lfree.ReaderLockFreeStart(snapshot);
-#define READER_LOCK_FREE_STOP(edgeoff)                          \
-    lf_ret = lfree.ReaderLockFreeStop(snapshot, (edgeoff));     \
-    if(lf_ret != MBError::SUCCESS)                              \
-        return lf_ret;
+#define READER_LOCK_FREE_STOP(edgeoff, data)                        \
+    lf_ret = lfree.ReaderLockFreeStop(snapshot, (edgeoff), (data)); \
+    if(lf_ret != MBError::SUCCESS)                                  \
+        return lf_ret;                                              \
 
 namespace mabain {
 
@@ -76,7 +76,7 @@ Dict::Dict(const std::string &mbdir, bool init_header, int datasize,
         header->data_block_size = block_sz_data;
     }
 
-    lfree.LockFreeInit(&header->lock_free, db_options);
+    lfree.LockFreeInit(&header->lock_free, header, db_options);
     mm.InitLockFreePtr(&lfree);
 
     // Open data file
@@ -490,6 +490,7 @@ int Dict::FindPrefix(const uint8_t *key, int len, MBData &data)
 #endif
         if(rval != MBError::NOT_EXIST && rval != MBError::SUCCESS)
             return rval;
+        data.options &= ~(CONSTS::OPTION_RC_MODE | CONSTS::OPTION_READ_SAVED_EDGE);
     }
     else
     {
@@ -539,7 +540,7 @@ int Dict::FindPrefix_Internal(size_t root_off, const uint8_t *key, int len, MBDa
         if(edge_ptrs.len_ptr[0] == 0)
         {
 #ifdef __LOCK_FREE__
-            READER_LOCK_FREE_STOP(edge_ptrs.offset)
+            READER_LOCK_FREE_STOP(edge_ptrs.offset, data)
 #endif
             return MBError::NOT_EXIST;
         }
@@ -557,7 +558,7 @@ int Dict::FindPrefix_Internal(size_t root_off, const uint8_t *key, int len, MBDa
                       != edge_len_m1)
         {
 #ifdef __LOCK_FREE__
-            READER_LOCK_FREE_STOP(edge_ptrs.offset)
+            READER_LOCK_FREE_STOP(edge_ptrs.offset, data)
 #endif
             return MBError::READ_ERROR;
         }
@@ -574,7 +575,7 @@ int Dict::FindPrefix_Internal(size_t root_off, const uint8_t *key, int len, MBDa
         if(edge_len > 1 && memcmp(key_buff, key+1, edge_len_m1) != 0)
         {
 #ifdef __LOCK_FREE__
-            READER_LOCK_FREE_STOP(edge_ptrs.offset)
+            READER_LOCK_FREE_STOP(edge_ptrs.offset, data)
 #endif
             return MBError::NOT_EXIST;
         }
@@ -586,7 +587,7 @@ int Dict::FindPrefix_Internal(size_t root_off, const uint8_t *key, int len, MBDa
         {
             // prefix match for leaf node
 #ifdef __LOCK_FREE__
-            READER_LOCK_FREE_STOP(edge_ptrs.offset)
+            READER_LOCK_FREE_STOP(edge_ptrs.offset, data)
 #endif
             data.match_len = p - key;
             return ReadDataFromEdge(data, edge_ptrs);
@@ -599,7 +600,7 @@ int Dict::FindPrefix_Internal(size_t root_off, const uint8_t *key, int len, MBDa
         int last_prefix_rval = MBError::NOT_EXIST;
         while(true)
         {
-            rval = mm.NextEdge(p, edge_ptrs, node_buff);
+            rval = mm.NextEdge(p, edge_ptrs, node_buff, data);
             if(rval != MBError::READ_ERROR)
             {
                 if(node_buff[0] & FLAG_NODE_MATCH)
@@ -624,7 +625,7 @@ int Dict::FindPrefix_Internal(size_t root_off, const uint8_t *key, int len, MBDa
                 break;
 
 #ifdef __LOCK_FREE__
-            READER_LOCK_FREE_STOP(edge_offset_prev)
+            READER_LOCK_FREE_STOP(edge_offset_prev, data)
 #endif
             edge_len = edge_ptrs.len_ptr[0];
             edge_len_m1 = edge_len - 1;
@@ -676,7 +677,7 @@ int Dict::FindPrefix_Internal(size_t root_off, const uint8_t *key, int len, MBDa
     }
 
 #ifdef __LOCK_FREE__
-    READER_LOCK_FREE_STOP(edge_ptrs.offset)
+    READER_LOCK_FREE_STOP(edge_ptrs.offset, data)
 #endif
     return rval;
 }
@@ -685,6 +686,7 @@ int Dict::Find(const uint8_t *key, int len, MBData &data)
 {
     int rval;
     size_t rc_root_offset = header->rc_root_offset.load(MEMORY_ORDER_READER);
+
     if(rc_root_offset != 0)
     {
         reader_rc_off = rc_root_offset;
@@ -703,7 +705,7 @@ int Dict::Find(const uint8_t *key, int len, MBData &data)
         }
         else if(rval != MBError::NOT_EXIST)
             return rval;
-        data.options &= ~CONSTS::OPTION_RC_MODE;
+        data.options &= ~(CONSTS::OPTION_RC_MODE | CONSTS::OPTION_READ_SAVED_EDGE);
     }
     else
     {
@@ -743,7 +745,7 @@ int Dict::Find_Internal(size_t root_off, const uint8_t *key, int len, MBData &da
     if(edge_ptrs.len_ptr[0] == 0)
     {
 #ifdef __LOCK_FREE__
-        READER_LOCK_FREE_STOP(edge_ptrs.offset)
+        READER_LOCK_FREE_STOP(edge_ptrs.offset, data)
 #endif
         return MBError::NOT_EXIST;
     }
@@ -762,7 +764,7 @@ int Dict::Find_Internal(size_t root_off, const uint8_t *key, int len, MBData &da
         if(mm.ReadData(node_buff, edge_len_m1, edge_str_off_lf) != edge_len_m1)
         {
 #ifdef __LOCK_FREE__
-            READER_LOCK_FREE_STOP(edge_ptrs.offset)
+            READER_LOCK_FREE_STOP(edge_ptrs.offset, data)
 #endif
             return MBError::READ_ERROR;
         }
@@ -779,7 +781,7 @@ int Dict::Find_Internal(size_t root_off, const uint8_t *key, int len, MBData &da
            (edge_ptrs.flag_ptr[0] & EDGE_FLAG_DATA_OFF))
         {
 #ifdef __LOCK_FREE__
-            READER_LOCK_FREE_STOP(edge_ptrs.offset)
+            READER_LOCK_FREE_STOP(edge_ptrs.offset, data)
 #endif
             return MBError::NOT_EXIST;
         }
@@ -792,12 +794,12 @@ int Dict::Find_Internal(size_t root_off, const uint8_t *key, int len, MBData &da
 #endif
         while(true)
         {
-            rval = mm.NextEdge(p, edge_ptrs, node_buff, data.options & CONSTS::OPTION_FIND_AND_STORE_PARENT);
+            rval = mm.NextEdge(p, edge_ptrs, node_buff, data);
             if(rval != MBError::SUCCESS)
                 break;
 
 #ifdef __LOCK_FREE__
-            READER_LOCK_FREE_STOP(edge_offset_prev)
+            READER_LOCK_FREE_STOP(edge_offset_prev, data)
 #endif
             edge_len = edge_ptrs.len_ptr[0];
             edge_len_m1 = edge_len - 1;
@@ -873,7 +875,7 @@ int Dict::Find_Internal(size_t root_off, const uint8_t *key, int len, MBData &da
     }
 
 #ifdef __LOCK_FREE__
-    READER_LOCK_FREE_STOP(edge_ptrs.offset)
+    READER_LOCK_FREE_STOP(edge_ptrs.offset, data)
 #endif
     return rval;
 }

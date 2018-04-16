@@ -78,7 +78,7 @@ public:
     void ReserveData(const uint8_t* key, int size, size_t &offset,
                      bool map_new_sliding=true);
     int  NextEdge(const uint8_t *key, EdgePtrs &edge_ptrs,
-                  uint8_t *tmp_buff, bool update_parent_info=false) const;
+                  uint8_t *tmp_buff, MBData &mbdata) const;
     int  RemoveEdgeByIndex(const EdgePtrs &edge_ptrs, MBData &data);
     void InitRootNode();
     inline void WriteEdge(const EdgePtrs &edge_ptrs) const;

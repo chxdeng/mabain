@@ -41,7 +41,7 @@ static void* Reader(void *arg)
     int ktype;
 
     while(!stop_processing) {
-        usleep(5);
+        //usleep(5);
 
 	if(key_high.load(std::memory_order_consume) == key_low.load(std::memory_order_consume))
 	    continue;
@@ -116,7 +116,7 @@ static void Verify(DB &db)
 static void* AddThread(void *arg)
 {
     DB *db = (DB *) arg;
-    int num = rand() % 2500;
+    int num = rand() % 1500;
 
     int64_t key;
     TestKey tkey_int(MABAIN_TEST_KEY_TYPE_INT);
@@ -271,10 +271,10 @@ static void* run_mb_test(void *arg)
     load_key_ids();
 
     MBConfig mbconf;
-    int options = CONSTS::WriterOptions() | CONSTS::ASYNC_WRITER_MODE;
+    int options;
     memset(&mbconf, 0, sizeof(mbconf));
     mbconf.mbdir = mbdir.c_str();
-    options = CONSTS::WriterOptions() | CONSTS::ASYNC_WRITER_MODE;
+    options = CONSTS::WriterOptions() | CONSTS::ASYNC_WRITER_MODE | CONSTS::NO_RUNNING_WRITER_CHECK;
     mbconf.options = options;
     mbconf.memcap_index = 128ULL*1024*1024;
     mbconf.memcap_data = 128ULL*1024*1024;
@@ -305,7 +305,7 @@ static void* run_mb_test(void *arg)
         Prune(*db, nupdates);
 
         std::cout << "LOOP " << loop_cnt << ": " << db->Count() << "\n";
-        if(loop_cnt % 7 == 0) {
+        if(loop_cnt % 5 == 0) {
             std::cout << "RUN RC\n";
             int rval = db->CollectResource(24LL*1024*1024, 24LL*1024*1024, 128LL*1024*1024, 0xFFFFFFFFFFFF);
             if(rval == MBError::SUCCESS) {

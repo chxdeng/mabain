@@ -31,6 +31,7 @@ const int CONSTS::MEMORY_ONLY_MODE             = 0x20;
 const int CONSTS::OPTION_ALL_PREFIX            = 0x1;
 const int CONSTS::OPTION_FIND_AND_STORE_PARENT = 0x2;
 const int CONSTS::OPTION_RC_MODE               = 0x4;
+const int CONSTS::OPTION_READ_SAVED_EDGE       = 0x8;
 
 const int CONSTS::MAX_KEY_LENGHTH              = 256;
 const int CONSTS::MAX_DATA_SIZE                = 0x7FFF;
