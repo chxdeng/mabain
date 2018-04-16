@@ -236,4 +236,48 @@ TEST_F(LockFreeTest, ReaderLockFreeStop_test_5)
     lfree.WriterLockFreeStop();
 }
 
+// Test for https://github.com/chxdeng/mabain/issues/35
+TEST_F(LockFreeTest, ReaderLockFreeStop_test_6)
+{
+    lock_free_data.counter = 232811;
+    lock_free_data.offset = 54321;
+    for(int i = 0; i < MAX_OFFSET_CACHE; i++) {
+        lock_free_data.offset_cache[i] = (i + 1)*1000 + 148213;
+    }
+
+    size_t offset;
+    int rval;
+    MBData mbd;
+
+    offset = 54321;
+    LockFreeData snapshot;
+
+    // edge added
+    lfree.ReaderLockFreeStart(snapshot);
+    header.excep_updating_status = EXCEP_STATUS_ADD_EDGE;
+    lfree.WriterLockFreeStart(offset);
+
+    rval = lfree.ReaderLockFreeStop(snapshot, offset, mbd);
+    EXPECT_EQ(MBError::TRY_AGAIN, rval);
+    EXPECT_TRUE(mbd.options & CONSTS::OPTION_READ_SAVED_EDGE);
+
+    lfree.ReaderLockFreeStart(snapshot);
+    rval = lfree.ReaderLockFreeStop(snapshot, offset, mbd);
+    EXPECT_EQ(MBError::SUCCESS, rval);
+    EXPECT_FALSE(mbd.options & CONSTS::OPTION_READ_SAVED_EDGE);
+
+    // edge remooved
+    header.excep_updating_status = EXCEP_STATUS_REMOVE_EDGE;
+    lfree.WriterLockFreeStart(offset);
+    lfree.ReaderLockFreeStart(snapshot);
+    rval = lfree.ReaderLockFreeStop(snapshot, offset, mbd);
+    EXPECT_EQ(MBError::TRY_AGAIN, rval);
+    EXPECT_TRUE(mbd.options & CONSTS::OPTION_READ_SAVED_EDGE);
+
+    lfree.ReaderLockFreeStart(snapshot);
+    rval = lfree.ReaderLockFreeStop(snapshot, offset, mbd);
+    EXPECT_EQ(MBError::SUCCESS, rval);
+    EXPECT_FALSE(mbd.options & CONSTS::OPTION_READ_SAVED_EDGE);
+}
+
 }

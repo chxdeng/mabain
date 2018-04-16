@@ -141,15 +141,8 @@ inline void DictMem::WriteEdge(const EdgePtrs &edge_ptrs) const
         throw (int) MBError::OUT_OF_BOUND;
     }
 
-    // for segfault recovery
-    header->excep_lf_offset = edge_ptrs.offset;
-    header->excep_updating_status = EXCEP_STATUS_ADD_EDGE;
-
     if(kv_file->RandomWrite(edge_ptrs.ptr, EDGE_SIZE, edge_ptrs.offset) != EDGE_SIZE)
         throw (int) MBError::WRITE_ERROR;
-
-    // unset the segault flag
-    header->excep_updating_status = EXCEP_STATUS_NONE;
 }
 
 inline size_t DictMem::GetRootOffset() const

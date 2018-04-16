@@ -99,11 +99,9 @@ int LockFree::ReaderLockFreeStop(const LockFreeData &snapshot, size_t reader_off
                 mbdata.edge_ptrs.offset = shm_data_ptr->offset.load(MEMORY_ORDER_READER);
                 break;
             case EXCEP_STATUS_CLEAR_EDGE:
+            default:
                 memset(mbdata.edge_ptrs.edge_buff, 0, EDGE_SIZE);
                 mbdata.edge_ptrs.offset = shm_data_ptr->offset.load(MEMORY_ORDER_READER);
-                break;
-            default:
-                mbdata.edge_ptrs.offset = MAX_6B_OFFSET;
                 break;
         }
         if(mbdata.edge_ptrs.offset == reader_offset)
