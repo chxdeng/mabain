@@ -31,7 +31,6 @@ namespace mabain {
 // reader/writer concurrency.
 
 #define MAX_OFFSET_CACHE   4
-#define MAX_OFFSET_CACHE_2 2*MAX_OFFSET_CACHE
 #define MEMORY_ORDER_WRITER std::memory_order_release
 #define MEMORY_ORDER_READER std::memory_order_consume
 

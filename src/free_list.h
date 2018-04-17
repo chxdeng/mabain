@@ -90,11 +90,6 @@ private:
     int64_t count;
     // totol size allocted for all the buffers
     size_t tot_size;
-
-    // Temp buffer cache for the most recent released buffers.
-    // These buffers cannot be reused since readers may still be accessing them.
-    BufferCache buf_cache[MAX_OFFSET_CACHE_2];
-    uint32_t    buf_cache_index;
 };
 
 inline int FreeList::GetAlignmentSize(int size) const
@@ -136,19 +131,6 @@ inline int FreeList::AddBufferByIndex(int buf_index, size_t offset)
 {
 #ifdef __DEBUG__
     assert(buf_index < max_num_buffer);
-#endif
-
-#ifdef __LOCK_FREE__
-    int bidx = buf_index;
-    size_t boff = offset;
-    int idx = buf_cache_index % MAX_OFFSET_CACHE_2;
-    buf_index = buf_cache[idx].buf_index;
-    offset = buf_cache[idx].buf_offset;
-    buf_cache[idx].buf_index = bidx; 
-    buf_cache[idx].buf_offset = boff; 
-    buf_cache_index++;
-    if(offset == 0)
-        return MBError::SUCCESS;
 #endif
 
     if(buffer_free_list[buf_index]->Count() > (unsigned)max_buffer_per_list)
