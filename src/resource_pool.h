@@ -44,6 +44,7 @@ public:
     void RemoveResourceByPath(const std::string &path);
     void RemoveAll();
     bool CheckExistence(const std::string &header_path);
+    int  AddResourceByPath(const std::string &path, std::shared_ptr<MmapFileIO> resource);
 
     static ResourcePool& getInstance() {
         static ResourcePool instance; // only one instance per process

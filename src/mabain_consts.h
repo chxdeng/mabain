@@ -29,7 +29,6 @@ public:
     static const int ASYNC_WRITER_MODE;
     static const int SYNC_ON_WRITE;
     static const int USE_SLIDING_WINDOW;
-    static const int NO_RUNNING_WRITER_CHECK;
     static const int MEMORY_ONLY_MODE;
     static const int OPTION_ALL_PREFIX;
     static const int OPTION_FIND_AND_STORE_PARENT;

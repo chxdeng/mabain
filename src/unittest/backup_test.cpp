@@ -11,8 +11,8 @@
 
 #include "../db.h"
 #include "../mb_data.h"
+#include "../mb_backup.h"
 #include "./test_key.h"
-#include "./mb_backup.h"
 
 #define MB_DIR "/var/tmp/mabain_test/"
 #define MB_BACKUP_DIR "/var/tmp/mabain_backup/"
@@ -52,7 +52,6 @@ public:
 
     }
     virtual void TearDown() {
-
     }
 
     void check_overwritten_keys(DB *db_bkp, int num)
