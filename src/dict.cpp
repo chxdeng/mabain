@@ -1394,8 +1394,9 @@ int Dict::UpdateNumWriter(int delta) const
         if(header->num_writer > 0)
         {
             Logger::Log(LOG_LEVEL_WARN, "writer was not shutdown cleanly previously");
-            header->num_writer = 0;
-            header->num_writer = 0;
+            header->num_writer = 1;
+            // Reset number of reader too.
+            header->num_reader = 0;
             return MBError::WRITER_EXIST;
         }
 

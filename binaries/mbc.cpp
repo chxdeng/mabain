@@ -262,7 +262,7 @@ static int parse_command(std::string &cmd,
             }
             else if(cmd.compare("decWriterCount") == 0)
             {
-                std::cout << "Do you want to decrement number of reader? Press \'y\' to continue: ";
+                std::cout << "Do you want to decrement number of writer? Press \'y\' to continue: ";
                 std::getline(std::cin, yes);   
                 if(yes.length() > 0 && yes[0] == 'y')
                     return COMMAND_RESET_N_WRITER;
