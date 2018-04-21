@@ -113,7 +113,6 @@ int AsyncWriter::StopAsyncThread()
     if(num_users.load(std::memory_order_consume) > 0)
     {
         Logger::Log(LOG_LEVEL_ERROR, "still being used, cannot shutdown async thread");
-        return MBError::NOT_ALLOWED;
     }
 
     stop_processing = true;

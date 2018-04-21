@@ -272,10 +272,13 @@ void DB::InitDB(MBConfig &config)
         status = ResourcePool::getInstance().AddResourceByPath(lock_file, NULL);
         if(status == MBError::SUCCESS)
         {
-            // process check by file lock
-            writer_lock_fd = acquire_writer_lock(lock_file);
-            if(writer_lock_fd < 0)
-                status = MBError::WRITER_EXIST;
+            if(!(config.options & CONSTS::MEMORY_ONLY_MODE))
+            {
+                // process check by file lock
+                writer_lock_fd = acquire_writer_lock(lock_file);
+                if(writer_lock_fd < 0)
+                    status = MBError::WRITER_EXIST;
+            }
         }
         else
         {
