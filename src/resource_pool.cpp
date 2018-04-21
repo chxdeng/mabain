@@ -21,6 +21,7 @@
 #include "resource_pool.h"
 #include "mabain_consts.h"
 #include "mmap_file.h"
+#include "error.h"
 
 namespace mabain {
 
@@ -121,6 +122,22 @@ std::shared_ptr<MmapFileIO> ResourcePool::OpenFile(const std::string &fpath,
 
     pthread_mutex_unlock(&pool_mutex);
     return mmap_file;
+}
+
+int ResourcePool::AddResourceByPath(const std::string &path, std::shared_ptr<MmapFileIO> resource)
+{
+    int rval = MBError::IN_DICT;
+
+    pthread_mutex_lock(&pool_mutex);
+    auto search = file_pool.find(path);
+    if(search == file_pool.end())
+    {
+        file_pool[path] = resource;
+        rval = MBError::SUCCESS;
+    }
+    pthread_mutex_unlock(&pool_mutex);
+
+    return rval;
 }
 
 }

@@ -274,7 +274,7 @@ static void* run_mb_test(void *arg)
     int options;
     memset(&mbconf, 0, sizeof(mbconf));
     mbconf.mbdir = mbdir.c_str();
-    options = CONSTS::WriterOptions() | CONSTS::ASYNC_WRITER_MODE | CONSTS::NO_RUNNING_WRITER_CHECK;
+    options = CONSTS::WriterOptions() | CONSTS::ASYNC_WRITER_MODE;
     mbconf.options = options;
     mbconf.memcap_index = 128ULL*1024*1024;
     mbconf.memcap_data = 128ULL*1024*1024;

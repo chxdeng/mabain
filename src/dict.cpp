@@ -1393,10 +1393,10 @@ int Dict::UpdateNumWriter(int delta) const
         // Only one writer allowed
         if(header->num_writer > 0)
         {
-            if(options & CONSTS::NO_RUNNING_WRITER_CHECK)
-                Logger::Log(LOG_LEVEL_WARN, "number of writer is not zero: %d", header->num_writer);
-            else
-                return MBError::WRITER_EXIST;
+            Logger::Log(LOG_LEVEL_WARN, "writer was not shutdown cleanly previously");
+            header->num_writer = 0;
+            header->num_writer = 0;
+            return MBError::WRITER_EXIST;
         }
 
         header->num_writer = 1;

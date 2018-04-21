@@ -105,7 +105,7 @@ static void show_help()
     std::cout << "\tshow\t\t\tshow database statistics\n";
     std::cout << "\thelp\t\t\tshow helps\n";
     std::cout << "\tquit\t\t\tquit mabain client\n";
-    std::cout << "\tclearWriterCheck\tClear writer count in shared memory header\n";
+    std::cout << "\tdecWriterCount\t\tClear writer count in shared memory header\n";
     std::cout << "\tdecReaderCount\t\tdecrement reader count in shared memory header\n";
     std::cout << "\tprintHeader\t\tPrint shared memory header\n";
     std::cout << "\treclaimResources\tReclaim deleted resources\n";
@@ -260,6 +260,14 @@ static int parse_command(std::string &cmd,
                     return COMMAND_RESET_N_READER;
                 return COMMAND_NONE;
             }
+            else if(cmd.compare("decWriterCount") == 0)
+            {
+                std::cout << "Do you want to decrement number of reader? Press \'y\' to continue: ";
+                std::getline(std::cin, yes);   
+                if(yes.length() > 0 && yes[0] == 'y')
+                    return COMMAND_RESET_N_WRITER;
+                return COMMAND_NONE;
+            }
             break;
         case 'i':
             if(cmd.compare(0, 7, "insert(") == 0)
@@ -288,16 +296,6 @@ static int parse_command(std::string &cmd,
         case 'h':
             if(cmd.compare("help") == 0)
                 return COMMAND_HELP;
-            break;
-        case 'c':
-            if(cmd.compare("clearWriterCheck") == 0)
-            {
-                std::cout << "Do you want to reset number of writer? Press \'Y\' to continue: ";
-                std::getline(std::cin, yes);   
-                if(yes.length() > 0 && yes[0] == 'Y')
-                    return COMMAND_RESET_N_WRITER;
-                return COMMAND_NONE;
-            }
             break;
         case 'p':
             if(cmd.compare("printHeader") == 0)

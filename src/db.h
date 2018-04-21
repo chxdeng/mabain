@@ -210,6 +210,8 @@ private:
     MBConfig dbConfig;
 
     AsyncWriter *async_writer;
+
+    int writer_lock_fd;
 };
 
 }
