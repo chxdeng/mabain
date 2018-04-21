@@ -572,6 +572,9 @@ int main(int argc, char *argv[])
     int mode = 0;
     std::string query_cmd = "";
     std::string script_file = "";
+    int64_t index_blk_size = 64LL*1024*1024;
+    int64_t data_blk_size = 64LL*1024*1024;
+    int64_t lru_bucket_size = 1000;
 
     for(int i = 1; i < argc; i++)
     {
@@ -609,6 +612,24 @@ int main(int argc, char *argv[])
                 usage(argv[0]);
             script_file = argv[i];
         }
+        else if(strcmp(argv[i], "--lru-bucket-size") == 0)
+        {
+            if(++i >= argc)
+                usage(argv[0]);
+            lru_bucket_size = atoi(argv[i]);
+        }
+        else if(strcmp(argv[i], "--index-block-size") == 0)
+        {
+            if(++i >= argc)
+                usage(argv[0]);
+            index_blk_size = atoi(argv[i]);
+        }
+        else if(strcmp(argv[i], "--data-block-size") == 0)
+        {
+            if(++i >= argc)
+                usage(argv[0]);
+            index_blk_size = atoi(argv[i]);
+        }
         else
             usage(argv[0]);
     }
@@ -616,7 +637,16 @@ int main(int argc, char *argv[])
     if(db_dir == NULL)
         usage(argv[0]);
 
-    DB *db = new DB(db_dir, mode, memcap_i, memcap_d);
+    MBConfig mbconf;
+    memset(&mbconf, 0, sizeof(mbconf));
+    mbconf.mbdir = db_dir;
+    mbconf.options = mode;
+    mbconf.memcap_index = memcap_i;
+    mbconf.memcap_data = memcap_d;
+    mbconf.block_size_index = index_blk_size;
+    mbconf.block_size_data = data_blk_size;
+    mbconf.num_entry_per_bucket = lru_bucket_size;
+    DB *db = new DB(mbconf);
     if(!db->is_open())
     {
         std::cout << db->StatusStr() << "\n";
