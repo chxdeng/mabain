@@ -23,6 +23,7 @@
 #include "../dict_mem.h"
 #include "../drm_base.h"
 #include "../integer_4b_5b.h"
+#include "../resource_pool.h"
 
 using namespace mabain;
 
@@ -61,11 +62,12 @@ public:
         EXPECT_EQ(dmm->IsValid(), true);
         header = dmm->GetHeaderPtr();
         EXPECT_EQ(header != NULL, true);
-        lfree.LockFreeInit(&header->lock_free, CONSTS::ACCESS_MODE_WRITER);
+        lfree.LockFreeInit(&header->lock_free, header, CONSTS::ACCESS_MODE_WRITER);
         dmm->InitLockFreePtr(&lfree);
     }
 
     void DestroyDMM() {
+        ResourcePool::getInstance().RemoveAll();
         if(dmm != NULL) {
             dmm->Destroy();
             delete dmm;
@@ -120,7 +122,7 @@ TEST_F(DictMemTest, AddRootEdge_test)
     uint8_t *shm_ptr;
 
     memset(&edge_ptrs, 0, sizeof(edge_ptrs));
-    EXPECT_EQ(dmm->GetRootEdge_Writer('m', edge_ptrs), MBError::SUCCESS);
+    EXPECT_EQ(dmm->GetRootEdge_Writer(false, 'm', edge_ptrs), MBError::SUCCESS);
     dmm->AddRootEdge(edge_ptrs, (const uint8_t *) "mabain-test", 11, 1234);
     EXPECT_EQ(edge_ptrs.flag_ptr[0], EDGE_FLAG_DATA_OFF);
     offset = Get5BInteger(edge_ptrs.ptr);
@@ -139,7 +141,7 @@ TEST_F(DictMemTest, AddRootEdge_test)
     EXPECT_EQ(header->excep_updating_status, EXCEP_STATUS_NONE);
 
     memset(&edge_ptrs, 0, sizeof(edge_ptrs));
-    EXPECT_EQ(dmm->GetRootEdge_Writer('x', edge_ptrs), MBError::SUCCESS);
+    EXPECT_EQ(dmm->GetRootEdge_Writer(false, 'x', edge_ptrs), MBError::SUCCESS);
     dmm->AddRootEdge(edge_ptrs, (const uint8_t *) "xyz", 3, 2234);
     EXPECT_EQ(edge_ptrs.flag_ptr[0], EDGE_FLAG_DATA_OFF);
     offset = Get6BInteger(edge_ptrs.offset_ptr);
@@ -163,11 +165,11 @@ TEST_F(DictMemTest, InsertNode_test)
     int rval;
 
     memset(&edge_ptrs, 0, sizeof(edge_ptrs));
-    EXPECT_EQ(dmm->GetRootEdge_Writer('m', edge_ptrs), MBError::SUCCESS);
+    EXPECT_EQ(dmm->GetRootEdge_Writer(false, 'm', edge_ptrs), MBError::SUCCESS);
     dmm->AddRootEdge(edge_ptrs, (const uint8_t *) "mabain-test", 11, 1234);
 
     memset(&edge_ptrs, 0, sizeof(edge_ptrs));
-    EXPECT_EQ(dmm->GetRootEdge_Writer('m', edge_ptrs), MBError::SUCCESS);
+    EXPECT_EQ(dmm->GetRootEdge_Writer(false, 'm', edge_ptrs), MBError::SUCCESS);
     EXPECT_EQ(edge_ptrs.len_ptr[0] >= 6, true);
     rval = dmm->InsertNode(edge_ptrs, 6, 1334, mbd);
     EXPECT_EQ(rval, MBError::SUCCESS);
@@ -202,11 +204,11 @@ TEST_F(DictMemTest, InsertNode_test1)
     int rval;
 
     memset(&edge_ptrs, 0, sizeof(edge_ptrs));
-    EXPECT_EQ(dmm->GetRootEdge_Writer('m', edge_ptrs), MBError::SUCCESS);
+    EXPECT_EQ(dmm->GetRootEdge_Writer(false, 'm', edge_ptrs), MBError::SUCCESS);
     dmm->AddRootEdge(edge_ptrs, (const uint8_t *) "mabain-testabcdefghijk", 22, 1234);
 
     memset(&edge_ptrs, 0, sizeof(edge_ptrs));
-    EXPECT_EQ(dmm->GetRootEdge_Writer('m', edge_ptrs), MBError::SUCCESS);
+    EXPECT_EQ(dmm->GetRootEdge_Writer(false, 'm', edge_ptrs), MBError::SUCCESS);
     EXPECT_EQ(edge_ptrs.len_ptr[0] >= 6, true);
     rval = dmm->InsertNode(edge_ptrs, 6, 1334, mbd);
     EXPECT_EQ(rval, MBError::SUCCESS);
@@ -241,11 +243,11 @@ TEST_F(DictMemTest, InsertNode_test2)
     int rval;
 
     memset(&edge_ptrs, 0, sizeof(edge_ptrs));
-    EXPECT_EQ(dmm->GetRootEdge_Writer('x', edge_ptrs), MBError::SUCCESS);
+    EXPECT_EQ(dmm->GetRootEdge_Writer(false, 'x', edge_ptrs), MBError::SUCCESS);
     dmm->AddRootEdge(edge_ptrs, (const uint8_t *) "xxxxxxxmabain-test", 18, 1234);
 
     memset(&edge_ptrs, 0, sizeof(edge_ptrs));
-    EXPECT_EQ(dmm->GetRootEdge_Writer('x', edge_ptrs), MBError::SUCCESS);
+    EXPECT_EQ(dmm->GetRootEdge_Writer(false, 'x', edge_ptrs), MBError::SUCCESS);
     EXPECT_EQ(edge_ptrs.len_ptr[0] >= 6, true);
     rval = dmm->InsertNode(edge_ptrs, 13, 1334, mbd);
     EXPECT_EQ(rval, MBError::SUCCESS);
@@ -276,11 +278,11 @@ TEST_F(DictMemTest, AddLink_test)
     int rval;
 
     memset(&edge_ptrs, 0, sizeof(edge_ptrs));
-    EXPECT_EQ(dmm->GetRootEdge_Writer('m', edge_ptrs), MBError::SUCCESS);
+    EXPECT_EQ(dmm->GetRootEdge_Writer(false, 'm', edge_ptrs), MBError::SUCCESS);
     dmm->AddRootEdge(edge_ptrs, (const uint8_t *) "mabain-test", 18, 1234);
 
     memset(&edge_ptrs, 0, sizeof(edge_ptrs));
-    EXPECT_EQ(dmm->GetRootEdge_Writer('m', edge_ptrs), MBError::SUCCESS);
+    EXPECT_EQ(dmm->GetRootEdge_Writer(false, 'm', edge_ptrs), MBError::SUCCESS);
     rval = dmm->AddLink(edge_ptrs, 7, (const uint8_t *)"klsakkslslsldds",
                         15, 12345, mbd);
     EXPECT_EQ(rval, MBError::SUCCESS);
@@ -306,11 +308,11 @@ TEST_F(DictMemTest, UpdateNode_test)
     int rval;
 
     memset(&edge_ptrs, 0, sizeof(edge_ptrs));
-    EXPECT_EQ(dmm->GetRootEdge_Writer('m', edge_ptrs), MBError::SUCCESS);
+    EXPECT_EQ(dmm->GetRootEdge_Writer(false, 'm', edge_ptrs), MBError::SUCCESS);
     dmm->AddRootEdge(edge_ptrs, (const uint8_t *) "mabain-test", 18, 1234);
 
     memset(&edge_ptrs, 0, sizeof(edge_ptrs));
-    EXPECT_EQ(dmm->GetRootEdge_Writer('m', edge_ptrs), MBError::SUCCESS);
+    EXPECT_EQ(dmm->GetRootEdge_Writer(false, 'm', edge_ptrs), MBError::SUCCESS);
     rval = dmm->AddLink(edge_ptrs, 7, (const uint8_t *)"klsakkslslsldds",
                         15, 12345, mbd);
     EXPECT_EQ(rval, MBError::SUCCESS);
@@ -318,7 +320,7 @@ TEST_F(DictMemTest, UpdateNode_test)
     uint8_t tmp_buff[256];
     int match_len = 7;
     memset(&edge_ptrs, 0, sizeof(edge_ptrs));
-    EXPECT_EQ(dmm->GetRootEdge_Writer('m', edge_ptrs), MBError::SUCCESS);
+    EXPECT_EQ(dmm->GetRootEdge_Writer(false, 'm', edge_ptrs), MBError::SUCCESS);
     bool next = dmm->FindNext((const uint8_t*)"abcdefg", 7, match_len, edge_ptrs, tmp_buff);
     EXPECT_EQ(next, false);
     rval = dmm->UpdateNode(edge_ptrs, (const uint8_t*)"abcdefg", 7, 12345);
@@ -337,11 +339,11 @@ TEST_F(DictMemTest, FindNext_test)
     int rval;
 
     memset(&edge_ptrs, 0, sizeof(edge_ptrs));
-    EXPECT_EQ(dmm->GetRootEdge_Writer('m', edge_ptrs), MBError::SUCCESS);
+    EXPECT_EQ(dmm->GetRootEdge_Writer(false, 'm', edge_ptrs), MBError::SUCCESS);
     dmm->AddRootEdge(edge_ptrs, (const uint8_t *) "mabain-abc", 18, 1234);
 
     memset(&edge_ptrs, 0, sizeof(edge_ptrs));
-    EXPECT_EQ(dmm->GetRootEdge_Writer('m', edge_ptrs), MBError::SUCCESS);
+    EXPECT_EQ(dmm->GetRootEdge_Writer(false, 'm', edge_ptrs), MBError::SUCCESS);
     rval = dmm->AddLink(edge_ptrs, 7, (const uint8_t *)"hijk", 4, 12345, mbd);
     EXPECT_EQ(rval, MBError::SUCCESS);
 
@@ -351,7 +353,7 @@ TEST_F(DictMemTest, FindNext_test)
     int match_len = 7;
 
     memset(&edge_ptrs, 0, sizeof(edge_ptrs));
-    EXPECT_EQ(dmm->GetRootEdge_Writer('m', edge_ptrs), MBError::SUCCESS);
+    EXPECT_EQ(dmm->GetRootEdge_Writer(false, 'm', edge_ptrs), MBError::SUCCESS);
     next = dmm->FindNext((const uint8_t*)"xyz293ksk", 9, match_len,
                               edge_ptrs, tmp_buff);
     EXPECT_EQ(next, false);
@@ -363,7 +365,7 @@ TEST_F(DictMemTest, FindNext_test)
     }
     for(int i = 0; i < 256; i++) {
         memset(&edge_ptrs, 0, sizeof(edge_ptrs));
-        EXPECT_EQ(dmm->GetRootEdge_Writer('m', edge_ptrs), MBError::SUCCESS);
+        EXPECT_EQ(dmm->GetRootEdge_Writer(false, 'm', edge_ptrs), MBError::SUCCESS);
         next = dmm->FindNext((const uint8_t*)key+i, 1, match_len,
                              edge_ptrs, tmp_buff);
         if((char)key[i] == 'a' || (char)key[i] == 'h' || (char) key[i] == 'x') {
@@ -380,10 +382,10 @@ TEST_F(DictMemTest, GetRootEdge_test)
 
     EdgePtrs edge_ptrs;
     memset(&edge_ptrs, 0, sizeof(edge_ptrs));
-    EXPECT_EQ(dmm->GetRootEdge_Writer('m', edge_ptrs), MBError::SUCCESS);
+    EXPECT_EQ(dmm->GetRootEdge_Writer(false, 'm', edge_ptrs), MBError::SUCCESS);
     dmm->AddRootEdge(edge_ptrs, (const uint8_t *) "mabain-unittest", 15, 1234);
     memset(&edge_ptrs, 0, sizeof(edge_ptrs));
-    EXPECT_EQ(dmm->GetRootEdge('m', edge_ptrs), MBError::SUCCESS);
+    EXPECT_EQ(dmm->GetRootEdge(false, 'm', edge_ptrs), MBError::SUCCESS);
     EXPECT_EQ(edge_ptrs.offset, 1681u);
     EXPECT_EQ(Get5BInteger(edge_ptrs.ptr), 3592u);
 
@@ -398,7 +400,7 @@ TEST_F(DictMemTest, GetRootEdge_Writer_test)
     EdgePtrs edge_ptrs;
     memset(&edge_ptrs, 0, sizeof(edge_ptrs));
     for(int i = 0; i < 256; i++) {
-        EXPECT_EQ(dmm->GetRootEdge_Writer(i, edge_ptrs), MBError::SUCCESS);
+        EXPECT_EQ(dmm->GetRootEdge_Writer(false, i, edge_ptrs), MBError::SUCCESS);
     }
 }
 
@@ -411,15 +413,15 @@ TEST_F(DictMemTest, ClearRootEdge_test)
     dmm->WriteData(buff, 0, dmm->GetRootOffset());
 
     dmm->ClearRootEdge(0);
-    dmm->GetRootEdge(0, edge_ptrs); 
+    dmm->GetRootEdge(0, 0, edge_ptrs); 
     EXPECT_EQ(memcmp(edge_ptrs.edge_buff, DictMem::empty_edge, EDGE_SIZE)==0, true);
 
     dmm->ClearRootEdge(10);
-    dmm->GetRootEdge(10, edge_ptrs); 
+    dmm->GetRootEdge(0, 10, edge_ptrs); 
     EXPECT_EQ(memcmp(edge_ptrs.edge_buff, DictMem::empty_edge, EDGE_SIZE)==0, true);
 
     dmm->ClearRootEdge(111);
-    dmm->GetRootEdge(111, edge_ptrs); 
+    dmm->GetRootEdge(0, 111, edge_ptrs); 
     EXPECT_EQ(memcmp(edge_ptrs.edge_buff, DictMem::empty_edge, EDGE_SIZE)==0, true);
 }
 

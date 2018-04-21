@@ -23,12 +23,13 @@
 #include "../rollable_file.h"
 #include "../mabain_consts.h"
 #include "../error.h"
+#include "../resource_pool.h"
 
 using namespace mabain;
 
 namespace {
 
-#define ROLLABLE_FILE_TEST_DIR "/var/tmp/mabain_test/"
+#define ROLLABLE_FILE_TEST_DIR "/var/tmp/mabain_test"
 #define FAKE_DATA "dsklckk sldk&&sdijds8990s9090230290399&&^^%%sdhsjdhsjdhsjxnmzn  lkvlsdlq;';'a;b; ;;slv; ;;;sdfl; lls;lf;sld;sld;sld;sll;skl;klk;gk;akl;s"
 #define ONE_MEGA 1024*1024ul
 
@@ -49,6 +50,7 @@ public:
         }
     }
     virtual void TearDown() {
+        ResourcePool::getInstance().RemoveAll();
         std::string cmd = std::string("rm -rf ") + ROLLABLE_FILE_TEST_DIR + "/_*";
         if(system(cmd.c_str()) != 0) {
         }
@@ -67,6 +69,7 @@ TEST_F(RollableFileTest, constructor_test)
                 4*ONE_MEGA, 4*ONE_MEGA, CONSTS::ACCESS_MODE_WRITER, 0);
     EXPECT_EQ(rfile != NULL, true);
     delete rfile;
+    ResourcePool::getInstance().RemoveAll();
 
     rfile = new RollableFile(std::string(ROLLABLE_FILE_TEST_DIR) + "/_mabain_d",
                 4*ONE_MEGA, 4*ONE_MEGA, CONSTS::ACCESS_MODE_READER, 2);
@@ -82,9 +85,11 @@ TEST_F(RollableFileTest, RandomWrite_test)
 
     size_t nbytes;
     size_t offset;
+    uint8_t *ptr;
 
     nbytes = 5;
     offset = 0;
+    rfile->Reserve(offset, nbytes, ptr);
     nbytes = rfile->RandomWrite((const void *)FAKE_DATA, nbytes, offset);
     EXPECT_EQ(nbytes, 5u);
 
@@ -94,6 +99,7 @@ TEST_F(RollableFileTest, RandomWrite_test)
 
     nbytes = 78;
     offset = ONE_MEGA + 28372;
+    rfile->Reserve(offset, nbytes, ptr);
     nbytes = rfile->RandomWrite((const void *)FAKE_DATA, nbytes, offset);
     EXPECT_EQ(nbytes, 78u);
     rfile->RandomRead(buff, nbytes, offset);
@@ -107,12 +113,16 @@ TEST_F(RollableFileTest, RandomRead_test)
                 CONSTS::ACCESS_MODE_WRITER | CONSTS::USE_SLIDING_WINDOW, 0);
     
     EXPECT_EQ(rfile != NULL, true);
+    std::atomic<size_t> sliding_addr;
+    rfile->InitShmSlidingAddr(&sliding_addr);
 
     size_t nbytes;
     size_t offset;
+    uint8_t *ptr;
 
     nbytes = 15;
     offset = 20;
+    rfile->Reserve(offset, nbytes, ptr);
     nbytes = rfile->RandomWrite((const void *)FAKE_DATA, nbytes, offset);
     EXPECT_EQ(nbytes, 15u);
 
@@ -122,6 +132,7 @@ TEST_F(RollableFileTest, RandomRead_test)
 
     nbytes = 35;
     offset = 8*ONE_MEGA + 28372;
+    rfile->Reserve(offset, nbytes, ptr);
     nbytes = rfile->RandomWrite((const void *)FAKE_DATA, nbytes, offset);
     EXPECT_EQ(nbytes, 35u);
     rfile->RandomRead(buff, nbytes, offset);
@@ -202,13 +213,18 @@ TEST_F(RollableFileTest, Flush_test)
                 4*ONE_MEGA, 4*ONE_MEGA,
                 CONSTS::ACCESS_MODE_WRITER | CONSTS::USE_SLIDING_WINDOW, 0);
     EXPECT_EQ(rfile != NULL, true);
+    std::atomic<size_t> sliding_addr;
+    rfile->InitShmSlidingAddr(&sliding_addr);
     
     int nbytes = 78;
     size_t offset = ONE_MEGA + 28372;
+    uint8_t *ptr;
+    rfile->Reserve(offset, nbytes, ptr);
     nbytes = rfile->RandomWrite((const void *)FAKE_DATA, nbytes, offset);
     EXPECT_EQ(nbytes, 78);
     offset = 4*ONE_MEGA + 233232;
     nbytes = 101;
+    rfile->Reserve(offset, nbytes, ptr);
     nbytes = rfile->RandomWrite((const void *)FAKE_DATA, nbytes, offset);
     EXPECT_EQ(nbytes, 101);
     rfile->Flush();

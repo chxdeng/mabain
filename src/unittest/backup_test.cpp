@@ -11,8 +11,8 @@
 
 #include "../db.h"
 #include "../mb_data.h"
+#include "../mb_backup.h"
 #include "./test_key.h"
-#include "./mb_backup.h"
 
 #define MB_DIR "/var/tmp/mabain_test/"
 #define MB_BACKUP_DIR "/var/tmp/mabain_backup/"
@@ -29,7 +29,7 @@ public:
     }
     virtual ~BackupTest() {
     }
-    virtual void SetUp() 
+    virtual void SetUp()
     {
         std::string cmd_2 = std::string("mkdir -p ") + MB_DIR;
         std::string cmd = std::string("mkdir -p ") + MB_BACKUP_DIR;
@@ -52,9 +52,8 @@ public:
 
     }
     virtual void TearDown() {
-
     }
-    
+
     void check_overwritten_keys(DB *db_bkp, int num)
     {
         TestKey tkey(MABAIN_TEST_KEY_TYPE_INT);
@@ -98,10 +97,10 @@ TEST_F(BackupTest, Create_backup_db)
         rval = db->Add(key, key);
         EXPECT_EQ(rval, MBError::SUCCESS);
     }
-    
+
     clock_t t;
     t = clock();
-   
+
     try 
     {
         DBBackup bk(*db);
@@ -117,7 +116,7 @@ TEST_F(BackupTest, Create_backup_db)
     t = clock() -t;
     printf ("It took me %ld clicks (%f seconds).\n",t,((float)t)/CLOCKS_PER_SEC);
     DB *db_bkp = new DB(MB_BACKUP_DIR, CONSTS::WriterOptions());
-    
+
     //Test to check already inserted key.
     for(int i = 0; i < num; i++) 
     {
@@ -128,7 +127,7 @@ TEST_F(BackupTest, Create_backup_db)
         rval = db_bkp->Add(key, key);
         EXPECT_EQ(rval, MBError::IN_DICT);
     }
-    
+
     //Test to overwrite existing key and retrive it.
     for(int i = 0; i < num; i++)
     {
@@ -138,8 +137,8 @@ TEST_F(BackupTest, Create_backup_db)
         key = tkey1.get_key(i);
         rval = db_bkp->Add(key, key+"_new", true);
     }
-    
-    // Retrive the overwritten key and check it. 
+
+    // Retrive the overwritten key and check it.
     check_overwritten_keys(db_bkp, num);
 
     db_bkp->Close();
@@ -162,7 +161,7 @@ TEST_F(BackupTest, Create_backup_db)
     delete db_r;
     db_bkp = new DB(MB_BACKUP_DIR_2, CONSTS::WriterOptions(), 128LL*1024*1024, 128LL*1024*1024);
     check_overwritten_keys(db_bkp, num);
-    
+
     //Test to remove all the keys from the DB.
     rval = db_bkp->RemoveAll();
     EXPECT_EQ(rval, MBError::SUCCESS);

@@ -50,9 +50,6 @@ FreeList::FreeList(const std::string &file_path, int buff_alignment,
     {
         buffer_free_list[i] = new MBlsq(NULL);
     }
-
-    memset(buf_cache, 0, sizeof(buf_cache));
-    buf_cache_index = 0;
 }
 
 FreeList::~FreeList()
@@ -194,10 +191,8 @@ int FreeList::LoadListFromDisk()
             return MBError::SUCCESS;
         }
 
-        char err_buf[32];
-        Logger::Log(LOG_LEVEL_ERROR, "cannot access %s with full permission: ",
-                                 list_path.c_str(),
-                                 strerror_r(errno, err_buf, sizeof(err_buf)));
+        Logger::Log(LOG_LEVEL_ERROR, "cannot access %s with full permission: %d",
+                    list_path.c_str(), errno);
         return MBError::NOT_ALLOWED;
     }
 
@@ -230,9 +225,8 @@ int FreeList::LoadListFromDisk()
     // Remove the file
     if(unlink(list_path.c_str()) != 0)
     {
-        char err_buf[32];
-        Logger::Log(LOG_LEVEL_ERROR, "failed to delete file %s: %s ", list_path.c_str(),
-                    strerror_r(errno, err_buf, sizeof(err_buf)));
+        Logger::Log(LOG_LEVEL_ERROR, "failed to delete file %s: %d ",
+                    list_path.c_str(), errno);
         return MBError::WRITE_ERROR;
     }
 
@@ -254,9 +248,6 @@ void FreeList::ReleaseAlignmentBuffer(size_t old_offset, size_t alignment_offset
 
 void FreeList::Empty()
 {
-    memset(buf_cache, 0, sizeof(buf_cache));
-    buf_cache_index = 0;
-
     for(int i = 0; i < max_num_buffer; i++)
     {
         if(buffer_free_list[i])

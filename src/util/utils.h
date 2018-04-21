@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2017 Cisco Inc.
+ * Copyright (C) 2018 Cisco Inc.
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU General Public License, version 2,
@@ -16,25 +16,16 @@
 
 // @author Changxue Deng <chadeng@cisco.com>
 
-#include <gtest/gtest.h>
-#include <gtest/tap.h>
+#ifndef __UTILS_H__
+#define __UTILS_H__
 
-#include "../db.h"
-#define MB_DIR "/var/tmp/mabain_test/"
+#include <string>
 
-GTEST_API_ int main(int argc, char **argv)
-{
-    testing::InitGoogleTest(&argc, argv);
-    testing::TestEventListeners& listeners = testing::UnitTest::GetInstance()->listeners();
-    listeners.Append(new tap::TapListener());
+namespace mabain {
 
-    mode_t mode = 0777;
-    mkdir(MB_DIR, mode);
+int  acquire_writer_lock(const std::string &lock_file_path);
+void release_writer_lock(int &fd);
 
-    mabain::DB::SetLogFile("/var/tmp/mabain_test/mabain.log");
-    int rval = RUN_ALL_TESTS();
-
-    mabain::DB::CloseLogFile();
-    return rval;
 }
 
+#endif

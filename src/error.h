@@ -19,6 +19,8 @@
 #ifndef __MBERROR_H__
 #define __MBERROR_H__
 
+#undef TRY_AGAIN
+
 namespace mabain {
 
 // mabain errors

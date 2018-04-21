@@ -23,16 +23,15 @@
 #include "logger.h"
 #include "error.h"
 
-#define MAX_LOG_FILES       10
-#define MAX_LOG_MSG_SIZE    256
+#define MAX_NUM_LOG 10
 
 namespace mabain {
 
-std::string Logger::log_file        = "";
-std::ofstream *Logger::log_stream   = NULL;
-int Logger::log_level_              = LOG_LEVEL_WARN;
-int Logger::roll_size               = 50*1024*1024;     // 50M
-const char *Logger::LOG_LEVEL[4]    =
+std::string Logger::log_file = "";
+std::ofstream* Logger::log_stream = NULL;
+int Logger::log_level_       = LOG_LEVEL_WARN;
+int Logger::roll_size        = 50*1024*1024;
+const char* Logger::LOG_LEVEL[4] =
 {
     " ERROR: ",
     " WARN: ",
@@ -93,7 +92,7 @@ void Logger::Rotate()
 
     std::string filepath_old;
     std::string filepath_new;
-    for(int i = MAX_LOG_FILES-2; i > 0; i--)
+    for(int i = MAX_NUM_LOG-2; i > 0; i--)
     {
         filepath_old = log_file + "." + std::to_string(i);
         if(access(filepath_old.c_str(), R_OK) == 0)
@@ -117,7 +116,7 @@ void Logger::Log(int level, const std::string &message)
 
     if(log_stream != NULL)
     {
-        char buffer[MAX_LOG_MSG_SIZE];
+        char buffer[80];
         FillDateTime(buffer, sizeof(buffer));
         *log_stream << buffer << LOG_LEVEL[level] << message << std::endl;
         if(log_stream->tellp() > roll_size)
@@ -134,13 +133,13 @@ void Logger::Log(int level, const char *format, ... )
     if(level > log_level_)
         return;
 
-    char message[MAX_LOG_MSG_SIZE];
+    char message[256];
     va_list args;
     va_start(args, format);
     vsprintf(message, format, args);
     if(log_stream != NULL)
     {
-        char buffer[MAX_LOG_MSG_SIZE];
+        char buffer[64];
         FillDateTime(buffer, sizeof(buffer));
         *log_stream << buffer << LOG_LEVEL[level] << message << std::endl;
         if(log_stream->tellp() > roll_size)

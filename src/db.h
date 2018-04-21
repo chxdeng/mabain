@@ -25,6 +25,7 @@
 #include "mb_data.h"
 #include "error.h"
 #include "lock.h"
+#include "integer_4b_5b.h"
 
 namespace mabain {
 
@@ -130,12 +131,9 @@ public:
     int Backup(const char *backup_dir);
 
     // Close the DB handle
-    int Close();
+    int  Close();
     void Flush() const;
-    // close file descriptors
-    void CloseDBFiles();
-    // open DB files
-    int  OpenDBFiles();
+    static void ClearResources(const std::string &path);
 
     // Garbage collection
     // min_index_rc_size and min_data_rc_size are the threshold for trigering garbage
@@ -145,7 +143,7 @@ public:
     // eviction will be ignored if db size is less than 0xFFFFFFFFFFFF and db count is
     // less than 0xFFFFFFFFFFFF.
     int CollectResource(int64_t min_index_rc_size = 33554432 , int64_t min_data_rc_size = 33554432,
-                        int64_t max_dbsiz = 0xFFFFFFFFFFFF, int64_t max_dbcnt = 0xFFFFFFFFFFFF);
+                        int64_t max_dbsiz = MAX_6B_OFFSET, int64_t max_dbcnt = MAX_6B_OFFSET);
 
     // Multi-thread update using async thread
     // FOR THIS TO WORK, WRITER MUST BE THE LAST ONE TO CLOSE HANDLE.
@@ -188,8 +186,10 @@ public:
     int   GetDBOptions() const;
     const std::string& GetDBDir() const;
 
+    void GetDBConfig(MBConfig &config) const;
+
     //iterator
-    const iterator begin(bool check_async_mode = true) const;
+    const iterator begin(bool check_async_mode = true, bool rc_mode = false) const;
     const iterator end() const;
 
 private:
@@ -207,8 +207,11 @@ private:
 
     // db lock
     MBLock lock;
+    MBConfig dbConfig;
 
     AsyncWriter *async_writer;
+
+    int writer_lock_fd;
 };
 
 }

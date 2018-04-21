@@ -18,6 +18,8 @@ $(TARGET):$(OBJECTS) $(HEADERS)
 .cpp.o: $(HEADERS) $(SOURCES)
 	$(CPP) $(CFLAGS) $< -o $@
 
+build: all
+
 uninstall:
 	-rm -rf $(INSTALLDIR)/include/mabain
 	-rm -f $(INSTALLDIR)/lib/$(TARGET)
@@ -25,6 +27,7 @@ uninstall:
 
 clean:
 	-rm -f *.o util/*.o $(TARGET)
+	-make -C unittest clean
 
 unit-test: all
 	make -C unittest

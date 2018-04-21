@@ -7,6 +7,7 @@
 #include "../async_writer.h"
 #include "../db.h"
 #include "./test_key.h"
+#include "../resource_pool.h"
 
 using namespace mabain;
 const char *db_dir = "/var/tmp/mabain_test/";
@@ -20,12 +21,16 @@ public:
         db_async = NULL;
         db = NULL;
         memset(&mbconf, 0, sizeof(mbconf));
+        ResourcePool::getInstance().RemoveAll();
         std::string cmd = std::string("rm ") + db_dir + "_mabain_*";
         if(system(cmd.c_str()) != 0) {
         }
     }
     virtual ~EvictionTest() {}
     virtual void SetUp() {
+        std::string cmd = std::string("mkdir -p ") + db_dir;
+        if(system(cmd.c_str()) != 0) {
+        }
         mbconf.mbdir = db_dir;
         mbconf.memcap_index = 64*1024*1024LL;
         mbconf.memcap_data = 64*1024*1024LL;
@@ -101,7 +106,7 @@ TEST_F(EvictionTest, bucket_256_test)
     for(int i = 0; i < num; i++) {
         key = tkey.get_key(i);
         rval = db->Find(key, mbd);
-        if(i < entry_per_bucket) {
+        if(i < 5*entry_per_bucket) {
             EXPECT_EQ(rval, MBError::NOT_EXIST);
         } else {
             EXPECT_EQ(rval, MBError::SUCCESS);
@@ -121,7 +126,7 @@ TEST_F(EvictionTest, bucket_256_test)
     for(int i = entry_per_bucket; i < num; i++) {
         key = tkey.get_key(i);
         rval = db->Find(key, mbd);
-        if(i < 3*entry_per_bucket) {
+        if(i < 10*entry_per_bucket) {
             EXPECT_EQ(rval, MBError::NOT_EXIST);
         } else {
             EXPECT_EQ(rval, MBError::SUCCESS);

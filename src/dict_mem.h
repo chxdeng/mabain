@@ -20,6 +20,7 @@
 #define __DICTMEM_H__
 
 #include <string>
+#include <memory>
 #include <stdint.h>
 #include <string.h>
 #include <pthread.h>
@@ -71,18 +72,17 @@ public:
                   size_t data_off);
     bool FindNext(const unsigned char *key, int keylen, int &match_len,
                   EdgePtrs &edge_ptr, uint8_t *key_tmp) const;
-    int  GetRootEdge(int nt, EdgePtrs &edge_ptrs) const;
-    int  GetRootEdge_Writer(int nt, EdgePtrs &edge_ptrs) const;
+    int  GetRootEdge(size_t rc_off, int nt, EdgePtrs &edge_ptrs) const;
+    int  GetRootEdge_Writer(bool rc_mode, int nt, EdgePtrs &edge_ptrs) const;
     int  ClearRootEdge(int nt) const;
     void ReserveData(const uint8_t* key, int size, size_t &offset,
                      bool map_new_sliding=true);
     int  NextEdge(const uint8_t *key, EdgePtrs &edge_ptrs,
-                  uint8_t *tmp_buff, bool update_parent_info=false) const;
+                  uint8_t *tmp_buff, MBData &mbdata) const;
     int  RemoveEdgeByIndex(const EdgePtrs &edge_ptrs, MBData &data);
     void InitRootNode();
     inline void WriteEdge(const EdgePtrs &edge_ptrs) const;
     void WriteData(const uint8_t *buff, unsigned len, size_t offset) const;
-    int  ReadData(uint8_t *buff, unsigned len, size_t offset) const;
     inline size_t GetRootOffset() const;
     void ClearMem() const;
     const int* GetNodeSizePtr() const;
@@ -91,8 +91,10 @@ public:
     void InitLockFreePtr(LockFree *lf);
 
     void Flush() const;
-    void CloseHeaderFile();
-    int  OpenHeaderFile();
+
+    // Updates in RC mode
+    size_t InitRootNode_RC();
+    int    ClearRootEdges_RC() const;
 
     // empty edge, used for clearing edges
     static const uint8_t empty_edge[EDGE_SIZE];
@@ -125,7 +127,9 @@ private:
     LockFree *lfree;
 
     // header file
-    MmapFileIO *header_file;
+    std::shared_ptr<MmapFileIO> header_file;
+
+    size_t root_offset_rc;
 };
 
 inline void DictMem::WriteEdge(const EdgePtrs &edge_ptrs) const
@@ -137,15 +141,8 @@ inline void DictMem::WriteEdge(const EdgePtrs &edge_ptrs) const
         throw (int) MBError::OUT_OF_BOUND;
     }
 
-    // for segfault recovery
-    header->excep_lf_offset = edge_ptrs.offset;
-    header->excep_updating_status = EXCEP_STATUS_ADD_EDGE;
-
     if(kv_file->RandomWrite(edge_ptrs.ptr, EDGE_SIZE, edge_ptrs.offset) != EDGE_SIZE)
         throw (int) MBError::WRITE_ERROR;
-
-    // unset the segault flag
-    header->excep_updating_status = EXCEP_STATUS_NONE;
 }
 
 inline size_t DictMem::GetRootOffset() const

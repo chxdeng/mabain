@@ -36,14 +36,14 @@ static void free_async_node(AsyncNode *node_ptr)
     {
         free(node_ptr->key);
         node_ptr->key = NULL;
-        node_ptr->key_len = 0; 
+        node_ptr->key_len = 0;
     }
 
     if(node_ptr->data != NULL)
     {
         free(node_ptr->data);
         node_ptr->data = NULL;
-        node_ptr->data_len = 0; 
+        node_ptr->data_len = 0;
     }
 
     node_ptr->type = MABAIN_ASYNC_TYPE_NONE;
@@ -64,7 +64,7 @@ AsyncWriter::AsyncWriter(DB *db_ptr)
     if(db == NULL)
         throw (int) MBError::INVALID_ARG;
     dict = db->GetDictPtr();
-    if(dict == NULL) 
+    if(dict == NULL)
         throw (int) MBError::NOT_INITIALIZED;
 
     queue = new AsyncNode[max_num_queue_node];
@@ -76,7 +76,7 @@ AsyncWriter::AsyncWriter(DB *db_ptr)
         {
             Logger::Log(LOG_LEVEL_ERROR, "failed to init mutex");
             throw (int) MBError::MUTEX_ERROR;
-        } 
+        }
         if(pthread_cond_init(&queue[i].cond, NULL) != 0)
         {
             Logger::Log(LOG_LEVEL_ERROR, "failed to init conditional variable");
@@ -85,6 +85,7 @@ AsyncWriter::AsyncWriter(DB *db_ptr)
     }
 
     is_rc_running = false;
+    rc_backup_dir = NULL;
     // start the thread
     if(pthread_create(&tid, NULL, async_thread_wrapper, this) != 0)
     {
@@ -112,7 +113,6 @@ int AsyncWriter::StopAsyncThread()
     if(num_users.load(std::memory_order_consume) > 0)
     {
         Logger::Log(LOG_LEVEL_ERROR, "still being used, cannot shutdown async thread");
-        return MBError::NOT_ALLOWED;
     }
 
     stop_processing = true;
@@ -124,7 +124,7 @@ int AsyncWriter::StopAsyncThread()
 
     if(tid != 0)
     {
-        Logger::Log(LOG_LEVEL_INFO, "joining async writer thread"); 
+        Logger::Log(LOG_LEVEL_INFO, "joining async writer thread");
         pthread_join(tid, NULL);
     }
 
@@ -231,8 +231,8 @@ int AsyncWriter::Remove(const char *key, int len)
 int AsyncWriter::Backup(const char *backup_dir)
 {
     if(backup_dir == NULL)
-        return MBError::INVALID_ARG; 
-    
+        return MBError::INVALID_ARG;
+
     if(stop_processing)
         return MBError::DB_CLOSED;
 
@@ -292,7 +292,7 @@ int  AsyncWriter::CollectResource(int64_t m_index_rc_size, int64_t m_data_rc_siz
 
 // Run a given number of tasks if they are available.
 // This function should only be called by rc or pruner.
-int AsyncWriter::ProcessTask(int ntasks)
+int AsyncWriter::ProcessTask(int ntasks, bool rc_mode)
 {
     AsyncNode *node_ptr;
     MBData mbd;
@@ -301,7 +301,7 @@ int AsyncWriter::ProcessTask(int ntasks)
 
     while(count < ntasks)
     {
-        node_ptr = &queue[writer_index % max_num_queue_node]; 
+        node_ptr = &queue[writer_index % max_num_queue_node];
         if(pthread_mutex_lock(&node_ptr->mutex) != 0)
         {
             Logger::Log(LOG_LEVEL_ERROR, "failed to lock mutex");
@@ -313,29 +313,59 @@ int AsyncWriter::ProcessTask(int ntasks)
             switch(node_ptr->type)
             {
                 case MABAIN_ASYNC_TYPE_ADD:
+                    if(rc_mode)
+                        mbd.options = CONSTS::OPTION_RC_MODE;
                     mbd.buff = (uint8_t *) node_ptr->data;
                     mbd.data_len = node_ptr->data_len;
-                    rval = dict->Add((uint8_t *)node_ptr->key, node_ptr->key_len, mbd, node_ptr->overwrite);
+                    try {
+                        rval = dict->Add((uint8_t *)node_ptr->key, node_ptr->key_len, mbd, node_ptr->overwrite);
+                    } catch (int err) {
+                        rval = err;
+                        Logger::Log(LOG_LEVEL_ERROR, "dict->Add throws error %s",
+                                MBError::get_error_str(err));
+                    }
                     break;
                 case MABAIN_ASYNC_TYPE_REMOVE:
-                    mbd.options |= CONSTS::OPTION_FIND_AND_STORE_PARENT;
-                    rval = dict->Remove((uint8_t *)node_ptr->key, node_ptr->key_len, mbd);
-                    mbd.options &= ~CONSTS::OPTION_FIND_AND_STORE_PARENT;
+                    // FIXME
+                    // Removing entries during rc is currently not supported.
+                    // The index or data index could have been reset in fucntion ResourceColletion::Finish.
+                    // However, the deletion may be run for some entry which still exist in the rc root tree.
+                    // This requires modifying buffer in high end, where the offset for writing is greather than
+                    // header->m_index_offset. This causes exception thrown from DictMem::WriteData.
+                    // Note this is not a problem for Dict::Add since Add does not modify buffers in high end.
+                    // This problem will be fixed when resolving issue: https://github.com/chxdeng/mabain/issues/21
+                    rval = MBError::SUCCESS;
                     break;
                 case MABAIN_ASYNC_TYPE_REMOVE_ALL:
-                    rval = dict->RemoveAll();
+                    if(!rc_mode)
+                    {
+                        try {
+                            rval = dict->RemoveAll();
+                        } catch (int err) {
+                            Logger::Log(LOG_LEVEL_ERROR, "dict->Add throws error %s",
+                                        MBError::get_error_str(err));
+                            rval = err;
+                        }
+                    }
+                    else
+                    {
+                        rval = MBError::SUCCESS;
+                    }
                     break;
                 case MABAIN_ASYNC_TYPE_RC:
                     // ignore rc task since it is running already.
                     rval = MBError::RC_SKIPPED;
+                    break;
                 case MABAIN_ASYNC_TYPE_NONE:
                     rval = MBError::SUCCESS;
                     break;
                 case MABAIN_ASYNC_TYPE_BACKUP:
-                    {
-                        DBBackup mbbk(*db);
-                        rval = mbbk.Backup((const char*) node_ptr->data);
-                    }
+                    // clean up existing backup dir varibale buffer.
+                    if (rc_backup_dir && node_ptr->data)
+                        free(rc_backup_dir);
+                    rc_backup_dir = (char *) node_ptr->data;
+                    node_ptr->data = NULL;
+                    rval = MBError::SUCCESS;
                     break;
                 default:
                     rval = MBError::INVALID_ARG;
@@ -451,7 +481,7 @@ void* AsyncWriter::async_writer_thread()
                     max_dbsize = data_ptr[2];
                     max_dbcount = data_ptr[3];
                 }
-                break; 
+                break;
             case MABAIN_ASYNC_TYPE_NONE:
                 rval = MBError::SUCCESS;
                 break;
@@ -476,7 +506,7 @@ void* AsyncWriter::async_writer_thread()
             Logger::Log(LOG_LEVEL_ERROR, "failed to unlock mutex");
             throw (int) MBError::MUTEX_ERROR;
         }
-        
+
         if(rval != MBError::SUCCESS)
         {
             Logger::Log(LOG_LEVEL_DEBUG, "failed to run update %d: %s",
@@ -488,15 +518,25 @@ void* AsyncWriter::async_writer_thread()
 
         if(is_rc_running)
         {
+            rval = MBError::SUCCESS;
             try {
                 ResourceCollection rc = ResourceCollection(*db);
                 rc.ReclaimResource(min_index_size, min_data_size, max_dbsize, max_dbcount, this);
             } catch (int error) {
                 if(error != MBError::RC_SKIPPED)
                     Logger::Log(LOG_LEVEL_WARN, "rc failed :%s", MBError::get_error_str(error));
+                else
+                    rval = error;
             }
 
             is_rc_running = false;
+            if(rc_backup_dir != NULL)
+            {
+                if(rval == MBError::SUCCESS)
+                    Backup(rc_backup_dir);
+                free(rc_backup_dir);
+                rc_backup_dir = NULL;
+            }
         }
     }
 

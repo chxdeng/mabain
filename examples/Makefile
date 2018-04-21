@@ -6,8 +6,7 @@ CPP=g++
 
 all: mb_insert_test mb_lookup_test mb_longest_prefix_test \
 	mb_remove_test mb_iterator_test mb_multi_proc_test \
-	mb_rc_test mb_multi_thread_insert_test
-	mkdir -p ./tmp_dir
+	mb_rc_test mb_multi_thread_insert_test mb_memory_only_test
 
 CFLAGS  = -I. -I$(MABAIN_INSTALL_DIR)/include -Wall -Werror -g -O0 -c -std=c++11
 LDFLAGS = -lpthread -lcrypto -L$(MABAIN_INSTALL_DIR)/lib -lmabain
@@ -36,7 +35,11 @@ mb_rc_test: mb_rc_test.cpp
 mb_multi_thread_insert_test: mb_multi_thread_insert_test.cpp
 	$(CPP) $(CFLAGS) mb_multi_thread_insert_test.cpp
 	$(CPP) mb_multi_thread_insert_test.o -o mb_multi_thread_insert_test $(LDFLAGS)
+mb_memory_only_test: mb_memory_only_test.cpp
+	$(CPP) $(CFLAGS) mb_memory_only_test.cpp
+	$(CPP) mb_memory_only_test.o -o mb_memory_only_test $(LDFLAGS)
 
+build: all
 clean:
 	-rm -f ./*.o ./mb_*_test
 	-rm -rf ./tmp_dir

@@ -32,10 +32,13 @@
 #include "rollable_file.h"
 #include "logger.h"
 #include "error.h"
+#include "resource_pool.h"
 
 namespace mabain {
 
-#define SLIDING_MEM_SIZE 16LLU*1024*1024
+#define SLIDING_MEM_SIZE     16LLU*1024*1024    // 16M
+#define MAX_NUM_BLOCK        2*1024             // 2K
+#define RC_OFFSET_PERCENTAGE 75                 // default rc offset is placed at 75% of maximum size
 
 const long RollableFile::page_size = sysconf(_SC_PAGESIZE);
 int RollableFile::ShmSync(uint8_t *addr, int size)
@@ -44,14 +47,16 @@ int RollableFile::ShmSync(uint8_t *addr, int size)
     return msync(addr-page_offset, size+page_offset, MS_SYNC);
 }
 
-RollableFile::RollableFile(const std::string &fpath, size_t blocksize,
-                           size_t memcap, int access_mode, long max_block)
+RollableFile::RollableFile(const std::string &fpath, size_t blocksize, size_t memcap, int access_mode,
+                            long max_block, int in_rc_offset_percentage)
           : path(fpath),
             block_size(blocksize),
             mmap_mem(memcap),
             sliding_mmap(access_mode & CONSTS::USE_SLIDING_WINDOW),
             mode(access_mode),
-            max_num_block(max_block)
+            max_num_block(max_block),
+            rc_offset_percentage(in_rc_offset_percentage),
+            mem_used(0)
 {
     sliding_addr = NULL;
     sliding_mem_size = SLIDING_MEM_SIZE;
@@ -62,13 +67,18 @@ RollableFile::RollableFile(const std::string &fpath, size_t blocksize,
 
     if(mode & CONSTS::ACCESS_MODE_WRITER)
     {
-        if(max_num_block == 0)
-        {
-            // disk usage will be virtuall unlimited.
-            max_num_block = LONG_MAX;
-        }
-        Logger::Log(LOG_LEVEL_INFO, "maximal block number for %s is %d", fpath.c_str(), max_num_block);
+        if(max_num_block == 0 || max_num_block > MAX_NUM_BLOCK)
+            max_num_block = MAX_NUM_BLOCK;
+
+        Logger::Log(LOG_LEVEL_INFO, "maximal block number for %s is %d",
+                    fpath.c_str(), max_num_block);
+
+        if(rc_offset_percentage == 0 || rc_offset_percentage > 100 || rc_offset_percentage < 50)
+            rc_offset_percentage = RC_OFFSET_PERCENTAGE;
+
+        Logger::Log(LOG_LEVEL_INFO, "rc_offset_percentage is set to %d", rc_offset_percentage);
     }
+
     Logger::Log(LOG_LEVEL_INFO, "opening rollable file %s for %s, mmap size: %d",
             path.c_str(), (mode & CONSTS::ACCESS_MODE_WRITER)?"writing":"reading", mmap_mem);
     if(!sliding_mmap)
@@ -90,8 +100,6 @@ RollableFile::RollableFile(const std::string &fpath, size_t blocksize,
     }
 
     files.assign(3, NULL);
-    // Add the first file
-    OpenAndMapBlockFile(0);
     if(mode & CONSTS::SYNC_ON_WRITE)
         Logger::Log(LOG_LEVEL_INFO, "Sync is turned on for " + fpath);
 }
@@ -106,16 +114,6 @@ void RollableFile::InitShmSlidingAddr(std::atomic<size_t> *shm_sliding_addr)
 
 void RollableFile::Close()
 {
-    for (std::vector<MmapFileIO*>::iterator it = files.begin();
-         it != files.end(); ++it)
-    {
-        if(*it != NULL)
-        {
-            delete *it;
-            *it = NULL;
-        }
-    }
-
     if(sliding_addr != NULL)
     {
         munmap(sliding_addr, sliding_size);
@@ -128,7 +126,7 @@ RollableFile::~RollableFile()
     Close();
 }
 
-int RollableFile::OpenAndMapBlockFile(int block_order)
+int RollableFile::OpenAndMapBlockFile(int block_order, bool create_file)
 {
     if(block_order >= max_num_block)
     {
@@ -146,50 +144,23 @@ int RollableFile::OpenAndMapBlockFile(int block_order)
     assert(files[block_order] == NULL);
 #endif
 
-    if(mode & CONSTS::ACCESS_MODE_WRITER)
-    {
-        files[block_order] = new MmapFileIO(path+ss.str(), O_RDWR | O_CREAT, block_size,
-                                            mode & CONSTS::SYNC_ON_WRITE);
-    }
-    else
-    {
-        int rw_mode = O_RDONLY;
-        files[block_order] = new MmapFileIO(path+ss.str(), rw_mode, 0, mode & CONSTS::SYNC_ON_WRITE);
-    }
-
-    if(!files[block_order]->IsOpen())
-    {
-        delete files[block_order];
-        files[block_order] = NULL;
-        return MBError::OPEN_FAILURE;
-    }
-
-    size_t mem_used = block_order*block_size;
+    bool map_file;
     if(mmap_mem > mem_used)
-    {
-        if(mmap_mem > mem_used + block_size)
-        {
-            if(files[block_order]->MapFile(block_size, 0) == NULL)
-            {
-                char err_buf[32];
-                rval = MBError::MMAP_FAILED;
-                Logger::Log(LOG_LEVEL_WARN, "failed to mmap file %s:%s", (path+ss.str()).c_str(),
-                        strerror_r(errno, err_buf, sizeof(err_buf)));
-            }
-        }
-        else
-        {
-            if(files[block_order]->MapFile(mmap_mem - mem_used, 0) == NULL)
-            {
-                char err_buf[32];
-                rval = MBError::MMAP_FAILED;
-                Logger::Log(LOG_LEVEL_WARN, "failed to mmap partial file %s:%s",
-                        (path+ss.str()).c_str(),
-                        strerror_r(errno, err_buf, sizeof(err_buf)));
-            }
-        }
-    }
+        map_file = true; 
+    else
+        map_file = false;
+    if(!map_file && (mode & CONSTS::MEMORY_ONLY_MODE))
+        return MBError::NO_MEMORY;
 
+    files[block_order] = ResourcePool::getInstance().OpenFile(path+ss.str(),
+                                                              mode,
+                                                              block_size,
+                                                              map_file,
+                                                              create_file);
+    if(map_file)
+        mem_used += block_size;
+    else if(mode & CONSTS::MEMORY_ONLY_MODE)
+        rval = MBError::MMAP_FAILED;
     return rval;
 }
 
@@ -206,24 +177,10 @@ size_t RollableFile::CheckAlignment(size_t offset, int size)
         offset = offset + block_size - block_offset;
     }
 
-    // Check alignment with mmap_mem
-    if(offset <  mmap_mem)
-    {
-        if(offset + size > mmap_mem)
-        {
-            offset = mmap_mem;
-            // Need to check block_size alignement again since we changed
-            // offset to mmap_mem.
-            block_offset = offset % block_size;
-            if(block_offset + size > block_size)
-                offset = offset + block_size - block_offset;
-        }
-    }
-
     return offset;
 }
 
-int RollableFile::CheckAndOpenFile(int order)
+int RollableFile::CheckAndOpenFile(int order, bool create_file)
 {
     int rval = MBError::SUCCESS;
 
@@ -231,7 +188,7 @@ int RollableFile::CheckAndOpenFile(int order)
         files.resize(order+3, NULL);
 
     if(files[order] == NULL)
-        rval = OpenAndMapBlockFile(order);
+        rval = OpenAndMapBlockFile(order, create_file);
 
     return rval;
 }
@@ -241,19 +198,16 @@ int RollableFile::CheckAndOpenFile(int order)
 uint8_t* RollableFile::GetShmPtr(size_t offset, int size)
 {
     int order = offset / block_size;
-    int rval = CheckAndOpenFile(order);
+    int rval = CheckAndOpenFile(order, false);
 
     if(rval != MBError::SUCCESS)
         return NULL;
 
-    if(offset + size <= mmap_mem)
+    if(files[order]->IsMapped())
     {
         size_t index = offset % block_size;
         return files[order]->GetMapAddr() + index;
     }
-
-    if(files[order]->IsMapped())
-        return NULL;
 
     if(sliding_mmap)
     {
@@ -275,26 +229,16 @@ int RollableFile::Reserve(size_t &offset, int size, uint8_t* &ptr, bool map_new_
     offset = CheckAlignment(offset, size);
 
     int order = offset / block_size;
-    rval = CheckAndOpenFile(order);
+    rval = CheckAndOpenFile(order, true);
     if(rval != MBError::SUCCESS)
         return rval;
 
-    // After CheckAlignment, the new range (offset -> offset+size)
-    // should be either in mmaped or non-mamped region. It should
-    // have no overlap with both of them.
-    if(offset <  mmap_mem)
+    if(files[order]->IsMapped())
     {
         size_t index = offset % block_size;
         ptr = files[order]->GetMapAddr() + index;
         return rval;
     }
-
-    // Can a file be mapped to two different address with different offset?
-    // Tests showed that error will be thrown if a file is mapped in two regions
-    // simultaneously. Therefore, the following check and return statements are
-    // necessary.
-    if(files[order]->IsMapped())
-        return rval;
 
     if(sliding_mmap)
     {
@@ -376,7 +320,7 @@ uint8_t* RollableFile::NewSlidingMapAddr(int order, size_t offset, int size)
 size_t RollableFile::RandomWrite(const void *data, size_t size, off_t offset)
 {
     int order = offset / block_size;
-    int rval = CheckAndOpenFile(order);
+    int rval = CheckAndOpenFile(order, false);
     if(rval != MBError::SUCCESS)
         return 0;
 
@@ -427,7 +371,7 @@ void* RollableFile::NewReaderSlidingMap(int order)
 size_t RollableFile::RandomRead(void *buff, size_t size, off_t offset)
 {
     int order = offset / block_size;
-    int rval = CheckAndOpenFile(order);
+    int rval = CheckAndOpenFile(order, false);
     if(rval != MBError::SUCCESS && rval != MBError::MMAP_FAILED)
         return 0;
 
@@ -475,12 +419,36 @@ void RollableFile::ResetSlidingWindow()
 
 void RollableFile::Flush()
 {
-    for (std::vector<MmapFileIO*>::iterator it = files.begin();
+    for (std::vector<std::shared_ptr<MmapFileIO>>::iterator it = files.begin();
          it != files.end(); ++it)
     {
         if(*it != NULL)
         {
             (*it)->Flush();
+        }
+    }
+}
+
+size_t RollableFile::GetResourceCollectionOffset() const
+{
+    return int((rc_offset_percentage / 100.0f) * max_num_block) * block_size;
+}
+
+void RollableFile::RemoveUnused(size_t max_size, bool writer_mode)
+{
+    unsigned ibeg = max_size/(block_size + 1) + 1;
+    for(auto i = ibeg; i < files.size(); i++)
+    {
+        if(files[i] != NULL)
+        {
+            if(files[i]->IsMapped() && mem_used > block_size)
+                mem_used -= block_size;
+            if(writer_mode)
+            {
+                ResourcePool::getInstance().RemoveResourceByPath(files[i]->GetFilePath());
+                unlink(files[i]->GetFilePath().c_str());
+            }
+            files[i] = NULL;
         }
     }
 }

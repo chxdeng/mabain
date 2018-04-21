@@ -25,6 +25,7 @@
 #include <sys/mman.h>
 #include <assert.h>
 #include <atomic>
+#include <memory>
 
 #include "mmap_file.h"
 #include "logger.h"
@@ -35,7 +36,7 @@ namespace mabain {
 class RollableFile {
 public:
     RollableFile(const std::string &fpath, size_t blocksize,
-                 size_t memcap, int access_mode, long max_block=0);
+                 size_t memcap, int access_mode, long max_block=0, int rc_offset_percentage=75);
     ~RollableFile();
 
     size_t   RandomWrite(const void *data, size_t size, off_t offset);
@@ -49,13 +50,15 @@ public:
     void     ResetSlidingWindow();
 
     void     Flush();
+    size_t   GetResourceCollectionOffset() const;
+    void     RemoveUnused(size_t max_size, bool writer_mode);
 
     static const long page_size;
     static int ShmSync(uint8_t *addr, int size);
 
 private:
-    int      OpenAndMapBlockFile(int block_order);
-    int      CheckAndOpenFile(int block_order);
+    int      OpenAndMapBlockFile(int block_order, bool create_file);
+    int      CheckAndOpenFile(int block_order, bool create_file);
     uint8_t* NewSlidingMapAddr(int order, size_t offset, int size);
     void*    NewReaderSlidingMap(int order);
 
@@ -73,11 +76,14 @@ private:
 
     long max_num_block;
 
-    std::vector<MmapFileIO*> files;
+    std::vector<std::shared_ptr<MmapFileIO>> files;
     uint8_t* sliding_addr;
     size_t sliding_size;
     off_t sliding_start;
     off_t sliding_map_off;
+
+    int rc_offset_percentage;
+    size_t mem_used;
 };
 
 }

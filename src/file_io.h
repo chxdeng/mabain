@@ -29,6 +29,8 @@
 
 namespace mabain {
 
+#define MMAP_ANONYMOUS_MODE 0x80000000 // This bit should not be used in fcntl.h.
+
 // This is the basic file io class
 class FileIO
 {

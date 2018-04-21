@@ -49,6 +49,9 @@ int FileIO::Open()
 
 size_t FileIO::Write(const void *data, size_t size)
 {
+    if(options & MMAP_ANONYMOUS_MODE)
+        return 0;
+
     size_t bytes_written;
 
     if(fd > 0)
@@ -66,6 +69,9 @@ size_t FileIO::Write(const void *data, size_t size)
 
 size_t FileIO::Read(void *buff, size_t size)
 {
+    if(options & MMAP_ANONYMOUS_MODE)
+        return 0;
+
     size_t bytes_read;
 
     if(fd > 0)
@@ -82,6 +88,9 @@ size_t FileIO::Read(void *buff, size_t size)
 
 size_t FileIO::RandomWrite(const void *data, size_t size, off_t offset)
 {
+    if(options & MMAP_ANONYMOUS_MODE)
+        return 0;
+
     size_t bytes_written;
 
     if(fd > 0)
@@ -99,6 +108,9 @@ size_t FileIO::RandomWrite(const void *data, size_t size, off_t offset)
 
 size_t FileIO::RandomRead(void *buff, size_t size, off_t offset)
 {
+    if(options & MMAP_ANONYMOUS_MODE)
+        return 0;
+
     size_t bytes_read;
 
     if(fd > 0)
