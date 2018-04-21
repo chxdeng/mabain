@@ -36,11 +36,12 @@ int acquire_writer_lock(const std::string &lock_file_path)
     return fd;
 }
 
-void release_writer_lock(int fd)
+void release_writer_lock(int &fd)
 {
     if(fd < 0)
         return;
     close(fd);
+    fd = -1;
 }
 
 }
