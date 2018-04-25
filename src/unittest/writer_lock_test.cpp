@@ -46,6 +46,7 @@ TEST_F(WriterLockTest, test_lock)
 }
 
 // Multiple process lock test
+/****
 TEST_F(WriterLockTest, test_lock_process)
 {
 #define LOCK_WRITER_SOURCE " \
@@ -74,7 +75,7 @@ int main(int argc, char *argv[]) { \
     db.Close(); \
     return 0; \
 }"
-return; //TODOOOO
+
     std::ofstream cpp_source("./lock_writer.cpp");
     cpp_source << LOCK_WRITER_SOURCE; 
     cpp_source.close();
@@ -100,5 +101,6 @@ return; //TODOOOO
     unlink("./lock_writer");
 
 }
+***/
 
 }
