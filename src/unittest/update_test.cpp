@@ -7,6 +7,7 @@
 
 #include "../db.h"
 #include "../mb_data.h"
+#include "../resource_pool.h"
 #include "./test_key.h"
 
 #define MB_DIR "/var/tmp/mabain_test/"
@@ -36,6 +37,7 @@ public:
     }
     virtual void TearDown() {
         db->Close();
+        ResourcePool::getInstance().RemoveAll();
     }
 
 protected:

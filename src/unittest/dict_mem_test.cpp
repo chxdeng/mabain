@@ -67,7 +67,6 @@ public:
     }
 
     void DestroyDMM() {
-        ResourcePool::getInstance().RemoveAll();
         if(dmm != NULL) {
             dmm->Destroy();
             delete dmm;

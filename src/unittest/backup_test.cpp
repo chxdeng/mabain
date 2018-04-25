@@ -12,6 +12,7 @@
 #include "../db.h"
 #include "../mb_data.h"
 #include "../mb_backup.h"
+#include "../resource_pool.h"
 #include "./test_key.h"
 
 #define MB_DIR "/var/tmp/mabain_test/"
@@ -52,6 +53,7 @@ public:
 
     }
     virtual void TearDown() {
+        ResourcePool::getInstance().RemoveAll();
     }
 
     void check_overwritten_keys(DB *db_bkp, int num)

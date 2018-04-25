@@ -74,6 +74,7 @@ int main(int argc, char *argv[]) { \
     db.Close(); \
     return 0; \
 }"
+return; //TODOOOO
     std::ofstream cpp_source("./lock_writer.cpp");
     cpp_source << LOCK_WRITER_SOURCE; 
     cpp_source.close();

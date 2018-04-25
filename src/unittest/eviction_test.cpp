@@ -21,7 +21,6 @@ public:
         db_async = NULL;
         db = NULL;
         memset(&mbconf, 0, sizeof(mbconf));
-        ResourcePool::getInstance().RemoveAll();
         std::string cmd = std::string("rm ") + db_dir + "_mabain_*";
         if(system(cmd.c_str()) != 0) {
         }
@@ -70,6 +69,7 @@ public:
             delete db_async;
             db_async = NULL;
         }
+        ResourcePool::getInstance().RemoveAll();
     }
 
 protected:
