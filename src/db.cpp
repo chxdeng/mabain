@@ -34,6 +34,7 @@
 #include "mb_backup.h"
 #include "resource_pool.h"
 #include "util/shm_mutex.h"
+#include "util/utils.h"
 
 namespace mabain {
 
@@ -74,6 +75,11 @@ int DB::Close()
     }
 
     status = MBError::DB_CLOSED;
+    if(options & CONSTS::ACCESS_MODE_WRITER)
+    {
+        ResourcePool::getInstance().RemoveResourceByPath(mb_dir + "_lock");
+        release_writer_lock(writer_lock_fd);
+    }
     Logger::Log(LOG_LEVEL_INFO, "connector %u disconnected from DB", identifier);
     return rval;
 }
@@ -99,7 +105,8 @@ DB::DB(const char *db_path,
        int db_options,
        size_t memcap_index,
        size_t memcap_data,
-       uint32_t id) : status(MBError::NOT_INITIALIZED)
+       uint32_t id) : status(MBError::NOT_INITIALIZED),
+                      writer_lock_fd(-1)
 {
     MBConfig config;
     memset(&config, 0, sizeof(config));
@@ -112,7 +119,8 @@ DB::DB(const char *db_path,
     InitDB(config);
 }
 
-DB::DB(MBConfig &config) : status(MBError::NOT_INITIALIZED)
+DB::DB(MBConfig &config) : status(MBError::NOT_INITIALIZED),
+                           writer_lock_fd(-1)
 {
     InitDB(config);
 }
@@ -140,6 +148,11 @@ int DB::ValidateConfig(MBConfig &config)
             std::cerr << "count in eviction bucket must be greater than 7\n";
             return MBError::INVALID_ARG;
         }
+    }
+    if(config.options & CONSTS::USE_SLIDING_WINDOW)
+    {
+        std::cout << "sliding window support is deprecated\n";
+        config.options &= ~CONSTS::USE_SLIDING_WINDOW;
     }
 
     if(config.block_size_index != 0 && (config.block_size_index % BLOCK_SIZE_ALIGN != 0))
@@ -249,16 +262,33 @@ void DB::InitDB(MBConfig &config)
     }
 
     lock.Init(dict->GetShmLockPtrs());
-    status = UpdateNumHandlers(config.options, 1);
-    if(status != MBError::SUCCESS)
-    {
-        Logger::Log(LOG_LEVEL_ERROR, "failed to initialize db: %s",
-                    MBError::get_error_str(status));
-        return;
-    }
+    UpdateNumHandlers(config.options, 1);
 
     if(config.options & CONSTS::ACCESS_MODE_WRITER)
     {
+        std::string lock_file = mb_dir + "_lock";
+        // internal check first
+        status = ResourcePool::getInstance().AddResourceByPath(lock_file, NULL);
+        if(status == MBError::SUCCESS)
+        {
+            if(!(config.options & CONSTS::MEMORY_ONLY_MODE))
+            {
+                // process check by file lock
+                writer_lock_fd = acquire_writer_lock(lock_file);
+                if(writer_lock_fd < 0)
+                    status = MBError::WRITER_EXIST;
+            }
+        }
+        else
+        {
+            status = MBError::WRITER_EXIST;
+        }
+        if(status == MBError::WRITER_EXIST)
+        {
+            Logger::Log(LOG_LEVEL_ERROR, "failed to initialize db: %s",
+                        MBError::get_error_str(status));
+            return;
+        }
         if(config.options & CONSTS::ASYNC_WRITER_MODE)
             async_writer = new AsyncWriter(this);
     }

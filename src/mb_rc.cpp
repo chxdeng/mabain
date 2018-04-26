@@ -261,8 +261,6 @@ void ResourceCollection::CollectBuffers()
        (data_reorder_status != MBError::SUCCESS))
         return;
 
-    dmm->ResetSlidingWindow();
-    dict->ResetSlidingWindow();
     TraverseDB(RESOURCE_COLLECTION_PHASE_COLLECT);
 
     if(rc_type & RESOURCE_COLLECTION_TYPE_INDEX)
@@ -490,9 +488,6 @@ void ResourceCollection::DoTask(int phase, DBTraverseNode &dbt_node)
 
 void ResourceCollection::ReorderBuffers()
 {
-    dmm->ResetSlidingWindow();
-    dict->ResetSlidingWindow();
-
     if(rc_type & RESOURCE_COLLECTION_TYPE_INDEX)
         Logger::Log(LOG_LEVEL_INFO, "index size before reorder: %llu", header->m_index_offset);
     if(rc_type & RESOURCE_COLLECTION_TYPE_DATA)

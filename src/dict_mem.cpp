@@ -226,11 +226,14 @@ void DictMem::AddRootEdge(EdgePtrs &edge_ptrs, const uint8_t *key,
     Write6BInteger(edge_ptrs.offset_ptr, data_offset);
 
 #ifdef __LOCK_FREE__
+    header->excep_lf_offset = edge_ptrs.offset;
+    header->excep_updating_status = EXCEP_STATUS_ADD_EDGE;
     lfree->WriterLockFreeStart(edge_ptrs.offset);
 #endif
     WriteEdge(edge_ptrs);
 #ifdef __LOCK_FREE__
     lfree->WriterLockFreeStop();
+    header->excep_updating_status = EXCEP_STATUS_NONE;
 #endif
 }
 
@@ -362,11 +365,14 @@ int DictMem::InsertNode(EdgePtrs &edge_ptrs, int match_len,
     if(release_buffer_size > 0)
         ReleaseBuffer(edge_str_off, release_buffer_size);
 #ifdef __LOCK_FREE__
+    header->excep_lf_offset = edge_ptrs.offset;
+    header->excep_updating_status = EXCEP_STATUS_ADD_EDGE;
     lfree->WriterLockFreeStart(edge_ptrs.offset);
 #endif
     WriteEdge(edge_ptrs);
 #ifdef __LOCK_FREE__
     lfree->WriterLockFreeStop();
+    header->excep_updating_status = EXCEP_STATUS_NONE;
 #endif
 
     header->n_edges++;
@@ -435,11 +441,14 @@ int DictMem::AddLink(EdgePtrs &edge_ptrs, int match_len, const uint8_t *key,
     if(release_buffer_size > 0)
         ReleaseBuffer(edge_str_off, release_buffer_size);
 #ifdef __LOCK_FREE__
+    header->excep_lf_offset = edge_ptrs.offset;
+    header->excep_updating_status = EXCEP_STATUS_ADD_EDGE;
     lfree->WriterLockFreeStart(edge_ptrs.offset);
 #endif
     WriteEdge(edge_ptrs);
 #ifdef __LOCK_FREE__
     lfree->WriterLockFreeStop();
+    header->excep_updating_status = EXCEP_STATUS_NONE;
 #endif
 
     header->n_edges += 2;
@@ -528,11 +537,14 @@ int DictMem::UpdateNode(EdgePtrs &edge_ptrs, const uint8_t *key, int key_len,
     if(release_node_index >= 0)
         ReleaseNode(old_node_off, release_node_index);
 #ifdef __LOCK_FREE__
+    header->excep_lf_offset = edge_ptrs.offset;
+    header->excep_updating_status = EXCEP_STATUS_ADD_EDGE;
     lfree->WriterLockFreeStart(edge_ptrs.offset);
 #endif
     WriteEdge(edge_ptrs);
 #ifdef __LOCK_FREE__
     lfree->WriterLockFreeStop();
+    header->excep_updating_status = EXCEP_STATUS_NONE;
 #endif
 
     header->n_edges++;
@@ -802,11 +814,14 @@ int DictMem::ClearRootEdge(int nt) const
 {
     size_t offset = root_offset + NODE_EDGE_KEY_FIRST + NUM_ALPHABET + nt*EDGE_SIZE;
 #ifdef __LOCK_FREE__
+    header->excep_lf_offset = offset;
+    header->excep_updating_status = EXCEP_STATUS_CLEAR_EDGE;
     lfree->WriterLockFreeStart(offset);
 #endif
     WriteData(DictMem::empty_edge, EDGE_SIZE, offset);
 #ifdef __LOCK_FREE__
     lfree->WriterLockFreeStop();
+    header->excep_updating_status = EXCEP_STATUS_NONE;
 #endif
 
     return MBError::SUCCESS;
@@ -822,11 +837,14 @@ int DictMem::ClearRootEdges_RC() const
     {
         offset = root_offset_rc + NODE_EDGE_KEY_FIRST + NUM_ALPHABET + i*EDGE_SIZE;
 #ifdef __LOCK_FREE__
+        header->excep_lf_offset = offset;
+        header->excep_updating_status = EXCEP_STATUS_CLEAR_EDGE;
         lfree->WriterLockFreeStart(offset);
 #endif
         DRMBase::WriteData(DictMem::empty_edge, EDGE_SIZE, offset);
 #ifdef __LOCK_FREE__
         lfree->WriterLockFreeStop();
+        header->excep_updating_status = EXCEP_STATUS_NONE;
 #endif
     }
 
@@ -845,10 +863,14 @@ void DictMem::ClearMem() const
 }
 
 int DictMem::NextEdge(const uint8_t *key, EdgePtrs &edge_ptrs, uint8_t *node_buff,
-                      bool update_parent_info) const
+                      MBData &mbdata) const
 {
     size_t node_off;
-    node_off = Get6BInteger(edge_ptrs.offset_ptr);
+    // Check if need to read saved edge
+    if((mbdata.options & CONSTS::OPTION_READ_SAVED_EDGE) && edge_ptrs.offset == mbdata.edge_ptrs.offset)
+        node_off = Get6BInteger(mbdata.edge_ptrs.offset_ptr);
+    else
+        node_off = Get6BInteger(edge_ptrs.offset_ptr);
 
     int byte_read;
     byte_read = ReadData(node_buff, NODE_EDGE_KEY_FIRST, node_off);
@@ -865,7 +887,7 @@ int DictMem::NextEdge(const uint8_t *key, EdgePtrs &edge_ptrs, uint8_t *node_buf
     {
         if(node_buff[i+NODE_EDGE_KEY_FIRST] == key[0])
         {
-            if(update_parent_info)
+            if(mbdata.options & CONSTS::OPTION_FIND_AND_STORE_PARENT)
             {
                 // update parent node/edge info for deletion
                 edge_ptrs.curr_nt = nt;
@@ -897,14 +919,14 @@ void DictMem::RemoveRootEdge(const EdgePtrs &edge_ptrs)
     if(edge_ptrs.len_ptr[0] > LOCAL_EDGE_LEN)
         ReleaseBuffer(Get5BInteger(edge_ptrs.ptr), edge_ptrs.len_ptr[0]-1);
 #ifdef __LOCK_FREE__
-    lfree->WriterLockFreeStart(edge_ptrs.offset);
-#endif
     header->excep_lf_offset = edge_ptrs.offset;
     header->excep_updating_status = EXCEP_STATUS_CLEAR_EDGE;
+    lfree->WriterLockFreeStart(edge_ptrs.offset);
+#endif
     WriteData(DictMem::empty_edge, EDGE_SIZE, edge_ptrs.offset);
-    header->excep_updating_status = 0;
 #ifdef __LOCK_FREE__
     lfree->WriterLockFreeStop();
+    header->excep_updating_status = EXCEP_STATUS_NONE;
 #endif
 }
 
@@ -1052,7 +1074,7 @@ int DictMem::RemoveEdgeByIndex(const EdgePtrs &edge_ptrs, MBData &data)
         rval = DictMem::RemoveEdgeSizeOne(old_node_buffer, header->excep_lf_offset,
                                header->excep_offset, nt, str_off_rel, str_size_rel);
     }
-    header->excep_updating_status = 0;
+    header->excep_updating_status = EXCEP_STATUS_NONE;
 
     header->n_edges--;
     ReleaseNode(header->excep_offset, nt-1);
@@ -1061,17 +1083,16 @@ int DictMem::RemoveEdgeByIndex(const EdgePtrs &edge_ptrs, MBData &data)
 
     // Clear the edge
 #ifdef __LOCK_FREE__
-    lfree->WriterLockFreeStart(edge_ptrs.offset);
-#endif
     header->excep_lf_offset = edge_ptrs.offset;
     header->excep_updating_status = EXCEP_STATUS_CLEAR_EDGE;
+    lfree->WriterLockFreeStart(edge_ptrs.offset);
+#endif
     WriteData(DictMem::empty_edge, EDGE_SIZE, edge_ptrs.offset);
-    header->excep_updating_status = 0;
 #ifdef __LOCK_FREE__
     lfree->WriterLockFreeStop();
+    header->excep_updating_status = EXCEP_STATUS_NONE;
 #endif
 
-    header->excep_updating_status = 0;
     return rval;
 }
 

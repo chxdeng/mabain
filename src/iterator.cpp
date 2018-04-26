@@ -227,7 +227,7 @@ int DB::iterator::load_kvs(const std::string &curr_node_key,
             rval = db_ref.dict->ReadNextEdge(node_buff, edge_ptrs, match, value,
                                 match_str, child_node_off);
 #ifdef __LOCK_FREE__
-            lf_ret = lfree->ReaderLockFreeStop(snapshot, edge_off_prev);
+            lf_ret = lfree->ReaderLockFreeStop(snapshot, edge_off_prev, value);
             if(lf_ret == MBError::TRY_AGAIN)
                 return lf_ret;
 #endif
@@ -330,7 +330,7 @@ int DB::iterator::load_kv_for_node(const std::string &curr_node_key)
 #endif
             }
 #ifdef __LOCK_FREE__
-            lf_ret = lfree->ReaderLockFreeStop(snapshot, parent_edge_off);
+            lf_ret = lfree->ReaderLockFreeStop(snapshot, parent_edge_off, value);
             if(lf_ret == MBError::TRY_AGAIN)
             {
                 kv_per_node->Clear();

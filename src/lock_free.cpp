@@ -22,6 +22,8 @@
 #include "mabain_consts.h"
 #include "error.h"
 #include "integer_4b_5b.h"
+#include "drm_base.h"
+#include "dict_mem.h"
 
 namespace mabain {
 
@@ -34,9 +36,10 @@ LockFree::~LockFree()
 {
 }
 
-void LockFree::LockFreeInit(LockFreeShmData *lock_free_ptr, int mode)
+void LockFree::LockFreeInit(LockFreeShmData *lock_free_ptr, IndexHeader *hdr, int mode)
 {
     shm_data_ptr = lock_free_ptr;
+    header = hdr;
     if(mode & CONSTS::ACCESS_MODE_WRITER)
     {
         // Clear the lock free data
@@ -60,14 +63,61 @@ void LockFree::WriterLockFreeStop()
 //////////////////////////////////////////////////
 // DO NOT CHANGE THE LOAD ORDER IN THIS FUNCTION.
 //////////////////////////////////////////////////
-int LockFree::ReaderLockFreeStop(const LockFreeData &snapshot, size_t reader_offset)
+int LockFree::ReaderLockFreeStop(const LockFreeData &snapshot, size_t reader_offset,
+                                 MBData &mbdata)
 {
     LockFreeData curr;
     curr.offset = shm_data_ptr->offset.load(MEMORY_ORDER_READER);
     curr.counter = shm_data_ptr->counter.load(MEMORY_ORDER_READER);
 
     if(curr.offset == reader_offset)
+    {
+        if(mbdata.options & CONSTS::OPTION_READ_SAVED_EDGE)
+        {
+            if(reader_offset == mbdata.edge_ptrs.offset)
+            {
+                mbdata.options &= ~CONSTS::OPTION_READ_SAVED_EDGE;
+                return MBError::SUCCESS;
+            }
+        }
+        else
+        {
+            mbdata.options |= CONSTS::OPTION_READ_SAVED_EDGE;
+        }
+
+        // Save the edge
+        switch(header->excep_updating_status)
+        {
+            case EXCEP_STATUS_ADD_EDGE:
+            case EXCEP_STATUS_ADD_DATA_OFF:
+            case EXCEP_STATUS_ADD_NODE:
+            case EXCEP_STATUS_REMOVE_EDGE:
+            case EXCEP_STATUS_RC_NODE:
+            case EXCEP_STATUS_RC_EDGE_STR:
+            case EXCEP_STATUS_RC_DATA:
+                memcpy(mbdata.edge_ptrs.edge_buff, header->excep_buff, EDGE_SIZE);
+                mbdata.edge_ptrs.offset = shm_data_ptr->offset.load(MEMORY_ORDER_READER);
+                break;
+            case EXCEP_STATUS_CLEAR_EDGE:
+            default:
+                memset(mbdata.edge_ptrs.edge_buff, 0, EDGE_SIZE);
+                mbdata.edge_ptrs.offset = shm_data_ptr->offset.load(MEMORY_ORDER_READER);
+                break;
+        }
+        if(mbdata.edge_ptrs.offset == reader_offset)
+        {
+            InitTempEdgePtrs(mbdata.edge_ptrs);
+        }
+        else
+        {
+            mbdata.options &= ~CONSTS::OPTION_READ_SAVED_EDGE;
+            mbdata.edge_ptrs.offset = MAX_6B_OFFSET;
+        }
         return MBError::TRY_AGAIN;
+    }
+
+    if(mbdata.options & CONSTS::OPTION_READ_SAVED_EDGE)
+        mbdata.options &= ~CONSTS::OPTION_READ_SAVED_EDGE;
 
     // Note it is expected that count_diff can overflow.
     uint32_t count_diff = curr.counter - snapshot.counter;

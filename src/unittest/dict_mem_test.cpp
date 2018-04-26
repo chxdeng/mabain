@@ -62,12 +62,11 @@ public:
         EXPECT_EQ(dmm->IsValid(), true);
         header = dmm->GetHeaderPtr();
         EXPECT_EQ(header != NULL, true);
-        lfree.LockFreeInit(&header->lock_free, CONSTS::ACCESS_MODE_WRITER);
+        lfree.LockFreeInit(&header->lock_free, header, CONSTS::ACCESS_MODE_WRITER);
         dmm->InitLockFreePtr(&lfree);
     }
 
     void DestroyDMM() {
-        ResourcePool::getInstance().RemoveAll();
         if(dmm != NULL) {
             dmm->Destroy();
             delete dmm;

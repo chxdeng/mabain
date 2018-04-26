@@ -50,9 +50,6 @@ FreeList::FreeList(const std::string &file_path, int buff_alignment,
     {
         buffer_free_list[i] = new MBlsq(NULL);
     }
-
-    memset(buf_cache, 0, sizeof(buf_cache));
-    buf_cache_index = 0;
 }
 
 FreeList::~FreeList()
@@ -251,9 +248,6 @@ void FreeList::ReleaseAlignmentBuffer(size_t old_offset, size_t alignment_offset
 
 void FreeList::Empty()
 {
-    memset(buf_cache, 0, sizeof(buf_cache));
-    buf_cache_index = 0;
-
     for(int i = 0; i < max_num_buffer; i++)
     {
         if(buffer_free_list[i])
