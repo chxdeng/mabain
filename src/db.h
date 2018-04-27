@@ -110,6 +110,9 @@ public:
     DB(MBConfig &config);
     ~DB();
 
+    DB(const DB &db);
+    const DB& operator = (const DB &db);
+
     // Add a key-value pair
     int Add(const char* key, int len, const char* data, int data_len, bool overwrite = false);
     int Add(const char* key, int len, MBData &data, bool overwrite = false);
