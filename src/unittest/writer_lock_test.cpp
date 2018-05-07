@@ -39,10 +39,21 @@ TEST_F(WriterLockTest, test_lock)
     EXPECT_TRUE(db1.Status() == MBError::WRITER_EXIST);
 
     db.Close();
-    db1.Close();
-    db1 = DB(MB_DIR, options);
-    EXPECT_TRUE(db1.is_open());
-    db1.Close();
+    DB db2(MB_DIR, options);
+    EXPECT_TRUE(db2.is_open());
+
+    options = CONSTS::ReaderOptions();
+    DB db3(MB_DIR, options);
+    EXPECT_TRUE(db3.is_open());
+
+    DB db4(MB_DIR, options);
+    EXPECT_TRUE(db4.is_open());
+
+    db4 = db3;
+    EXPECT_TRUE(db4.is_open());
+
+    DB db5(db4);
+    EXPECT_TRUE(db5.is_open());
 }
 
 // Multiple process lock test

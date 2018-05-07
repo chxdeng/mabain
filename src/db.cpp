@@ -43,6 +43,8 @@ uint16_t version[4] = {1, 1, 0, 0};
 
 DB::~DB()
 {
+    if(status != MBError::DB_CLOSED)
+        Close();
 }
 
 int DB::Close()
@@ -53,7 +55,10 @@ int DB::Close()
     {
         rval = async_writer->StopAsyncThread();
         if(rval != MBError::SUCCESS)
-            return rval;
+        {
+            Logger::Log(LOG_LEVEL_WARN, "failed to stop async writer thread: %s",
+                        MBError::get_error_str(rval));
+        }
 
         delete async_writer;
         async_writer = NULL;
@@ -309,6 +314,30 @@ void DB::InitDB(MBConfig &config)
 int DB::Status() const
 {
     return status;
+}
+
+DB::DB(const DB &db) : status(MBError::NOT_INITIALIZED),
+                       writer_lock_fd(-1)
+{
+    MBConfig db_config = db.dbConfig;
+    db_config.mbdir = db.mb_dir.c_str();
+    InitDB(db_config);
+}
+
+const DB& DB::operator = (const DB &db)
+{
+    if(this == &db)
+        return *this; // no self-assignment
+
+    this->Close();
+
+    MBConfig db_config = db.dbConfig;
+    db_config.mbdir = db.mb_dir.c_str();
+    status = MBError::NOT_INITIALIZED;
+    writer_lock_fd = -1;
+    InitDB(db_config);
+
+    return *this;
 }
 
 bool DB::is_open() const
