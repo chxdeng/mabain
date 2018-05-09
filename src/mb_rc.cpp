@@ -81,7 +81,7 @@ int ResourceCollection::LRUEviction()
 
         if(async_writer_ptr != NULL && (count % PRUNE_TASK_CHECK == 0))
         {
-            if(count++ > PRUNE_TASK_CHECK)
+            if(count > PRUNE_TASK_CHECK)
             {
                 count = 0;
                 rval = async_writer_ptr->ProcessTask(NUM_ASYNC_TASK, false);
@@ -89,6 +89,7 @@ int ResourceCollection::LRUEviction()
                     break;
             }
         }
+        count++;
     }
 
     if(rval != MBError::RC_SKIPPED)

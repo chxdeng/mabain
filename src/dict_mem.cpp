@@ -70,6 +70,7 @@ DictMem::DictMem(const std::string &mbdir, bool init_header, size_t memsize,
     root_offset = 0;
     root_offset_rc = 0;
     node_ptr = NULL;
+    node_size = NULL;
 
     assert(sizeof(IndexHeader) <= (unsigned) RollableFile::page_size);
     bool map_hdr = true;
@@ -94,11 +95,18 @@ DictMem::DictMem(const std::string &mbdir, bool init_header, size_t memsize,
             Destroy();
             throw (int) MBError::INVALID_SIZE;
         }
+        is_valid = true;
     }
     else
     {
         memset(header, 0, sizeof(IndexHeader));
         header->index_block_size = block_size;
+
+        // Set up DB version
+        header->version[0] = version[0];
+        header->version[1] = version[1];
+        header->version[2] = version[2];
+        header->version[3] = 0;
     }
     kv_file = new RollableFile(mbdir + "_mabain_i",
                                static_cast<size_t>(header->index_block_size),
@@ -108,7 +116,6 @@ DictMem::DictMem(const std::string &mbdir, bool init_header, size_t memsize,
 
     if(!(mode & CONSTS::ACCESS_MODE_WRITER))
     {
-        node_size = NULL;
         is_valid = true;
         return;
     }
@@ -128,20 +135,6 @@ DictMem::DictMem(const std::string &mbdir, bool init_header, size_t memsize,
     node_ptr = new uint8_t[ node_size[NUM_ALPHABET-1] ];
     free_lists = new FreeList(mbdir+"_ibfl", BUFFER_ALIGNMENT, NUM_BUFFER_RESERVE);
 
-    if(init_header)
-    {
-        // Set up DB version
-        header->version[0] = version[0];
-        header->version[1] = version[1];
-        header->version[2] = version[2];
-        header->version[3] = 0;
-        // Cannot set is_valid to true.
-        // More init to be dobe in InitRootNode.
-    }
-    else
-    {
-        is_valid = true;
-    }
     Logger::Log(LOG_LEVEL_INFO, "set up mabain db version to %u.%u.%u",
                 header->version[0], header->version[1], header->version[2]);
 }
@@ -180,6 +173,7 @@ void DictMem::InitRootNode()
 
 DictMem::~DictMem()
 {
+    Destroy();
 }
 
 void DictMem::Destroy()
@@ -192,6 +186,7 @@ void DictMem::Destroy()
 
     if(node_size != NULL)
         delete [] node_size;
+
     if(node_ptr != NULL)
         delete [] node_ptr;
 }
