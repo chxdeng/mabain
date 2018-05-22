@@ -79,7 +79,7 @@ int ResourceCollection::LRUEviction()
                 pruned++;
         }
 
-        if(async_writer_ptr != NULL && (count % PRUNE_TASK_CHECK == 0))
+        if(async_writer_ptr != NULL)
         {
             if(count++ > PRUNE_TASK_CHECK)
             {
