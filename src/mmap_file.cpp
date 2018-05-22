@@ -113,7 +113,7 @@ uint8_t* MmapFileIO::MapFile(size_t size, off_t offset, bool sliding)
         mmap_end = offset + size;
     }
 
-    if(mode | PROT_WRITE)
+    if(mode & PROT_WRITE)
     {
         Logger::Log(LOG_LEVEL_DEBUG, "mmap file %s, sliding=%d, size=%d, offset=%d",
                 path.c_str(), sliding, size, offset);

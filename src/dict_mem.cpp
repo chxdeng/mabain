@@ -70,6 +70,8 @@ DictMem::DictMem(const std::string &mbdir, bool init_header, size_t memsize,
     root_offset = 0;
     root_offset_rc = 0;
     node_ptr = NULL;
+    kv_file = NULL;
+    node_size = NULL;
 
     assert(sizeof(IndexHeader) <= (unsigned) RollableFile::page_size);
     bool map_hdr = true;
