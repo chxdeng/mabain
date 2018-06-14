@@ -1,6 +1,7 @@
 # mabain
 
 [![Build Status](https://travis-ci.org/chxdeng/mabain.svg?branch=master)](https://travis-ci.org/chxdeng/mabain)
+[![FOSSA Status](https://app.fossa.io/api/projects/git%2Bgithub.com%2Fchxdeng%2Fmabain.svg?type=shield)](https://app.fossa.io/projects/git%2Bgithub.com%2Fchxdeng%2Fmabain?ref=badge_shield)
 
 [![Coverage Status](https://coveralls.io/repos/github/chxdeng/mabain/badge.svg)](https://coveralls.io/github/chxdeng/mabain)
 
@@ -174,3 +175,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 [![License: GPL
 v2](https://img.shields.io/badge/License-GPL%20v2-blue.svg)](https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html)
+
+
+[![FOSSA Status](https://app.fossa.io/api/projects/git%2Bgithub.com%2Fchxdeng%2Fmabain.svg?type=large)](https://app.fossa.io/projects/git%2Bgithub.com%2Fchxdeng%2Fmabain?ref=badge_large)
