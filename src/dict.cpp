@@ -66,8 +66,10 @@ Dict::Dict(const std::string &mbdir, bool init_header, int datasize,
     {
         if(block_sz_data != 0 && header->data_block_size != block_sz_data)
         {
+            std::cerr << "mabain data block size not match " << block_sz_data << ": "
+                      << header->data_block_size << std::endl;
+            PrintHeader(std::cout);
             Destroy();
-            std::cerr << "mabain data block size not match\n";
             throw (int) MBError::INVALID_SIZE;
         }
     }
