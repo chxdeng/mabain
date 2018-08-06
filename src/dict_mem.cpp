@@ -92,7 +92,8 @@ DictMem::DictMem(const std::string &mbdir, bool init_header, size_t memsize,
     {
         if(block_size != 0 && header->index_block_size != block_size)
         {
-            std::cerr << "mabain index block size not match\n";
+            std::cerr << "mabain index block size not match " << block_size << ": "
+                      << header->index_block_size << std::endl;
             Destroy();
             throw (int) MBError::INVALID_SIZE;
         }
