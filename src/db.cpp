@@ -200,6 +200,33 @@ void DB::InitDB(MBConfig &config)
         mb_dir += "/";
     options = config.options;
 
+    if(config.options & CONSTS::ACCESS_MODE_WRITER)
+    { 
+        std::string lock_file = mb_dir + "_lock";
+        // internal check first
+        status = ResourcePool::getInstance().AddResourceByPath(lock_file, NULL);
+        if(status == MBError::SUCCESS)
+        {
+            if(!(config.options & CONSTS::MEMORY_ONLY_MODE))
+            {
+                // process check by file lock
+                writer_lock_fd = acquire_writer_lock(lock_file);
+                if(writer_lock_fd < 0)
+                    status = MBError::WRITER_EXIST;
+            }
+        }
+        else
+        {
+            status = MBError::WRITER_EXIST;
+        }
+        if(status == MBError::WRITER_EXIST)
+        {
+            Logger::Log(LOG_LEVEL_ERROR, "failed to initialize db: %s",
+                        MBError::get_error_str(status));
+            return;
+        }
+    }
+
     bool init_header = false;
     if(config.options & CONSTS::MEMORY_ONLY_MODE)
     {
@@ -271,29 +298,6 @@ void DB::InitDB(MBConfig &config)
 
     if(config.options & CONSTS::ACCESS_MODE_WRITER)
     {
-        std::string lock_file = mb_dir + "_lock";
-        // internal check first
-        status = ResourcePool::getInstance().AddResourceByPath(lock_file, NULL);
-        if(status == MBError::SUCCESS)
-        {
-            if(!(config.options & CONSTS::MEMORY_ONLY_MODE))
-            {
-                // process check by file lock
-                writer_lock_fd = acquire_writer_lock(lock_file);
-                if(writer_lock_fd < 0)
-                    status = MBError::WRITER_EXIST;
-            }
-        }
-        else
-        {
-            status = MBError::WRITER_EXIST;
-        }
-        if(status == MBError::WRITER_EXIST)
-        {
-            Logger::Log(LOG_LEVEL_ERROR, "failed to initialize db: %s",
-                        MBError::get_error_str(status));
-            return;
-        }
         if(config.options & CONSTS::ASYNC_WRITER_MODE)
             async_writer = new AsyncWriter(this);
     }
