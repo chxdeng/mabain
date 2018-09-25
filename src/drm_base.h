@@ -100,7 +100,7 @@ typedef struct _IndexHeader
     int                   async_queue_size;
     std::atomic<uint32_t> queue_index;
     uint32_t              writer_index;
-    std::atomic<bool>     is_rc_running;
+    std::atomic<uint32_t> rc_flag;
 } IndexHeader;
 
 // An abstract interface class for Dict and DictMem
