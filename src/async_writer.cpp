@@ -82,6 +82,7 @@ AsyncWriter::AsyncWriter(DB *db_ptr)
         throw (int) MBError::NOT_INITIALIZED;
     char *hdr_ptr = (char *) header;
     queue = (AsyncNode *) (hdr_ptr + RollableFile::page_size);
+    header->rc_flag.store(0, std::memory_order_release);
 #else
     queue = new AsyncNode[MB_MAX_NUM_SHM_QUEUE_NODE];
     memset(queue, 0, MB_MAX_NUM_SHM_QUEUE_NODE * sizeof(AsyncNode));
@@ -99,9 +100,9 @@ AsyncWriter::AsyncWriter(DB *db_ptr)
             throw (int) MBError::MUTEX_ERROR;
         }
     }
+    is_rc_running = false;
 #endif
 
-    is_rc_running = false;
     rc_backup_dir = NULL;
     // start the thread
     if(pthread_create(&tid, NULL, async_thread_wrapper, this) != 0)
@@ -138,10 +139,12 @@ int AsyncWriter::StopAsyncThread()
 
     stop_processing = true;
 
+#ifndef __SHM_QUEUE__
     for(int i = 0; i < MB_MAX_NUM_SHM_QUEUE_NODE; i++)
     {
         pthread_cond_signal(&queue[i].cond);
     }
+#endif
 
     if(tid != 0)
     {
@@ -613,7 +616,11 @@ void* AsyncWriter::async_writer_thread()
                 break;
             case MABAIN_ASYNC_TYPE_RC:
                 rval = MBError::SUCCESS;
+#ifdef __SHM_QUEUE__
+                header->rc_flag.store(1, std::memory_order_release);
+#else
                 is_rc_running = true;
+#endif
                 {
                     int64_t *data_ptr = (int64_t *) node_ptr->data;
                     min_index_size = data_ptr[0];
@@ -660,7 +667,11 @@ void* AsyncWriter::async_writer_thread()
 
         mbd.Clear();
 
+#ifdef __SHM_QUEUE__
+        if (header->rc_flag.load(std::memory_order_consume) == 1)
+#else
         if(is_rc_running)
+#endif
         {
             rval = MBError::SUCCESS;
             try {
@@ -673,7 +684,11 @@ void* AsyncWriter::async_writer_thread()
                     rval = error;
             }
 
+#ifdef __SHM_QUEUE__
+            header->rc_flag.store(0, std::memory_order_release);
+#else
             is_rc_running = false;
+#endif
             if(rc_backup_dir != NULL)
             {
                 if(rval == MBError::SUCCESS)

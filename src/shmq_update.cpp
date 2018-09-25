@@ -156,7 +156,7 @@ int Dict::SHMQ_PrepareSlot(AsyncNode *node_ptr) const
 
 bool Dict::SHMQ_Busy() const
 {
-    if(header->queue_index.load(std::memory_order_consume) != header->writer_index)
+    if((header->queue_index.load(std::memory_order_consume) != header->writer_index) || header->rc_flag == 1)
         return true;
 
     size_t rc_off = header->rc_root_offset.load(std::memory_order_consume);
