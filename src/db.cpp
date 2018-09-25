@@ -521,8 +521,15 @@ int DB::Backup(const char *bk_dir)
 
     int rval;
     try {
-        DBBackup bk(*this);
-        rval = bk.Backup(bk_dir);
+        if (async_writer == NULL && (options & CONSTS::ASYNC_WRITER_MODE))
+        {
+            DBBackup bk(*this);
+            rval = bk.Backup(bk_dir);
+        }
+        else
+        {
+            rval = dict->SHMQ_Backup(bk_dir);
+        }
     } catch  (int error) {
         Logger::Log(LOG_LEVEL_WARN, "Backup failed :%s", MBError::get_error_str(error));
         rval = error;
@@ -554,15 +561,22 @@ int DB::CollectResource(int64_t min_index_rc_size, int64_t min_data_rc_size,
 #endif
 
     try {
-        ResourceCollection rc(*this);
-        rc.ReclaimResource(min_index_rc_size, min_data_rc_size, max_dbsz, max_dbcnt);
+        if (async_writer == NULL && (options & CONSTS::ASYNC_WRITER_MODE))
+        {
+            ResourceCollection rc(*this);
+            rc.ReclaimResource(min_index_rc_size, min_data_rc_size, max_dbsz, max_dbcnt);
+        }
+        else
+        {
+            dict->SHMQ_CollectResource(min_index_rc_size, min_data_rc_size, max_dbsz, max_dbcnt);
+        }
     } catch (int error) {
         if(error != MBError::RC_SKIPPED)
         {
             Logger::Log(LOG_LEVEL_ERROR, "failed to run gc: %s",
                         MBError::get_error_str(error));
+            return error;
         }
-        return error;
     }
     return MBError::SUCCESS;
 }

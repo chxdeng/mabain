@@ -102,6 +102,7 @@ AsyncWriter::AsyncWriter(DB *db_ptr)
 #endif
 
     is_rc_running = false;
+    header->is_rc_running.store(false, std::memory_order_release);
     rc_backup_dir = NULL;
     // start the thread
     if(pthread_create(&tid, NULL, async_thread_wrapper, this) != 0)
@@ -138,10 +139,12 @@ int AsyncWriter::StopAsyncThread()
 
     stop_processing = true;
 
+#ifndef __SHM_QUEUE__
     for(int i = 0; i < MB_MAX_NUM_SHM_QUEUE_NODE; i++)
     {
         pthread_cond_signal(&queue[i].cond);
     }
+#endif
 
     if(tid != 0)
     {
@@ -614,6 +617,7 @@ void* AsyncWriter::async_writer_thread()
             case MABAIN_ASYNC_TYPE_RC:
                 rval = MBError::SUCCESS;
                 is_rc_running = true;
+                header->is_rc_running.store(true, std::memory_order_release);
                 {
                     int64_t *data_ptr = (int64_t *) node_ptr->data;
                     min_index_size = data_ptr[0];
@@ -639,7 +643,10 @@ void* AsyncWriter::async_writer_thread()
         }
 
 #ifdef __SHM_QUEUE__
-        header->writer_index++;
+        if (!header->is_rc_running.load(std::memory_order_consume))
+        {
+            header->writer_index++;
+        }
 #else
         writer_index++;
 #endif
@@ -673,6 +680,9 @@ void* AsyncWriter::async_writer_thread()
                     rval = error;
             }
 
+#ifdef __SHM_QUEUE__
+            header->is_rc_running.store(false, std::memory_order_release);
+#endif
             is_rc_running = false;
             if(rc_backup_dir != NULL)
             {
