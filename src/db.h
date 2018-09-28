@@ -51,6 +51,7 @@ typedef struct _MBConfig
     // For automatic eviction
     // All entries in the oldest buckets will be pruned.
     int num_entry_per_bucket;
+    uint32_t queue_size;
 } MBConfig;
 
 // Database handle class
@@ -106,7 +107,7 @@ public:
     // data_size: the value size; if zero, the value size will be variable.
     // id: the connector id
     DB(const char *db_path, int db_options, size_t memcap_index = 64*1024*1024LL,
-       size_t memcap_data = 64*1024*1024LL, uint32_t  id = 0);
+       size_t memcap_data = 64*1024*1024LL, uint32_t id = 0, uint32_t queue_size = 0);
     DB(MBConfig &config);
     ~DB();
 

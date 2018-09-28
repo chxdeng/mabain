@@ -41,6 +41,8 @@ namespace mabain {
 // Current mabain version 1.1.0
 uint16_t version[4] = {1, 1, 0, 0};
 
+std::map<std::string, int> db_queue_size;
+
 DB::~DB()
 {
     if(status != MBError::DB_CLOSED)
@@ -110,7 +112,8 @@ DB::DB(const char *db_path,
        int db_options,
        size_t memcap_index,
        size_t memcap_data,
-       uint32_t id) : status(MBError::NOT_INITIALIZED),
+       uint32_t id,
+       uint32_t queue_size) : status(MBError::NOT_INITIALIZED),
                       writer_lock_fd(-1)
 {
     MBConfig config;
@@ -120,6 +123,7 @@ DB::DB(const char *db_path,
     config.memcap_index = memcap_index;
     config.memcap_data = memcap_data;
     config.connect_id = id;
+    config.queue_size = queue_size;
 
     InitDB(config);
 }
@@ -200,6 +204,23 @@ void DB::InitDB(MBConfig &config)
         mb_dir += "/";
     options = config.options;
 
+    if (config.queue_size == 0)
+        config.queue_size = MB_MAX_NUM_SHM_QUEUE_NODE;
+
+    std::map<std::string, int>::iterator it = db_queue_size.find(mb_dir);
+    if (it != db_queue_size.end())
+    {
+        if (config.queue_size != (uint32_t) it->second)
+        {
+            Logger::Log(LOG_LEVEL_ERROR, "Queue cannot be changed for an existing DB");
+            return;
+        }
+    }
+    else
+    {
+        db_queue_size.insert(std::make_pair(mb_dir, config.queue_size));
+    }
+
     if(config.options & CONSTS::ACCESS_MODE_WRITER)
     { 
         std::string lock_file = mb_dir + "_lock";
@@ -277,11 +298,13 @@ void DB::InitDB(MBConfig &config)
                     config.memcap_index, config.memcap_data,
                     config.block_size_index, config.block_size_data,
                     config.max_num_index_block, config.max_num_data_block,
-                    config.num_entry_per_bucket);
+                    config.num_entry_per_bucket, config.queue_size);
 
     if((config.options & CONSTS::ACCESS_MODE_WRITER) && init_header)
     {
         Logger::Log(LOG_LEVEL_INFO, "open a new db %s", mb_dir.c_str());
+        IndexHeader *header = dict->GetHeaderPtr();
+        header->async_queue_size = config.queue_size;
         dict->Init(identifier);
         dict->InitShmObjects();
     }

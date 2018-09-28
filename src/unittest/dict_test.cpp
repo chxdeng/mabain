@@ -60,7 +60,7 @@ public:
     void InitDict(bool init_header, int opts, int blk_size, int bucket_sz) {
         dict = new Dict(std::string(DICT_TEST_DIR), init_header, 0,
                         opts, 256LL*ONE_MEGA, 256LL*ONE_MEGA,
-                        32*ONE_MEGA, blk_size, 100, 150, bucket_sz);
+                        32*ONE_MEGA, blk_size, 100, 150, bucket_sz, 0);
         if(init_header) {
             EXPECT_EQ(dict->Init(0), MBError::SUCCESS);
         }

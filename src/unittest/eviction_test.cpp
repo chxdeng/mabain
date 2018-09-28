@@ -141,6 +141,21 @@ TEST_F(EvictionTest, bucket_256_test)
             EXPECT_EQ(rval, MBError::SUCCESS);
         }
     }
+    TearDown();
+}
+
+TEST_F(EvictionTest, different_queue_size_test)
+{
+    mbconf.options = CONSTS::ACCESS_MODE_WRITER | CONSTS::ASYNC_WRITER_MODE;
+    db_async = new DB(mbconf);
+    assert(db_async->is_open());
+
+    mbconf.options = CONSTS::ACCESS_MODE_READER;
+    mbconf.queue_size =  99;
+    db = new DB(mbconf);
+    //  This should fail with a different queue size
+    assert(!db->is_open());
+    TearDown();
 }
 
 }

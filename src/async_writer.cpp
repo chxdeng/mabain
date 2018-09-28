@@ -347,9 +347,10 @@ int AsyncWriter::ProcessTask(int ntasks, bool rc_mode)
     while(count < ntasks)
     {
 #ifdef __SHM_QUEUE__
-        node_ptr = &queue[header->writer_index % MB_MAX_NUM_SHM_QUEUE_NODE]; 
+        header = dict->GetHeaderPtr();
+        node_ptr = &queue[header->writer_index % header->async_queue_size];
         tm_exp.tv_sec = time(NULL) + MB_ASYNC_SHM_LOCK_TMOUT;
-        tm_exp.tv_nsec = 0; 
+        tm_exp.tv_nsec = 0;
         rval = pthread_mutex_timedlock(&node_ptr->mutex, &tm_exp);
         if(rval == ETIMEDOUT)
         {
@@ -360,7 +361,7 @@ int AsyncWriter::ProcessTask(int ntasks, bool rc_mode)
         }
         else if(rval != 0)
 #else
-        node_ptr = &queue[writer_index % MB_MAX_NUM_SHM_QUEUE_NODE]; 
+        node_ptr = &queue[writer_index % MB_MAX_NUM_SHM_QUEUE_NODE];
         if(pthread_mutex_lock(&node_ptr->mutex) != 0)
 #endif
         {
@@ -479,9 +480,10 @@ uint32_t AsyncWriter::NextShmSlot(uint32_t windex, uint32_t qindex)
     int cnt = 0;
     while(windex != qindex)
     {
-        if(queue[windex % MB_MAX_NUM_SHM_QUEUE_NODE].in_use.load(std::memory_order_consume))
+        header = dict->GetHeaderPtr();
+        if(queue[windex % header->async_queue_size].in_use.load(std::memory_order_consume))
             break;
-        if(++cnt > MB_MAX_NUM_SHM_QUEUE_NODE)
+        if(++cnt > header->async_queue_size)
         {
             windex = qindex;
             break;
@@ -512,9 +514,10 @@ void* AsyncWriter::async_writer_thread()
     while(true)
     {
 #ifdef __SHM_QUEUE__
-        node_ptr = &queue[header->writer_index % MB_MAX_NUM_SHM_QUEUE_NODE]; 
+        header = dict->GetHeaderPtr();
+        node_ptr = &queue[header->writer_index % header->async_queue_size];
         tm_exp.tv_sec = time(NULL) + MB_ASYNC_SHM_LOCK_TMOUT;
-        tm_exp.tv_nsec = 0; 
+        tm_exp.tv_nsec = 0;
         rval = pthread_mutex_timedlock(&node_ptr->mutex, &tm_exp);
         if(rval == ETIMEDOUT)
         {
@@ -542,7 +545,7 @@ void* AsyncWriter::async_writer_thread()
                 break;
 #ifdef __SHM_QUEUE__
             tm_exp.tv_sec = time(NULL) + MB_ASYNC_SHM_LOCK_TMOUT;
-            tm_exp.tv_nsec = 0; 
+            tm_exp.tv_nsec = 0;
             pthread_cond_timedwait(&node_ptr->cond, &node_ptr->mutex, &tm_exp);
 
             uint32_t windex = header->writer_index;

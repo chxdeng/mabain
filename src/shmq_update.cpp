@@ -111,7 +111,7 @@ int Dict::SHMQ_CollectResource(int64_t m_index_rc_size,
 AsyncNode* Dict::SHMQ_AcquireSlot() const
 {
     uint32_t index = header->queue_index.fetch_add(1, std::memory_order_release);
-    AsyncNode *node_ptr = queue + (index % MB_MAX_NUM_SHM_QUEUE_NODE);
+    AsyncNode *node_ptr = queue + (index % header->async_queue_size);
 
     struct timespec tm_exp;
     tm_exp.tv_sec = time(NULL) + MB_ASYNC_SHM_LOCK_TMOUT;

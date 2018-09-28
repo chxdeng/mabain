@@ -57,7 +57,7 @@ public:
     void Init() {
         dmm = new DictMem(std::string(DICT_MEM_TEST_DIR), true, 8*1024*1024,
                       CONSTS::ACCESS_MODE_WRITER | CONSTS::USE_SLIDING_WINDOW,
-                      8*1024*1024, 1);
+                      8*1024*1024, 1, 0);
         dmm->InitRootNode();
         EXPECT_EQ(dmm->IsValid(), true);
         header = dmm->GetHeaderPtr();
@@ -83,7 +83,7 @@ protected:
 TEST_F(DictMemTest, Constructor_test)
 {
     dmm = new DictMem(std::string(DICT_MEM_TEST_DIR), true, 8*1024*1024,
-                      CONSTS::ACCESS_MODE_WRITER, 8*1024*1024, 1);
+                      CONSTS::ACCESS_MODE_WRITER, 8*1024*1024, 1, 0);
     dmm->PrintStats(std::cout);
     EXPECT_EQ(dmm->IsValid(), false);
     dmm->InitRootNode();
@@ -92,19 +92,20 @@ TEST_F(DictMemTest, Constructor_test)
     DestroyDMM();
 
     dmm = new DictMem(std::string(DICT_MEM_TEST_DIR), false, 8*1024*1024,
-                      CONSTS::ACCESS_MODE_WRITER, 8*1024*1024, 1);
+                      CONSTS::ACCESS_MODE_WRITER, 8*1024*1024, 1, 0);
     EXPECT_EQ(dmm->IsValid(), true);
     DestroyDMM();
 
     dmm = new DictMem(std::string(DICT_MEM_TEST_DIR), false, 8*1024*1024,
-                      CONSTS::ACCESS_MODE_READER, 8*1024*1024, 1);
+                      CONSTS::ACCESS_MODE_READER, 8*1024*1024, 1, 0);
     EXPECT_EQ(dmm->IsValid(), true);
+
     DestroyDMM();
 
     int error = 0;
     try {
         dmm = new DictMem(std::string(DICT_MEM_TEST_DIR), false, 8*1024*1024,
-                          CONSTS::ACCESS_MODE_WRITER, 12*1024*1024, 1);
+                          CONSTS::ACCESS_MODE_WRITER, 12*1024*1024, 1, 0);
     } catch (int err) {
         error = err;
     }
