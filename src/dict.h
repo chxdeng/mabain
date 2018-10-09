@@ -44,7 +44,7 @@ public:
          int db_options, size_t memsize_index, size_t memsize_data,
          uint32_t block_sz_index, uint32_t block_sz_data,
          int max_num_index_blk, int max_num_data_blk,
-         int64_t entry_per_bucket);
+         int64_t entry_per_bucket, uint32_t queue_size);
     virtual ~Dict();
     void Destroy();
 

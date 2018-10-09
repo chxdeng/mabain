@@ -110,7 +110,8 @@ DB::DB(const char *db_path,
        int db_options,
        size_t memcap_index,
        size_t memcap_data,
-       uint32_t id) : status(MBError::NOT_INITIALIZED),
+       uint32_t id,
+       uint32_t queue_size) : status(MBError::NOT_INITIALIZED),
                       writer_lock_fd(-1)
 {
     MBConfig config;
@@ -120,6 +121,7 @@ DB::DB(const char *db_path,
     config.memcap_index = memcap_index;
     config.memcap_data = memcap_data;
     config.connect_id = id;
+    config.queue_size = queue_size;
 
     InitDB(config);
 }
@@ -175,6 +177,8 @@ int DB::ValidateConfig(MBConfig &config)
         config.max_num_index_block = 1024;
     if(config.max_num_data_block == 0)
         config.max_num_data_block = 1024;
+    if (config.queue_size == 0)
+        config.queue_size = MB_MAX_NUM_SHM_QUEUE_NODE;
 
     return MBError::SUCCESS;
 }
@@ -277,11 +281,13 @@ void DB::InitDB(MBConfig &config)
                     config.memcap_index, config.memcap_data,
                     config.block_size_index, config.block_size_data,
                     config.max_num_index_block, config.max_num_data_block,
-                    config.num_entry_per_bucket);
+                    config.num_entry_per_bucket, config.queue_size);
 
     if((config.options & CONSTS::ACCESS_MODE_WRITER) && init_header)
     {
         Logger::Log(LOG_LEVEL_INFO, "open a new db %s", mb_dir.c_str());
+        IndexHeader *header = dict->GetHeaderPtr();
+        header->async_queue_size = config.queue_size;
         dict->Init(identifier);
         dict->InitShmObjects();
     }

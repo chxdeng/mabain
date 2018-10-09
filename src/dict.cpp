@@ -48,10 +48,10 @@ Dict::Dict(const std::string &mbdir, bool init_header, int datasize,
            int db_options, size_t memsize_index, size_t memsize_data,
            uint32_t block_sz_idx, uint32_t block_sz_data,
            int max_num_index_blk, int max_num_data_blk,
-           int64_t entry_per_bucket)
+           int64_t entry_per_bucket, uint32_t queue_size)
          : options(db_options),
 #ifdef __SHM_QUEUE__
-           mm(mbdir, init_header, memsize_index, db_options, block_sz_idx, max_num_index_blk),
+           mm(mbdir, init_header, memsize_index, db_options, block_sz_idx, max_num_index_blk, queue_size),
            queue(NULL)
 #else
            mm(mbdir, init_header, memsize_index, db_options, block_sz_idx, max_num_index_blk)
@@ -1234,7 +1234,7 @@ int Dict::InitShmObjects()
 #endif
 
 #ifdef __SHM_QUEUE__
-    for(int i = 0; i < MB_MAX_NUM_SHM_QUEUE_NODE; i++)
+    for(int i = 0; i < header->async_queue_size; i++)
     {
         status = InitShmMutex(&queue[i].mutex);
         if(status  != MBError::SUCCESS)
@@ -1243,7 +1243,6 @@ int Dict::InitShmObjects()
         if(status  != MBError::SUCCESS)
             break;
     }
-    header->async_queue_size = MB_MAX_NUM_SHM_QUEUE_NODE;
 #endif
 
     return status;

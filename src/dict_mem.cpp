@@ -65,7 +65,7 @@ namespace mabain {
 
 
 DictMem::DictMem(const std::string &mbdir, bool init_header, size_t memsize,
-                 int mode, uint32_t block_size, int max_num_blk)
+                 int mode, uint32_t block_size, int max_num_blk, uint32_t queue_size)
                : is_valid(false)
 {
     root_offset = 0;
@@ -81,7 +81,7 @@ DictMem::DictMem(const std::string &mbdir, bool init_header, size_t memsize,
     if(mode & CONSTS::ACCESS_MODE_WRITER)
         create_hdr = true;
 #ifdef __SHM_QUEUE__
-    hdr_size += sizeof(AsyncNode) * MB_MAX_NUM_SHM_QUEUE_NODE;
+    hdr_size += sizeof(AsyncNode) * queue_size;
 #endif
     header_file = ResourcePool::getInstance().OpenFile(mbdir + "_mabain_h",
                                                        mode,
