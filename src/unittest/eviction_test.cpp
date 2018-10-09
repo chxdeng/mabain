@@ -153,8 +153,8 @@ TEST_F(EvictionTest, different_queue_size_test)
     mbconf.options = CONSTS::ACCESS_MODE_READER;
     mbconf.queue_size =  99;
     db = new DB(mbconf);
-    //  This should fail with a different queue size
-    assert(!db->is_open());
+    //  This should succeed with a different queue size since it is ignored unless we are the writer
+    assert(db->is_open());
     TearDown();
 }
 

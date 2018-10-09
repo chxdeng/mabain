@@ -41,8 +41,6 @@ namespace mabain {
 // Current mabain version 1.1.0
 uint16_t version[4] = {1, 1, 0, 0};
 
-std::map<std::string, int> db_queue_size;
-
 DB::~DB()
 {
     if(status != MBError::DB_CLOSED)
@@ -179,6 +177,8 @@ int DB::ValidateConfig(MBConfig &config)
         config.max_num_index_block = 1024;
     if(config.max_num_data_block == 0)
         config.max_num_data_block = 1024;
+    if (config.queue_size == 0)
+        config.queue_size = MB_MAX_NUM_SHM_QUEUE_NODE;
 
     return MBError::SUCCESS;
 }
@@ -203,23 +203,6 @@ void DB::InitDB(MBConfig &config)
     if(mb_dir[mb_dir.length()-1] != '/')
         mb_dir += "/";
     options = config.options;
-
-    if (config.queue_size == 0)
-        config.queue_size = MB_MAX_NUM_SHM_QUEUE_NODE;
-
-    std::map<std::string, int>::iterator it = db_queue_size.find(mb_dir);
-    if (it != db_queue_size.end())
-    {
-        if (config.queue_size != (uint32_t) it->second)
-        {
-            Logger::Log(LOG_LEVEL_ERROR, "Queue cannot be changed for an existing DB");
-            return;
-        }
-    }
-    else
-    {
-        db_queue_size.insert(std::make_pair(mb_dir, config.queue_size));
-    }
 
     if(config.options & CONSTS::ACCESS_MODE_WRITER)
     { 

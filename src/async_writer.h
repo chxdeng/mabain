@@ -35,7 +35,6 @@ namespace mabain {
 #define MABAIN_ASYNC_TYPE_RC         4
 #define MABAIN_ASYNC_TYPE_BACKUP     5
 
-#define MB_MAX_NUM_SHM_QUEUE_NODE  64
 #define MB_ASYNC_SHM_KEY_SIZE      256
 #define MB_ASYNC_SHM_DATA_SIZE     1024
 #define MB_ASYNC_SHM_LOCK_TMOUT    5

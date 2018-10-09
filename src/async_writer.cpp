@@ -347,7 +347,6 @@ int AsyncWriter::ProcessTask(int ntasks, bool rc_mode)
     while(count < ntasks)
     {
 #ifdef __SHM_QUEUE__
-        header = dict->GetHeaderPtr();
         node_ptr = &queue[header->writer_index % header->async_queue_size];
         tm_exp.tv_sec = time(NULL) + MB_ASYNC_SHM_LOCK_TMOUT;
         tm_exp.tv_nsec = 0;
@@ -480,7 +479,6 @@ uint32_t AsyncWriter::NextShmSlot(uint32_t windex, uint32_t qindex)
     int cnt = 0;
     while(windex != qindex)
     {
-        header = dict->GetHeaderPtr();
         if(queue[windex % header->async_queue_size].in_use.load(std::memory_order_consume))
             break;
         if(++cnt > header->async_queue_size)
@@ -514,7 +512,6 @@ void* AsyncWriter::async_writer_thread()
     while(true)
     {
 #ifdef __SHM_QUEUE__
-        header = dict->GetHeaderPtr();
         node_ptr = &queue[header->writer_index % header->async_queue_size];
         tm_exp.tv_sec = time(NULL) + MB_ASYNC_SHM_LOCK_TMOUT;
         tm_exp.tv_nsec = 0;
