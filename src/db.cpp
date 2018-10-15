@@ -38,7 +38,7 @@
 
 namespace mabain {
 
-// Current mabain version 1.1.0
+// Current mabain version 1.2.0
 uint16_t version[4] = {1, 2, 0, 0};
 
 DB::~DB()
