@@ -54,7 +54,7 @@ Dict::Dict(const std::string &mbdir, bool init_header, int datasize,
            mm(mbdir, init_header, memsize_index, db_options, block_sz_idx, max_num_index_blk, queue_size),
            queue(NULL)
 #else
-           mm(mbdir, init_header, memsize_index, db_options, block_sz_idx, max_num_index_blk)
+           mm(mbdir, init_header, memsize_index, db_options, block_sz_idx, max_num_index_blk, queue_size)
 #endif
 {
     status = MBError::NOT_INITIALIZED;
@@ -217,11 +217,7 @@ int Dict::Add(const uint8_t *key, int len, MBData &data, bool overwrite)
 {
     if(!(options & CONSTS::ACCESS_MODE_WRITER))
     {
-#ifdef __SHM_QUEUE__
-        return SHMQ_Add((const char *) key, len, (const char *) data.buff, data.data_len, overwrite);
-#else
         return MBError::NOT_ALLOWED;
-#endif
     }
     if(len > CONSTS::MAX_KEY_LENGHTH || data.data_len > CONSTS::MAX_DATA_SIZE ||
        len <= 0 || data.data_len <= 0)
@@ -977,6 +973,7 @@ void Dict::PrintHeader(std::ostream &out_stream) const
     out_stream << "shared memory queue size: " << header->async_queue_size << std::endl;
     out_stream << "shared memory queue index: " << header->queue_index << std::endl;
     out_stream << "shared memory writer index: " << header->writer_index << std::endl;
+    out_stream << "resource flag: " << header->rc_flag << std::endl;
     out_stream << "---------------- END OF HEADER ----------------" << std::endl;
 }
 
@@ -1143,11 +1140,7 @@ int Dict::Remove(const uint8_t *key, int len, MBData &data)
 {
     if(!(options & CONSTS::ACCESS_MODE_WRITER))
     {
-#ifdef __SHM_QUEUE__
-        return SHMQ_Remove((const char *) key, len);
-#else
         return MBError::NOT_ALLOWED;
-#endif
     }
     if(data.options & CONSTS::OPTION_RC_MODE)
     {

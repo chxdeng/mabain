@@ -126,7 +126,7 @@ RollableFile::~RollableFile()
     Close();
 }
 
-int RollableFile::OpenAndMapBlockFile(int block_order, bool create_file)
+int RollableFile::OpenAndMapBlockFile(size_t block_order, bool create_file)
 {
     if(block_order >= max_num_block)
     {
@@ -180,11 +180,11 @@ size_t RollableFile::CheckAlignment(size_t offset, int size)
     return offset;
 }
 
-int RollableFile::CheckAndOpenFile(int order, bool create_file)
+int RollableFile::CheckAndOpenFile(size_t order, bool create_file)
 {
     int rval = MBError::SUCCESS;
 
-    if(order >= static_cast<int>(files.size()))
+    if(order >= static_cast<size_t>(files.size()))
         files.resize(order+3, NULL);
 
     if(files[order] == NULL)
@@ -197,7 +197,7 @@ int RollableFile::CheckAndOpenFile(int order, bool create_file)
 // No need to check alignment
 uint8_t* RollableFile::GetShmPtr(size_t offset, int size)
 {
-    int order = offset / block_size;
+    size_t order = offset / block_size;
     int rval = CheckAndOpenFile(order, false);
 
     if(rval != MBError::SUCCESS)
@@ -228,7 +228,7 @@ int RollableFile::Reserve(size_t &offset, int size, uint8_t* &ptr, bool map_new_
     ptr = NULL;
     offset = CheckAlignment(offset, size);
 
-    int order = offset / block_size;
+    size_t order = offset / block_size;
     rval = CheckAndOpenFile(order, true);
     if(rval != MBError::SUCCESS)
         return rval;
@@ -263,7 +263,7 @@ int RollableFile::Reserve(size_t &offset, int size, uint8_t* &ptr, bool map_new_
     return rval;
 }
 
-uint8_t* RollableFile::NewSlidingMapAddr(int order, size_t offset, int size)
+uint8_t* RollableFile::NewSlidingMapAddr(size_t order, size_t offset, int size)
 {
     if(sliding_addr != NULL)
     {
@@ -319,7 +319,7 @@ uint8_t* RollableFile::NewSlidingMapAddr(int order, size_t offset, int size)
 
 size_t RollableFile::RandomWrite(const void *data, size_t size, off_t offset)
 {
-    int order = offset / block_size;
+    size_t order = offset / block_size;
     int rval = CheckAndOpenFile(order, false);
     if(rval != MBError::SUCCESS)
         return 0;
@@ -345,7 +345,7 @@ size_t RollableFile::RandomWrite(const void *data, size_t size, off_t offset)
     return files[order]->RandomWrite(data, size, index);
 }
 
-void* RollableFile::NewReaderSlidingMap(int order)
+void* RollableFile::NewReaderSlidingMap(size_t order)
 {
     off_t start_off = shm_sliding_start_ptr->load(std::memory_order_relaxed);
     if(start_off == 0 || start_off == sliding_start || start_off/block_size != (unsigned)order)
@@ -370,7 +370,8 @@ void* RollableFile::NewReaderSlidingMap(int order)
 
 size_t RollableFile::RandomRead(void *buff, size_t size, off_t offset)
 {
-    int order = offset / block_size;
+    size_t order = offset / block_size;
+
     int rval = CheckAndOpenFile(order, false);
     if(rval != MBError::SUCCESS && rval != MBError::MMAP_FAILED)
         return 0;
