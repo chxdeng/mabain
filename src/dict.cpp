@@ -26,11 +26,12 @@
 #include "dict_mem.h"
 #include "error.h"
 #include "integer_4b_5b.h"
+#include "async_writer.h"
+#include "util/shm_mutex.h"
 
 #define MAX_DATA_BUFFER_RESERVE_SIZE    0xFFFF
 #define NUM_DATA_BUFFER_RESERVE         MAX_DATA_BUFFER_RESERVE_SIZE/DATA_BUFFER_ALIGNMENT
 #define DATA_HEADER_SIZE                32
-#define RC_FD_CHECK_COUNT               1
 
 #define READER_LOCK_FREE_START               \
     LockFreeData snapshot;                   \
@@ -47,9 +48,14 @@ Dict::Dict(const std::string &mbdir, bool init_header, int datasize,
            int db_options, size_t memsize_index, size_t memsize_data,
            uint32_t block_sz_idx, uint32_t block_sz_data,
            int max_num_index_blk, int max_num_data_blk,
-           int64_t entry_per_bucket)
+           int64_t entry_per_bucket, uint32_t queue_size)
          : options(db_options),
-           mm(mbdir, init_header, memsize_index, db_options, block_sz_idx, max_num_index_blk)
+#ifdef __SHM_QUEUE__
+           mm(mbdir, init_header, memsize_index, db_options, block_sz_idx, max_num_index_blk, queue_size),
+           queue(NULL)
+#else
+           mm(mbdir, init_header, memsize_index, db_options, block_sz_idx, max_num_index_blk, queue_size)
+#endif
 {
     status = MBError::NOT_INITIALIZED;
     reader_rc_off = 0;
@@ -80,6 +86,12 @@ Dict::Dict(const std::string &mbdir, bool init_header, int datasize,
 
     lfree.LockFreeInit(&header->lock_free, header, db_options);
     mm.InitLockFreePtr(&lfree);
+
+#ifdef __SHM_QUEUE__
+    // initialize shared memory queue
+    char *hdr_ptr = (char *) header;
+    queue = (AsyncNode *) (hdr_ptr + RollableFile::page_size);
+#endif
 
     // Open data file
     kv_file = new RollableFile(mbdir + "_mabain_d",
@@ -204,7 +216,9 @@ int Dict::Status() const
 int Dict::Add(const uint8_t *key, int len, MBData &data, bool overwrite)
 {
     if(!(options & CONSTS::ACCESS_MODE_WRITER))
+    {
         return MBError::NOT_ALLOWED;
+    }
     if(len > CONSTS::MAX_KEY_LENGHTH || data.data_len > CONSTS::MAX_DATA_SIZE ||
        len <= 0 || data.data_len <= 0)
         return MBError::OUT_OF_BOUND;
@@ -956,6 +970,10 @@ void Dict::PrintHeader(std::ostream &out_stream) const
     out_stream << "max data offset before rc: " << header->rc_m_data_off_pre << std::endl;
     out_stream << "rc root offset: " << header->rc_root_offset << std::endl;
     out_stream << "rc count: " << header->rc_count << std::endl;
+    out_stream << "shared memory queue size: " << header->async_queue_size << std::endl;
+    out_stream << "shared memory queue index: " << header->queue_index << std::endl;
+    out_stream << "shared memory writer index: " << header->writer_index << std::endl;
+    out_stream << "resource flag: " << header->rc_flag << std::endl;
     out_stream << "---------------- END OF HEADER ----------------" << std::endl;
 }
 
@@ -1121,7 +1139,9 @@ int Dict::Remove(const uint8_t *key, int len)
 int Dict::Remove(const uint8_t *key, int len, MBData &data)
 {
     if(!(options & CONSTS::ACCESS_MODE_WRITER))
+    {
         return MBError::NOT_ALLOWED;
+    }
     if(data.options & CONSTS::OPTION_RC_MODE)
     {
         // FIXME Remove in RC mode not implemented yet!!!
@@ -1193,40 +1213,32 @@ pthread_rwlock_t* Dict::GetShmLockPtrs() const
     return &header->mb_rw_lock;
 }
 
-int Dict::InitShmMutex()
+int Dict::InitShmObjects()
 {
     if(status != MBError::SUCCESS)
         return MBError::NOT_INITIALIZED;
 
-    Logger::Log(LOG_LEVEL_INFO, "initializing shared memory mutex");
+    Logger::Log(LOG_LEVEL_INFO, "initializing shared memory objects");
 
-    // Reset set status to MUTEX_ERROR
-    status = MBError::MUTEX_ERROR;
+#ifdef __SHM_LOCK__
+    status = InitShmRWLock(&header->mb_rw_lock);
+    if(status != MBError::SUCCESS)
+        return status;
+#endif
 
-    pthread_rwlockattr_t attr;
-    if(pthread_rwlockattr_init(&attr))
+#ifdef __SHM_QUEUE__
+    for(int i = 0; i < header->async_queue_size; i++)
     {
-        Logger::Log(LOG_LEVEL_WARN, "pthread_rwlockattr_init failed");
-        return MBError::MUTEX_ERROR;
+        status = InitShmMutex(&queue[i].mutex);
+        if(status  != MBError::SUCCESS)
+            break;
+        status = InitShmCond(&queue[i].cond);
+        if(status  != MBError::SUCCESS)
+            break;
     }
-    if(pthread_rwlockattr_setpshared(&attr, PTHREAD_PROCESS_SHARED))
-    {
-        Logger::Log(LOG_LEVEL_WARN, "failed to set PTHREAD_PROCESS_SHARED");
-        pthread_rwlockattr_destroy(&attr);
-        return MBError::MUTEX_ERROR;
-    }
+#endif
 
-    if(pthread_rwlock_init(&header->mb_rw_lock, &attr))
-    {
-        Logger::Log(LOG_LEVEL_WARN, "pthread_rwlock_init failed");
-        pthread_rwlockattr_destroy(&attr);
-        return MBError::MUTEX_ERROR;
-    }
-    pthread_rwlockattr_destroy(&attr);
-
-    // Set status back to OK
-    status = MBError::SUCCESS;
-    return MBError::SUCCESS;
+    return status;
 }
 
 // Reserve buffer and write to it

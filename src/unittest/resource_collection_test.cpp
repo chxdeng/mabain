@@ -55,7 +55,7 @@ public:
         std::string cmd = std::string("mkdir -p ") + DB_DIR;
         if(system(cmd.c_str()) != 0) {
         }
-        cmd = std::string("rm ") + DB_DIR + "_mabain_*";
+        cmd = std::string("rm ") + DB_DIR + "_*";
         if(system(cmd.c_str()) != 0) {
         }
         db = new DB(DB_DIR, CONSTS::ACCESS_MODE_WRITER, 128ULL*1024*1024, 128ULL*1024*1024);

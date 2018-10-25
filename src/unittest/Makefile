@@ -4,7 +4,7 @@ TEST_COVRAGE_DIR=coverage
 CPP=g++
 
 CPPFLAGS = -I. -I.. -I../util -I/usr/include -Wall -Werror -g -O2 -std=c++11
-CPPFLAGS += -fprofile-arcs -ftest-coverage -fPIC 
+CPPFLAGS += -fprofile-arcs -ftest-coverage -fPIC -D__SHM_QUEUE__
 LDFLAGS  = -lpthread -L/usr/lib64 -lgtest -lcrypto
 
 TESTSOURCES=$(wildcard *.cpp)

@@ -148,19 +148,27 @@ TEST_F(BackupTest, Create_backup_db)
     //Asycwriter DB backup test
     db_bkp = new DB(MB_BACKUP_DIR, CONSTS::WriterOptions() | CONSTS::ASYNC_WRITER_MODE, 128LL*1024*1024, 128LL*1024*1024);
     assert(db_bkp->is_open());
+#ifndef __SHM_QUEUE__
     assert(db_bkp->AsyncWriterEnabled());
+#endif
     DB *db_r = new DB(MB_BACKUP_DIR, CONSTS::ReaderOptions(), 128LL*1024*1024, 128LL*1024*1024);
+    assert(db_r->is_open());
+#ifndef __SHM_QUEUE__
     assert(db_r->SetAsyncWriterPtr(db_bkp) == MBError::SUCCESS);
     assert(db_r->AsyncWriterEnabled());
+#endif
     rval = db_r->Backup(MB_BACKUP_DIR_2);
     EXPECT_EQ(rval, MBError::SUCCESS);
-    while (db_r->AsyncWriterBusy())
-        usleep(10);
+    while (db_r->AsyncWriterBusy()) {
+        usleep(10000);
+    }
+#ifndef __SHM_QUEUE__
     assert(db_r->UnsetAsyncWriterPtr(db_bkp) == MBError::SUCCESS);
-    db_bkp->Close();
+#endif
     db_r->Close();
-    delete db_bkp;
+    db_bkp->Close();
     delete db_r;
+    delete db_bkp;
     db_bkp = new DB(MB_BACKUP_DIR_2, CONSTS::WriterOptions(), 128LL*1024*1024, 128LL*1024*1024);
     check_overwritten_keys(db_bkp, num);
 

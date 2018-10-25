@@ -115,7 +115,7 @@ static void Verify(DB &db)
 
 static void* AddThread(void *arg)
 {
-    DB *db = (DB *) arg;
+    DB db(mbdir.c_str(), CONSTS::ReaderOptions());
     int num = rand() % 1500;
 
     int64_t key;
@@ -127,23 +127,24 @@ static void* AddThread(void *arg)
     for(int i = 0; i < num; i++) {
         key = key_high.fetch_add(1, std::memory_order_release);
         keystr = tkey_int.get_key(key);
-        assert(db->Add(keystr, keystr) == MBError::SUCCESS);
+        assert(db.Add(keystr, keystr) == MBError::SUCCESS);
 
         keystr = tkey_sha1.get_key(key);
-        assert(db->Add(keystr, keystr) == MBError::SUCCESS);
+        assert(db.Add(keystr, keystr) == MBError::SUCCESS);
 
         keystr = tkey_sha2.get_key(key);
-        assert(db->Add(keystr, keystr) == MBError::SUCCESS);
+        assert(db.Add(keystr, keystr) == MBError::SUCCESS);
     }
+    db.Close();
     return NULL;
 }
 
-static void Populate(DB &db, int nt)
+static void Populate(int nt)
 {
     pthread_t tid[256];
     assert(nt < 256);
     for(int i = 0; i < nt; i++) {
-        if(pthread_create(&tid[i], NULL, AddThread, &db) != 0) {
+        if(pthread_create(&tid[i], NULL, AddThread, NULL) != 0) {
             std::cout << "failed to create MultiThreadAdd thread\n";
             abort();
         }
@@ -189,7 +190,7 @@ static void store_key_ids()
 
 static void* DeleteThread(void *arg)
 {
-    DB *db = (DB *) arg;
+    DB db(mbdir.c_str(), CONSTS::ReaderOptions());
     int num = rand() % 5;
 
     int64_t key;
@@ -202,24 +203,25 @@ static void* DeleteThread(void *arg)
         key = key_low.fetch_add(1, std::memory_order_release);
 
         keystr = tkey_int.get_key(key);
-        assert(db->Remove(keystr) == MBError::SUCCESS);
+        assert(db.Remove(keystr) == MBError::SUCCESS);
 
         keystr = tkey_sha1.get_key(key);
-        assert(db->Remove(keystr) == MBError::SUCCESS);
+        assert(db.Remove(keystr) == MBError::SUCCESS);
 
         keystr = tkey_sha2.get_key(key);
-        assert(db->Remove(keystr) == MBError::SUCCESS);
+        assert(db.Remove(keystr) == MBError::SUCCESS);
     }
 
+    db.Close();
     return NULL;
 }
 
-static void Prune(DB &db, int nt)
+static void Prune(int nt)
 {
     pthread_t tid[256];
     assert(nt < 256);
     for(int i = 0; i < nt; i++) {
-        if(pthread_create(&tid[i], NULL, DeleteThread, &db) != 0) {
+        if(pthread_create(&tid[i], NULL, DeleteThread, NULL) != 0) {
             std::cout << "failed to create MultiThreadAdd thread\n";
             abort();
         }
@@ -301,8 +303,8 @@ static void* run_mb_test(void *arg)
     int rcn = 0;
     int64_t loop_cnt = 0;
     while(!stop_processing) {
-        Populate(*db, nupdates);
-        Prune(*db, nupdates);
+        Populate(nupdates);
+        Prune(nupdates);
 
         std::cout << "LOOP " << loop_cnt << ": " << db->Count() << "\n";
         if(loop_cnt % 5 == 0) {

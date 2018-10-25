@@ -30,6 +30,11 @@
 
 namespace mabain {
 
+#ifdef __SHM_QUEUE__
+struct _AsyncNode;
+typedef struct _AsyncNode AsyncNode;
+#endif
+
 // dictionary class
 // This is the work horse class for basic db operations (add, find and remove).
 class Dict : public DRMBase
@@ -39,7 +44,7 @@ public:
          int db_options, size_t memsize_index, size_t memsize_data,
          uint32_t block_sz_index, uint32_t block_sz_data,
          int max_num_index_blk, int max_num_data_blk,
-         int64_t entry_per_bucket);
+         int64_t entry_per_bucket, uint32_t queue_size);
     virtual ~Dict();
     void Destroy();
 
@@ -58,6 +63,18 @@ public:
 
     // Delete all entries
     int RemoveAll();
+
+#ifdef __SHM_QUEUE__
+    // multiple-process updates using shared memory queue
+    int  SHMQ_Add(const char *key, int key_len, const char *data, int data_len,
+                  bool overwrite);
+    int  SHMQ_Remove(const char *key, int len);
+    int  SHMQ_RemoveAll();
+    int  SHMQ_Backup(const char *backup_dir);
+    int  SHMQ_CollectResource(int64_t m_index_rc_size, int64_t m_data_rc_size,
+                              int64_t max_dbsz, int64_t max_dbcnt);
+    bool SHMQ_Busy() const;
+#endif
 
     void ReserveData(const uint8_t* buff, int size, size_t &offset);
     void WriteData(const uint8_t *buff, unsigned len, size_t offset) const;
@@ -86,8 +103,8 @@ public:
     int  ReadRootNode(uint8_t *node_buff, EdgePtrs &edge_ptrs, int &match,
                  MBData &data) const;
 
-    // Shared memory mutex
-    int InitShmMutex();
+    // Shared memory objects
+    int InitShmObjects();
     pthread_rwlock_t* GetShmLockPtrs() const;
 
     void UpdateNumReader(int delta) const;
@@ -107,6 +124,10 @@ private:
     int ReadDataFromNode(MBData &data, const uint8_t *node_ptr) const;
     int DeleteDataFromEdge(MBData &data, EdgePtrs &edge_ptrs);
     int ReadNodeMatch(size_t node_off, int &match, MBData &data) const;
+#ifdef __SHM_QUEUE__
+    int SHMQ_PrepareSlot(AsyncNode *node_ptr) const;
+    AsyncNode* SHMQ_AcquireSlot() const;
+#endif
 
     // DB access permission
     int options;
@@ -119,6 +140,9 @@ private:
     LockFree lfree;
 
     size_t reader_rc_off;
+#ifdef __SHM_QUEUE__
+    AsyncNode *queue;
+#endif
 };
 
 }

@@ -312,6 +312,7 @@ static void Delete(int n)
     timeval start, stop;
     int nfound = 0;
     char kv[65];
+
 #if LMDB
     if(!sync_on_write)
         mdb_txn_begin(env, NULL, 0, &txn);
@@ -374,8 +375,9 @@ static void *Writer(void *arg)
 {
     int num = *((int *) arg);
     char kv[65];
+    int tid = static_cast<int>(syscall(SYS_gettid));
 
-    std::cout << "\nwriter started " << std::endl;
+    std::cout << "\n[writer : " << tid << "] started" << std::endl;
     for(int i = 0; i < num; i++) {
         std::string key, val;
         if(key_type == 0) {
@@ -400,7 +402,6 @@ static void *Writer(void *arg)
 #ifdef DEFRAG
         if((i+1) % (2*ONE_MILLION)== 0) {
             std::cout<<"\nRC SCHEDULED " << std::endl;
-            // db->CollectResource(2*ONE_MILLION, 64*ONE_MILLION);
             db->CollectResource(1, 1);
         }
 #endif

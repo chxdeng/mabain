@@ -27,6 +27,7 @@
 #include "integer_4b_5b.h"
 #include "version.h"
 #include "resource_pool.h"
+#include "async_writer.h"
 
 #define OFFSET_SIZE_P1             7
 
@@ -64,7 +65,7 @@ namespace mabain {
 
 
 DictMem::DictMem(const std::string &mbdir, bool init_header, size_t memsize,
-                 int mode, uint32_t block_size, int max_num_blk)
+                 int mode, uint32_t block_size, int max_num_blk, uint32_t queue_size)
                : is_valid(false)
 {
     root_offset = 0;
@@ -76,11 +77,15 @@ DictMem::DictMem(const std::string &mbdir, bool init_header, size_t memsize,
     assert(sizeof(IndexHeader) <= (unsigned) RollableFile::page_size);
     bool map_hdr = true;
     bool create_hdr = false;
+    size_t hdr_size = RollableFile::page_size;
     if(mode & CONSTS::ACCESS_MODE_WRITER)
         create_hdr = true;
+#ifdef __SHM_QUEUE__
+    hdr_size += sizeof(AsyncNode) * queue_size;
+#endif
     header_file = ResourcePool::getInstance().OpenFile(mbdir + "_mabain_h",
                                                        mode,
-                                                       RollableFile::page_size,
+                                                       hdr_size,
                                                        map_hdr,
                                                        create_hdr);
     header = (IndexHeader *) header_file->GetMapAddr();

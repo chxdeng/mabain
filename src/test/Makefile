@@ -5,7 +5,7 @@ LDFLAGS  = -lpthread -lcrypto
 
 TESTSOURCES=$(wildcard *.cpp)
 
-all: mb_test mb_test1 mb_test2
+all: mb_test mb_test1 mb_test2 mb_test_mp
 
 mb_test: mabain_test.cpp ../libmabain.so
 	$(CPP) $(CPPFLAGS) mabain_test.cpp
@@ -18,6 +18,10 @@ mb_test1: mbtest1.cpp ../libmabain.so
 mb_test2: mbtest2.cpp ../libmabain.so
 	$(CPP) $(CPPFLAGS) mbtest2.cpp 
 	$(CPP) mbtest2.o -o mb_test2 -L../ -lmabain $(LDFLAGS)
+
+mb_test_mp: mbtest_mp.cpp ../libmabain.so
+	$(CPP) $(CPPFLAGS) mbtest_mp.cpp
+	$(CPP) mbtest_mp.o -o mb_test_mp -L../ -lmabain $(LDFLAGS)
 
 clean:
 	-rm -rf *.o mb_test*

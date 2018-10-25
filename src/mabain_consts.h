@@ -31,6 +31,7 @@ public:
     static const int USE_SLIDING_WINDOW;
     static const int MEMORY_ONLY_MODE;
     static const int OPTION_ALL_PREFIX;
+
     static const int OPTION_FIND_AND_STORE_PARENT;
     static const int OPTION_RC_MODE;
     static const int OPTION_READ_SAVED_EDGE; // Used internally only

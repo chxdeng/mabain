@@ -38,16 +38,17 @@ public:
     }
     void OpenDB(int entry_per_bucket) {
         mbconf.num_entry_per_bucket = entry_per_bucket;
-        mbconf.options = CONSTS::ACCESS_MODE_WRITER | CONSTS::USE_SLIDING_WINDOW |
-                         CONSTS::ASYNC_WRITER_MODE;
+        mbconf.options = CONSTS::ACCESS_MODE_WRITER | CONSTS::ASYNC_WRITER_MODE;
         db_async = new DB(mbconf);
         assert(db_async->is_open());
 
-        mbconf.options = CONSTS::ACCESS_MODE_READER | CONSTS::USE_SLIDING_WINDOW;
+        mbconf.options = CONSTS::ACCESS_MODE_READER;
         db = new DB(mbconf);
         assert(db->is_open());
+#ifndef __SHM_QUEUE__
         assert(db->SetAsyncWriterPtr(db_async) == MBError::SUCCESS);
         assert(db->AsyncWriterEnabled());
+#endif
     }
     void Insert(int n0, int n) {
         TestKey tkey(MABAIN_TEST_KEY_TYPE_INT);
@@ -59,7 +60,9 @@ public:
     }
     virtual void TearDown() {
         if(db != NULL) {
+#ifndef __SHM_QUEUE__
             db->UnsetAsyncWriterPtr(db_async);
+#endif
             db->Close();
             delete db;
             db = NULL;
@@ -88,6 +91,9 @@ TEST_F(EvictionTest, bucket_256_test)
 
     OpenDB(entry_per_bucket);
     Insert(0, num);
+    while(db->AsyncWriterBusy()) {
+        usleep(100);
+    }
     TestKey tkey(MABAIN_TEST_KEY_TYPE_INT);
     int index = 0;
     for(int i = 0; i < num; i++) {
@@ -99,10 +105,12 @@ TEST_F(EvictionTest, bucket_256_test)
     }
 
     //Prune by db size
-    db->CollectResource(1000000000, 1000000000, 100, 10000000000);
+    rval = db->CollectResource(1000000000, 1000000000, 100, 10000000000);
+    EXPECT_EQ(rval, MBError::SUCCESS);
     while(db->AsyncWriterBusy()) {
         usleep(100);
     }
+
     for(int i = 0; i < num; i++) {
         key = tkey.get_key(i);
         rval = db->Find(key, mbd);
@@ -119,7 +127,8 @@ TEST_F(EvictionTest, bucket_256_test)
         usleep(100);
     }
     //Prune by db count
-    db->CollectResource(1000000000, 1000000000, 1000000000, 1000);
+    rval = db->CollectResource(1000000000, 1000000000, 1000000000, 1000);
+    EXPECT_EQ(rval, MBError::SUCCESS);
     while(db->AsyncWriterBusy()) {
         usleep(100);
     }
@@ -132,6 +141,21 @@ TEST_F(EvictionTest, bucket_256_test)
             EXPECT_EQ(rval, MBError::SUCCESS);
         }
     }
+    TearDown();
+}
+
+TEST_F(EvictionTest, different_queue_size_test)
+{
+    mbconf.options = CONSTS::ACCESS_MODE_WRITER | CONSTS::ASYNC_WRITER_MODE;
+    db_async = new DB(mbconf);
+    assert(db_async->is_open());
+
+    mbconf.options = CONSTS::ACCESS_MODE_READER;
+    mbconf.queue_size =  99;
+    db = new DB(mbconf);
+    //  This should succeed with a different queue size since it is ignored unless we are the writer
+    assert(db->is_open());
+    TearDown();
 }
 
 }
