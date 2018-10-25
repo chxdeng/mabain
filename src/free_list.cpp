@@ -29,8 +29,8 @@
 
 namespace mabain {
 
-FreeList::FreeList(const std::string &file_path, int buff_alignment,
-                   int max_n_buff, int max_buff_per_list)
+FreeList::FreeList(const std::string &file_path, size_t buff_alignment,
+                   size_t max_n_buff, size_t max_buff_per_list)
                : list_path(file_path),
                  alignment(buff_alignment),
                  max_num_buffer(max_n_buff),
@@ -46,7 +46,7 @@ FreeList::FreeList(const std::string &file_path, int buff_alignment,
     Logger::Log(LOG_LEVEL_INFO, "%s maximum number of buffers: %d", file_path.c_str(),
                 max_num_buffer);
     buffer_free_list = new MBlsq*[max_num_buffer];
-    for(int i = 0; i < max_num_buffer; i++)
+    for(size_t i = 0; i < max_num_buffer; i++)
     {
         buffer_free_list[i] = new MBlsq(NULL);
     }
@@ -56,7 +56,7 @@ FreeList::~FreeList()
 {
     if(buffer_free_list)
     {
-        for(int i = 0; i < max_num_buffer; i++)
+        for(size_t i = 0; i < max_num_buffer; i++)
         {
             if(buffer_free_list[i])
             {
@@ -69,12 +69,12 @@ FreeList::~FreeList()
     }
 }
 
-int FreeList::ReuseBuffer(int buf_index, size_t offset)
+int FreeList::ReuseBuffer(size_t buf_index, size_t offset)
 {
     int rval = MBError::BUFFER_LOST;
-    for(int i = buf_index - 1; i > 0; i--)
+    for(size_t i = buf_index - 1; i > 0; i--)
     {
-        if(buffer_free_list[i]->Count() > (unsigned) max_buffer_per_list)
+        if(buffer_free_list[i]->Count() > max_buffer_per_list)
             continue;
 
         if(buffer_free_list[i]->AddIntToTail(offset) == MBError::SUCCESS)
@@ -89,11 +89,11 @@ int FreeList::ReuseBuffer(int buf_index, size_t offset)
     return rval;
 }
 
-int FreeList::AddBuffer(size_t offset, int size)
+int FreeList::AddBuffer(size_t offset, size_t size)
 {
     int rval = MBError::SUCCESS;
 
-    int buf_index = GetBufferIndex(size);
+    size_t buf_index = GetBufferIndex(size);
 #ifdef __DEBUG__
     assert(buf_index < max_num_buffer);
 #endif
@@ -110,11 +110,11 @@ int FreeList::AddBuffer(size_t offset, int size)
     return rval;
 }
 
-int FreeList::RemoveBuffer(size_t &offset, int size)
+int FreeList::RemoveBuffer(size_t &offset, size_t size)
 {
     int rval = MBError::NO_MEMORY;
 
-    int buf_index = GetBufferIndex(size);
+    size_t buf_index = GetBufferIndex(size);
     if(buffer_free_list[buf_index]->Count() > 0)
     {
         offset = buffer_free_list[buf_index]->RemoveIntFromHead();
@@ -155,15 +155,15 @@ int FreeList::StoreListOnDisk()
 
     Logger::Log(LOG_LEVEL_INFO, "%s write %lld buffers to list disk: %llu", list_path.c_str(),
                 count, tot_size);
-    for(int buf_index = 0; buf_index < max_num_buffer; buf_index++)
+    for(size_t buf_index = 0; buf_index < max_num_buffer; buf_index++)
     {
         int64_t buf_count = buffer_free_list[buf_index]->Count();
         if(buf_count > 0)
         {
             // write list header (buffer index, buffer count)
-            freelist_f.write((char *)&buf_index, sizeof(int));
+            freelist_f.write((char *)&buf_index, sizeof(size_t));
             freelist_f.write((char *)&buf_count, sizeof(int64_t));
-            for(int i = 0; i < buf_count; i++)
+            for(int64_t i = 0; i < buf_count; i++)
             {
                 size_t offset = buffer_free_list[buf_index]->RemoveIntFromHead();
                 freelist_f.write((char *) &offset, sizeof(size_t));
@@ -203,14 +203,14 @@ int FreeList::LoadListFromDisk()
 
     while(!freelist_f.eof())
     {
-        int buf_index;
+        size_t buf_index;
         int64_t buf_count;
         // Read header
-        freelist_f.read((char *) &buf_index, sizeof(int));
+        freelist_f.read((char *) &buf_index, sizeof(size_t));
         freelist_f.read((char *) &buf_count, sizeof(int64_t));
         if(freelist_f.eof())
             break;
-        for(int i = 0; i < buf_count; i++)
+        for(int64_t i = 0; i < buf_count; i++)
         {
             size_t offset;
             freelist_f.read((char *) &offset, sizeof(size_t));
@@ -248,7 +248,7 @@ void FreeList::ReleaseAlignmentBuffer(size_t old_offset, size_t alignment_offset
 
 void FreeList::Empty()
 {
-    for(int i = 0; i < max_num_buffer; i++)
+    for(size_t i = 0; i < max_num_buffer; i++)
     {
         if(buffer_free_list[i])
         {
@@ -259,7 +259,7 @@ void FreeList::Empty()
     tot_size = 0;
 }
 
-bool FreeList::GetBufferByIndex(int buf_index, size_t &offset)
+bool FreeList::GetBufferByIndex(size_t buf_index, size_t &offset)
 {
 #ifdef __DEBUG__
     assert(buf_index < max_num_buffer);

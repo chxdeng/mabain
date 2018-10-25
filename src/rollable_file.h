@@ -57,10 +57,10 @@ public:
     static int ShmSync(uint8_t *addr, int size);
 
 private:
-    int      OpenAndMapBlockFile(int block_order, bool create_file);
-    int      CheckAndOpenFile(int block_order, bool create_file);
-    uint8_t* NewSlidingMapAddr(int order, size_t offset, int size);
-    void*    NewReaderSlidingMap(int order);
+    int      OpenAndMapBlockFile(size_t block_order, bool create_file);
+    int      CheckAndOpenFile(size_t block_order, bool create_file);
+    uint8_t* NewSlidingMapAddr(size_t order, size_t offset, int size);
+    void*    NewReaderSlidingMap(size_t order);
 
     std::string path;
     size_t block_size;
@@ -74,7 +74,7 @@ private:
     // read unflushed data from disk.
     std::atomic<size_t> *shm_sliding_start_ptr;
 
-    long max_num_block;
+    size_t max_num_block;
 
     std::vector<std::shared_ptr<MmapFileIO>> files;
     uint8_t* sliding_addr;

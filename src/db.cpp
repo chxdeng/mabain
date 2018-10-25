@@ -425,6 +425,8 @@ int DB::FindLongestPrefix(const std::string &key, MBData &data) const
 // Add a key-value pair
 int DB::Add(const char* key, int len, MBData &mbdata, bool overwrite)
 {
+    int rval = MBError::SUCCESS;
+
     if(key == NULL)
         return MBError::INVALID_ARG;
     if(status != MBError::SUCCESS)
@@ -434,10 +436,18 @@ int DB::Add(const char* key, int len, MBData &mbdata, bool overwrite)
     if(async_writer != NULL)
         return async_writer->Add(key, len, reinterpret_cast<const char *>(mbdata.buff),
                                  mbdata.data_len, overwrite);
-#endif
 
-    int rval;
     rval = dict->Add(reinterpret_cast<const uint8_t*>(key), len, mbdata, overwrite);
+#else
+    if (async_writer == NULL && (options & CONSTS::ACCESS_MODE_WRITER))
+    {
+        rval = dict->Add(reinterpret_cast<const uint8_t*>(key), len, mbdata, overwrite);
+    }
+    else
+    {
+        rval = dict->SHMQ_Add(reinterpret_cast<const char*>(key), len, reinterpret_cast<const char*>(mbdata.buff), mbdata.data_len, overwrite);
+    }
+#endif
 
     return rval;
 }
@@ -458,8 +468,19 @@ int DB::Add(const char* key, int len, const char* data, int data_len, bool overw
     mbdata.data_len = data_len;
     mbdata.buff = (uint8_t*) data;
 
-    int rval;
+    int rval = MBError::SUCCESS;
+#ifndef __SHM_QUEUE__
     rval = dict->Add(reinterpret_cast<const uint8_t*>(key), len, mbdata, overwrite);
+#else
+    if (async_writer == NULL && (options & CONSTS::ACCESS_MODE_WRITER))
+    {
+        rval = dict->Add(reinterpret_cast<const uint8_t*>(key), len, mbdata, overwrite);
+    }
+    else
+    {
+        rval = dict->SHMQ_Add(reinterpret_cast<const char*>(key), len, reinterpret_cast<const char*>(mbdata.buff), mbdata.data_len, overwrite);
+    }
+#endif
 
     mbdata.buff = NULL;
     return rval;
@@ -472,6 +493,8 @@ int DB::Add(const std::string &key, const std::string &value, bool overwrite)
 
 int DB::Remove(const char *key, int len)
 {
+    int rval = MBError::SUCCESS;
+
     if(key == NULL)
         return MBError::INVALID_ARG;
     if(status != MBError::SUCCESS)
@@ -480,10 +503,18 @@ int DB::Remove(const char *key, int len)
 #ifndef __SHM_QUEUE__
     if(async_writer != NULL)
         return async_writer->Remove(key, len);
-#endif
 
-    int rval;
     rval = dict->Remove(reinterpret_cast<const uint8_t*>(key), len);
+#else
+    if (async_writer == NULL && (options & CONSTS::ACCESS_MODE_WRITER))
+    {
+        rval = dict->Remove(reinterpret_cast<const uint8_t*>(key), len);
+    }
+    else
+    {
+        rval = dict->SHMQ_Remove(reinterpret_cast<const char*>(key), len);
+    }
+#endif
 
     return rval;
 }
@@ -510,6 +541,8 @@ int DB::RemoveAll()
 
 int DB::Backup(const char *bk_dir)
 {
+    int rval = MBError::SUCCESS;
+
     if(options & CONSTS::MEMORY_ONLY_MODE)
         return MBError::NOT_ALLOWED;
 
@@ -523,9 +556,15 @@ int DB::Backup(const char *bk_dir)
 #ifndef __SHM_QUEUE__
     if(async_writer != NULL)
         return async_writer->Backup(bk_dir);
-#endif
 
-    int rval;
+    try {
+        DBBackup bk(*this);
+        rval = bk.Backup(bk_dir);
+    } catch  (int error) {
+        Logger::Log(LOG_LEVEL_WARN, "Backup failed :%s", MBError::get_error_str(error));
+        rval = error;
+    }
+#else
     try {
         if (async_writer == NULL && (options & CONSTS::ASYNC_WRITER_MODE))
         {
@@ -540,6 +579,7 @@ int DB::Backup(const char *bk_dir)
         Logger::Log(LOG_LEVEL_WARN, "Backup failed :%s", MBError::get_error_str(error));
         rval = error;
     }
+#endif
     return rval;
 }
 
@@ -564,8 +604,19 @@ int DB::CollectResource(int64_t min_index_rc_size, int64_t min_data_rc_size,
     if(async_writer != NULL)
         return async_writer->CollectResource(min_index_rc_size, min_data_rc_size,
                                              max_dbsz, max_dbcnt);
-#endif
 
+    try {
+        ResourceCollection rc(*this);
+        rc.ReclaimResource(min_index_rc_size, min_data_rc_size, max_dbsz, max_dbcnt);
+    } catch (int error) {
+        if(error != MBError::RC_SKIPPED)
+        {
+            Logger::Log(LOG_LEVEL_ERROR, "failed to run gc: %s",
+                        MBError::get_error_str(error));
+            return error;
+        }
+    }
+#else
     try {
         if (async_writer == NULL && (options & CONSTS::ASYNC_WRITER_MODE))
         {
@@ -584,6 +635,7 @@ int DB::CollectResource(int64_t min_index_rc_size, int64_t min_data_rc_size,
             return error;
         }
     }
+#endif
     return MBError::SUCCESS;
 }
 
