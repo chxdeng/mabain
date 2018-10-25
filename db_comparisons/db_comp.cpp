@@ -399,10 +399,12 @@ static void *Writer(void *arg)
         db->Put(opts, key, val);
 #elif MABAIN
         db->Add(key.c_str(), key.length(), val.c_str(), val.length());
+#ifdef DEFRAG
         if((i+1) % (2*ONE_MILLION)== 0) {
             std::cout<<"\nRC SCHEDULED " << std::endl;
             db->CollectResource(1, 1);
         }
+#endif
 #endif
 
         if((i+1) % ONE_MILLION == 0) {
