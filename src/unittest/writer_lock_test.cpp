@@ -21,6 +21,9 @@ public:
     virtual ~WriterLockTest() {
     }
     virtual void SetUp() {
+        std::string cmd = std::string("rm ") + MB_DIR + "_*";
+        if(system(cmd.c_str()) != 0) {
+        }
     }
     virtual void TearDown() {
         ResourcePool::getInstance().RemoveAll();

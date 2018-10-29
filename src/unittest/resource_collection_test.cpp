@@ -32,6 +32,7 @@
 #include "../mb_rc.h"
 #include "../error.h"
 #include "./test_key.h"
+#include "../resource_pool.h"
 
 #define DB_DIR "/var/tmp/mabain_test/"
 #define KEY_TYPE_INT    0
@@ -66,6 +67,7 @@ public:
     }
     virtual void TearDown() {
         db->Close();
+        ResourcePool::getInstance().RemoveAll();
     }
 
     void Populate(long num, bool *exist) {
