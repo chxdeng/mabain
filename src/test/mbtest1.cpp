@@ -244,8 +244,9 @@ void stop_mb_test()
     }
 }
 
-static void CheckCount(DB *db)
+static void CheckCount()
 {
+    DB *db = new DB(mbdir.c_str(), CONSTS::ReaderOptions(), memcap_i, memcap_d);
     if(db == NULL) return;
 
     int64_t count = 0;
@@ -254,6 +255,7 @@ static void CheckCount(DB *db)
     }
     std::cout << "Count using iterator: " << count << "\tcount from API: "
               << db->Count() << "\n";
+    delete db;
 }
 
 void start_mb_test()
@@ -325,7 +327,7 @@ static void* run_mb_test(void *arg)
 	                delete db;
 	                abort();
 	            }
-                    CheckCount(db);
+                    CheckCount();
                 } else if(rcn % 20000523 == 0) {
                     if(system("reboot") != 0) {
                     }
