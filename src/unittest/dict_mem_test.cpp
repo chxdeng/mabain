@@ -52,6 +52,7 @@ public:
         std::string cmd = std::string("rm -rf ") + DICT_MEM_TEST_DIR + "/_*";
         if(system(cmd.c_str()) != 0) {
         }
+        ResourcePool::getInstance().RemoveAll();
     }
 
     void Init() {
