@@ -99,7 +99,7 @@ TEST_F(DictMemTest, Constructor_test)
 
     dmm = new DictMem(std::string(DICT_MEM_TEST_DIR), false, 8*1024*1024,
                       CONSTS::ACCESS_MODE_READER, 8*1024*1024, 1, 0);
-    EXPECT_EQ(dmm->IsValid(), true);
+    EXPECT_EQ(dmm->IsValid(), false);
 
     DestroyDMM();
 

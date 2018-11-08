@@ -141,9 +141,9 @@ TEST_F(EvictionTest, bucket_256_test)
             EXPECT_EQ(rval, MBError::SUCCESS);
         }
     }
-    TearDown();
 }
 
+#ifdef __SHM_QUEUE__
 TEST_F(EvictionTest, different_queue_size_test)
 {
     mbconf.options = CONSTS::ACCESS_MODE_WRITER | CONSTS::ASYNC_WRITER_MODE;
@@ -153,9 +153,8 @@ TEST_F(EvictionTest, different_queue_size_test)
     mbconf.options = CONSTS::ACCESS_MODE_READER;
     mbconf.queue_size =  99;
     db = new DB(mbconf);
-    //  This should succeed with a different queue size since it is ignored unless we are the writer
-    assert(db->is_open());
-    TearDown();
+    assert(!db->is_open());
 }
+#endif
 
 }

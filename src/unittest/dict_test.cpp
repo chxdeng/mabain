@@ -64,7 +64,8 @@ public:
         if(init_header) {
             EXPECT_EQ(dict->Init(0), MBError::SUCCESS);
         }
-        EXPECT_EQ(dict->Status(), MBError::SUCCESS);
+        if(init_header) EXPECT_EQ(dict->Status(), MBError::SUCCESS);
+        else            EXPECT_EQ(MBError::NOT_INITIALIZED, dict->Status());
         header = dict->GetHeaderPtr();
         EXPECT_EQ(header != NULL, true);
     }
@@ -116,6 +117,7 @@ TEST_F(DictTest, Constructor_test)
     } catch (int err) {
         rval = err;
     }
+
     EXPECT_EQ(rval, MBError::INVALID_SIZE);
 
     rval = MBError::SUCCESS;
@@ -124,6 +126,7 @@ TEST_F(DictTest, Constructor_test)
     } catch (int err) {
         rval = err;
     }
+
     EXPECT_EQ(rval, MBError::INVALID_SIZE);
 
     InitDict(false, CONSTS::ACCESS_MODE_READER, 32*ONE_MEGA, 100);

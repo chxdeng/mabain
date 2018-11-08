@@ -88,6 +88,11 @@ DictMem::DictMem(const std::string &mbdir, bool init_header, size_t memsize,
                                                        hdr_size,
                                                        map_hdr,
                                                        create_hdr);
+    if(header_file == NULL)
+    {
+        std::cerr << "failed top open header file: " << mbdir + "_mabain_h\n";
+        return;
+    }
     header = (IndexHeader *) header_file->GetMapAddr();
     if(header == NULL)
         return;
@@ -117,6 +122,11 @@ DictMem::DictMem(const std::string &mbdir, bool init_header, size_t memsize,
     if(!(mode & CONSTS::ACCESS_MODE_WRITER))
     {
         node_size = NULL;
+        if(header->async_queue_size == 0)
+        {
+            std::cerr << "async_queue_size not set yet in header\n";
+            return;
+        }
         is_valid = true;
         return;
     }
@@ -254,7 +264,7 @@ void DictMem::UpdateTailEdge(EdgePtrs &edge_ptrs, int match_len, MBData &data,
         size_t edge_str_off = Get5BInteger(edge_ptrs.ptr);
         if(ReadData(data.node_buff, edge_len, edge_str_off + match_len - 1)
                    != edge_len)
-            throw (int) MBError::READ_ERROR;          
+            throw (int) MBError::READ_ERROR;
         new_key_first = data.node_buff[0];
 
         // Reserve the key buffer
@@ -332,7 +342,7 @@ int DictMem::InsertNode(EdgePtrs &edge_ptrs, int match_len,
     NodePtrs node_ptrs;
     EdgePtrs new_edge_ptrs;
     bool node_move;
-    uint8_t *node; 
+    uint8_t *node;
     bool map_new_sliding = false;
 
     // The new node has one edge. nt1 = nt - 1 = 0
@@ -635,7 +645,7 @@ bool DictMem::ReserveNode(int nt, size_t &offset, uint8_t* &ptr)
     if(free_lists->GetBufferByIndex(buf_index, offset))
     {
         ptr = node_ptr;
-        memset(ptr, 0, buf_size); 
+        memset(ptr, 0, buf_size);
         header->pending_index_buff_size -= buf_size;
         return true;
     }
@@ -644,7 +654,7 @@ bool DictMem::ReserveNode(int nt, size_t &offset, uint8_t* &ptr)
     {
         offset = free_lists->RemoveBufferByIndex(buf_index);
         ptr = node_ptr;
-        memset(ptr, 0, buf_size); 
+        memset(ptr, 0, buf_size);
         header->pending_index_buff_size -= buf_size;
         return true;
     }

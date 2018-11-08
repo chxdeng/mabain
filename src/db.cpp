@@ -33,6 +33,7 @@
 #include "async_writer.h"
 #include "mb_backup.h"
 #include "resource_pool.h"
+#include "drm_base.h"
 #include "util/shm_mutex.h"
 #include "util/utils.h"
 
@@ -183,33 +184,14 @@ int DB::ValidateConfig(MBConfig &config)
     return MBError::SUCCESS;
 }
 
-void DB::InitDB(MBConfig &config)
+void DB::PreCheckDB(const MBConfig &config, bool &init_header, bool &update_header)
 {
-    dict = NULL;
-    async_writer = NULL;
-
-    if(ValidateConfig(config) != MBError::SUCCESS)
-        return;
-
-    // save the configuration
-    memcpy(&dbConfig, &config, sizeof(MBConfig));
-    dbConfig.mbdir = NULL;
-
-    // If id not given, use thread ID
-    if(config.connect_id == 0)
-        config.connect_id = static_cast<uint32_t>(syscall(SYS_gettid));
-    identifier = config.connect_id;
-    mb_dir = std::string(config.mbdir);
-    if(mb_dir[mb_dir.length()-1] != '/')
-        mb_dir += "/";
-    options = config.options;
-
     if(config.options & CONSTS::ACCESS_MODE_WRITER)
-    { 
+    {
         std::string lock_file = mb_dir + "_lock";
         // internal check first
-        status = ResourcePool::getInstance().AddResourceByPath(lock_file, NULL);
-        if(status == MBError::SUCCESS)
+        int ret = ResourcePool::getInstance().AddResourceByPath(lock_file, NULL);
+        if(ret == MBError::SUCCESS)
         {
             if(!(config.options & CONSTS::MEMORY_ONLY_MODE))
             {
@@ -231,7 +213,6 @@ void DB::InitDB(MBConfig &config)
         }
     }
 
-    bool init_header = false;
     if(config.options & CONSTS::MEMORY_ONLY_MODE)
     {
         if(config.options & CONSTS::ACCESS_MODE_WRITER)
@@ -271,23 +252,35 @@ void DB::InitDB(MBConfig &config)
                 status = MBError::NO_DB;
         }
     }
-    if(status == MBError::NO_DB)
+
+    // Check Header version
+    if(!init_header && !(config.options & CONSTS::MEMORY_ONLY_MODE))
     {
-        Logger::Log(LOG_LEVEL_ERROR, "database " + mb_dir + ": check failed");
-        return;
+        try {
+            DRMBase::ValidateHeaderFile(mb_dir + "_mabain_h", config.options,
+                                        config.queue_size * sizeof(AsyncNode), update_header);
+        } catch (int error) {
+            status = error;
+            return;
+        }
     }
+}
 
-    dict = new Dict(mb_dir, init_header, config.data_size, config.options,
-                    config.memcap_index, config.memcap_data,
-                    config.block_size_index, config.block_size_data,
-                    config.max_num_index_block, config.max_num_data_block,
-                    config.num_entry_per_bucket, config.queue_size);
-
-    if((config.options & CONSTS::ACCESS_MODE_WRITER) && init_header)
+void DB::PostDBUpdate(const MBConfig &config, bool init_header, bool update_header)
+{
+    if((config.options & CONSTS::ACCESS_MODE_WRITER) && (init_header || update_header))
     {
-        Logger::Log(LOG_LEVEL_INFO, "open a new db %s", mb_dir.c_str());
+        if(init_header)
+        {
+            Logger::Log(LOG_LEVEL_INFO, "opened a new db %s", mb_dir.c_str());
+        }
+        else if(update_header)
+        {
+            Logger::Log(LOG_LEVEL_INFO, "converted %s to version %d.%d.%d", mb_dir.c_str(),
+                        version[0], version[1], version[2]);
+        }
         IndexHeader *header = dict->GetHeaderPtr();
-        header->async_queue_size = config.queue_size;
+        if(header != NULL) header->async_queue_size = config.queue_size;
         dict->Init(identifier);
         dict->InitShmObjects();
     }
@@ -296,6 +289,7 @@ void DB::InitDB(MBConfig &config)
     {
         Logger::Log(LOG_LEVEL_ERROR, "failed to iniitialize dict: %s ",
                     MBError::get_error_str(dict->Status()));
+        status = dict->Status();
         return;
     }
 
@@ -308,6 +302,20 @@ void DB::InitDB(MBConfig &config)
             async_writer = new AsyncWriter(this);
     }
 
+#ifdef __SHM_QUEUE__
+    if(!(init_header || update_header))
+    {
+        IndexHeader *header = dict->GetHeaderPtr();
+        if(header != NULL && header->async_queue_size != (int) config.queue_size)
+        {
+            Logger::Log(LOG_LEVEL_ERROR, "async queue size not matching with header: %d %d",
+                        header->async_queue_size, (int) config.queue_size);
+            status = MBError::INVALID_SIZE;
+            return;
+        }
+    }
+#endif
+
     Logger::Log(LOG_LEVEL_INFO, "connector %u successfully opened DB %s for %s",
                 identifier, mb_dir.c_str(),
                 (config.options & CONSTS::ACCESS_MODE_WRITER) ? "writing":"reading");
@@ -319,6 +327,46 @@ void DB::InitDB(MBConfig &config)
         ResourceCollection rc(*this);
         rc.ExceptionRecovery();
     }
+}
+
+void DB::InitDB(MBConfig &config)
+{
+    dict = NULL;
+    async_writer = NULL;
+
+    if(ValidateConfig(config) != MBError::SUCCESS)
+        return;
+
+    // save the configuration
+    memcpy(&dbConfig, &config, sizeof(MBConfig));
+    dbConfig.mbdir = NULL;
+
+    // If id not given, use thread ID
+    if(config.connect_id == 0)
+        config.connect_id = static_cast<uint32_t>(syscall(SYS_gettid));
+    identifier = config.connect_id;
+    mb_dir = std::string(config.mbdir);
+    if(mb_dir[mb_dir.length()-1] != '/')
+        mb_dir += "/";
+    options = config.options;
+
+    bool init_header = false;
+    bool update_header = false; // true when header version is different from lib version
+    PreCheckDB(config, init_header, update_header);
+    if(MBError::NOT_INITIALIZED != status)
+    {
+        Logger::Log(LOG_LEVEL_ERROR, "database %s check failed: %s", mb_dir.c_str(),
+                    MBError::get_error_str(status));
+        return;
+    }
+
+    dict = new Dict(mb_dir, init_header, config.data_size, config.options,
+                    config.memcap_index, config.memcap_data,
+                    config.block_size_index, config.block_size_data,
+                    config.max_num_index_block, config.max_num_data_block,
+                    config.num_entry_per_bucket, config.queue_size);
+
+    PostDBUpdate(config, init_header, update_header);
 }
 
 int DB::Status() const
@@ -445,7 +493,8 @@ int DB::Add(const char* key, int len, MBData &mbdata, bool overwrite)
     }
     else
     {
-        rval = dict->SHMQ_Add(reinterpret_cast<const char*>(key), len, reinterpret_cast<const char*>(mbdata.buff), mbdata.data_len, overwrite);
+        rval = dict->SHMQ_Add(reinterpret_cast<const char*>(key), len,
+                     reinterpret_cast<const char*>(mbdata.buff), mbdata.data_len, overwrite);
     }
 #endif
 
@@ -478,7 +527,8 @@ int DB::Add(const char* key, int len, const char* data, int data_len, bool overw
     }
     else
     {
-        rval = dict->SHMQ_Add(reinterpret_cast<const char*>(key), len, reinterpret_cast<const char*>(mbdata.buff), mbdata.data_len, overwrite);
+        rval = dict->SHMQ_Add(reinterpret_cast<const char*>(key), len,
+                     reinterpret_cast<const char*>(mbdata.buff), mbdata.data_len, overwrite);
     }
 #endif
 
