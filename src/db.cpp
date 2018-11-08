@@ -274,7 +274,7 @@ void DB::PostDBUpdate(const MBConfig &config, bool init_header, bool update_head
         {
             Logger::Log(LOG_LEVEL_INFO, "opened a new db %s", mb_dir.c_str());
         }
-        else if(update_header)
+        else
         {
             Logger::Log(LOG_LEVEL_INFO, "converted %s to version %d.%d.%d", mb_dir.c_str(),
                         version[0], version[1], version[2]);
