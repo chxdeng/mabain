@@ -52,6 +52,7 @@ public:
         BUFFER_LOST = 20,
         THREAD_FAILED = 21,
         RC_SKIPPED = 22,
+        VERSION_MISMATCH = 23,
 
         // NO_DB should be the last enum.
         NO_DB

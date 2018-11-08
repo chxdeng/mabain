@@ -45,6 +45,7 @@ const char* MBError::error_str[] = {
     "buffer discarded", // buffer will be reclaimed by shrink
     "failed to create thread",
     "rc skipped",
+    "version mismatch",
 
     ///////////////////////////////////
     "DB not exist",

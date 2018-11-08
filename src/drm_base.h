@@ -136,7 +136,16 @@ public:
         return header;
     }
 
+    void PrintHeader(std::ostream &out_stream) const;
+
+    static void ValidateHeaderFile(const std::string &header_path, int mode, int queue_buff_size,
+                                   bool &update_header);
+
 protected:
+    static void ReadHeaderVersion(const std::string &header_path, uint16_t ver[4]);
+    static void ReadHeader(const std::string &header_path, uint8_t *buff, int buf_size);
+    static void WriteHeader(const std::string &header_path, uint8_t *buff, int queue_buff_size);
+
     IndexHeader *header;
     RollableFile *kv_file;
     FreeList *free_lists;
