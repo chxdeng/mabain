@@ -21,6 +21,7 @@
 #include "dict.h"
 #include "error.h"
 #include "async_writer.h"
+#include "./util/shm_mutex.h"
 
 #ifdef __SHM_QUEUE__
 

@@ -90,7 +90,7 @@ Dict::Dict(const std::string &mbdir, bool init_header, int datasize,
 #ifdef __SHM_QUEUE__
     // initialize shared memory queue
     char *hdr_ptr = (char *) header;
-    queue = (AsyncNode *) (hdr_ptr + RollableFile::page_size);
+    queue = reinterpret_cast<AsyncNode *>(hdr_ptr + RollableFile::page_size);
 #endif
 
     // Open data file

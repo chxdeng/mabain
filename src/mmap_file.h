@@ -50,7 +50,6 @@ public:
     void     Flush();
 
 private:
-    off_t file_size;
     bool mmap_file;
     size_t mmap_size;
     off_t mmap_start;

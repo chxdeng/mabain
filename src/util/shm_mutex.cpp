@@ -16,6 +16,7 @@
 
 // @author Changxue Deng <chadeng@cisco.com>
 
+#include <unistd.h>
 #include "shm_mutex.h"
 #include "../logger.h"
 #include "../error.h"
@@ -109,5 +110,24 @@ int InitShmCond(pthread_cond_t *cond)
 
     return MBError::SUCCESS;
 }
+
+#ifdef __APPLE__
+// pthread_mutex_timedlock is not supported in Mac OS.
+// Simple implementation using pthread_mutex_trylock
+#define MB_PTHREAD_MUTEX_TIMEDLOCK_SLEEP_INTERVAL 100L // in nano seconds
+int pthread_mutex_timedlock(pthread_mutex_t *mutex, const struct timespec *abs_timeout)
+{
+    int rval;
+    while(true)
+    {
+        rval = pthread_mutex_trylock(mutex);
+        if(rval != EBUSY) break;
+        if(time(0) >= abs_timeout->tv_sec) break;
+        nanosleep((const struct timespec[]){{0, MB_PTHREAD_MUTEX_TIMEDLOCK_SLEEP_INTERVAL}}, NULL);
+    }
+    if(rval == EBUSY) rval = ETIMEDOUT;
+    return rval;
+}
+#endif
 
 }
