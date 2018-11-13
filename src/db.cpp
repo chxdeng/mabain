@@ -343,7 +343,13 @@ void DB::InitDB(MBConfig &config)
 
     // If id not given, use thread ID
     if(config.connect_id == 0)
+    {
+#ifdef __APPLE__
+        config.connect_id = reinterpret_cast<uint64_t>(pthread_self()) & 0x7FFFFFFF;
+#else
         config.connect_id = static_cast<uint32_t>(syscall(SYS_gettid));
+#endif
+    }
     identifier = config.connect_id;
     mb_dir = std::string(config.mbdir);
     if(mb_dir[mb_dir.length()-1] != '/')

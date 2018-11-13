@@ -93,7 +93,7 @@ DictMem::DictMem(const std::string &mbdir, bool init_header, size_t memsize,
         std::cerr << "failed top open header file: " << mbdir + "_mabain_h\n";
         return;
     }
-    header = (IndexHeader *) header_file->GetMapAddr();
+    header = reinterpret_cast<IndexHeader *>(header_file->GetMapAddr());
     if(header == NULL)
         return;
 

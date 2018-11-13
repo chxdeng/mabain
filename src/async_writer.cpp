@@ -26,9 +26,7 @@
 #include "mb_rc.h"
 #include "integer_4b_5b.h"
 #include "dict.h"
-#ifdef __SHM_QUEUE__
 #include "./util/shm_mutex.h"
-#endif
 
 namespace mabain {
 
@@ -81,7 +79,7 @@ AsyncWriter::AsyncWriter(DB *db_ptr)
     if(header == NULL)
         throw (int) MBError::NOT_INITIALIZED;
     char *hdr_ptr = (char *) header;
-    queue = (AsyncNode *) (hdr_ptr + RollableFile::page_size);
+    queue = reinterpret_cast<AsyncNode *>(hdr_ptr + RollableFile::page_size);
     header->rc_flag.store(0, std::memory_order_release);
 #else
     queue = new AsyncNode[MB_MAX_NUM_SHM_QUEUE_NODE];
@@ -622,7 +620,7 @@ void* AsyncWriter::async_writer_thread()
                 is_rc_running = true;
 #endif
                 {
-                    int64_t *data_ptr = (int64_t *) node_ptr->data;
+                    int64_t *data_ptr = reinterpret_cast<int64_t *>(node_ptr->data);
                     min_index_size = data_ptr[0];
                     min_data_size  = data_ptr[1];
                     max_dbsize = data_ptr[2];
