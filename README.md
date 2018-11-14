@@ -26,6 +26,14 @@ the library DO NOT need to perform any locking on concurrent insertion and
 lookup in the multi-thread or multi-process reader/writer scenario. *(see
 Caveats below)*
 
+### Multi-Thread/Multi-Process Insertion/Update
+
+When using mabain only one writer is allowed. However, all reader threads/processes can
+perform DB insertion/update using asynchronous queue in shared memory if the writer
+has ASYNC_WRITER_MODE specified in the option when opening the DB. In this case, a separate
+thread in the writer process is started for internal DB operations. All DB writing
+operations are performed sequentially in this thread.
+
 ## Build and Install Mabain Library
 
 We now have two different build options. First is the traditional "Native
