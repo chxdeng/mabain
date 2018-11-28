@@ -628,7 +628,7 @@ int main(int argc, char *argv[])
         {
             if(++i >= argc)
                 usage(argv[0]);
-            index_blk_size = atoi(argv[i]);
+            data_blk_size = atoi(argv[i]);
         }
         else
             usage(argv[0]);

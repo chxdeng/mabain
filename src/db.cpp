@@ -674,7 +674,7 @@ int DB::CollectResource(int64_t min_index_rc_size, int64_t min_data_rc_size,
     }
 #else
     try {
-        if (async_writer == NULL && (options & CONSTS::ASYNC_WRITER_MODE))
+        if (async_writer == NULL && (options & CONSTS::ACCESS_MODE_WRITER))
         {
             ResourceCollection rc(*this);
             rc.ReclaimResource(min_index_rc_size, min_data_rc_size, max_dbsz, max_dbcnt);
