@@ -260,7 +260,8 @@ void ResourceCollection::CollectBuffers()
     if((rc_type & RESOURCE_COLLECTION_TYPE_DATA) &&
        (data_reorder_status != MBError::SUCCESS))
         return;
-
+dmm->ResetSlidingWindow();
+dict->ResetSlidingWindow();
     TraverseDB(RESOURCE_COLLECTION_PHASE_COLLECT);
 
     if(rc_type & RESOURCE_COLLECTION_TYPE_INDEX)
@@ -496,6 +497,8 @@ void ResourceCollection::ReorderBuffers()
     db_cnt = 0;
     edge_str_size = 0;
     node_cnt = 0;
+dmm->ResetSlidingWindow();
+dict->ResetSlidingWindow();
     TraverseDB(RESOURCE_COLLECTION_PHASE_REORDER);
 
     if(rc_type & RESOURCE_COLLECTION_TYPE_INDEX)

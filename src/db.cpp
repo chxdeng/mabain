@@ -159,8 +159,7 @@ int DB::ValidateConfig(MBConfig &config)
     }
     if(config.options & CONSTS::USE_SLIDING_WINDOW)
     {
-        std::cout << "sliding window support is deprecated\n";
-        config.options &= ~CONSTS::USE_SLIDING_WINDOW;
+        std::cout << "sliding window option is enabled\n";
     }
 
     if(config.block_size_index != 0 && (config.block_size_index % BLOCK_SIZE_ALIGN != 0))

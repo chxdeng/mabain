@@ -250,7 +250,7 @@ int RollableFile::Reserve(size_t &offset, int size, uint8_t* &ptr, bool map_new_
         }
         else if(map_new_sliding && offset >= sliding_start + sliding_size)
         {
-            ptr = NewSlidingMapAddr(order, offset, size);
+            ptr = NewSlidingMapAddr(offset, size);
             if(ptr != NULL)
             {
                 // Load the mmap starting offset to shared memory so that readers
@@ -263,7 +263,7 @@ int RollableFile::Reserve(size_t &offset, int size, uint8_t* &ptr, bool map_new_
     return rval;
 }
 
-uint8_t* RollableFile::NewSlidingMapAddr(size_t order, size_t offset, int size)
+uint8_t* RollableFile::NewSlidingMapAddr(size_t offset, int size)
 {
     if(sliding_addr != NULL)
     {
@@ -273,14 +273,7 @@ uint8_t* RollableFile::NewSlidingMapAddr(size_t order, size_t offset, int size)
         munmap(sliding_addr, sliding_size);
     }
 
-    if(sliding_start == 0)
-    {
-        sliding_start = offset;
-    }
-    else
-    {
-        sliding_start += sliding_size;
-    }
+    sliding_start = offset;
 
     // Check page alignment
     int page_alignment = sliding_start % RollableFile::page_size;
@@ -300,7 +293,7 @@ uint8_t* RollableFile::NewSlidingMapAddr(size_t order, size_t offset, int size)
          sliding_size = sliding_mem_size;
     }
 
-    order = sliding_start / block_size;
+    size_t order = sliding_start / block_size;
     sliding_addr = files[order]->MapFile(sliding_size, sliding_map_off, true);
     if(sliding_addr != NULL)
     {

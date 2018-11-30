@@ -59,7 +59,7 @@ public:
 private:
     int      OpenAndMapBlockFile(size_t block_order, bool create_file);
     int      CheckAndOpenFile(size_t block_order, bool create_file);
-    uint8_t* NewSlidingMapAddr(size_t order, size_t offset, int size);
+    uint8_t* NewSlidingMapAddr(size_t offset, int size);
     void*    NewReaderSlidingMap(size_t order);
 
     std::string path;
