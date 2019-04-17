@@ -142,6 +142,11 @@ int AsyncWriter::StopAsyncThread()
     {
         pthread_cond_signal(&queue[i].cond);
     }
+#else
+    for(int i = 0; i < header->async_queue_size; i++)
+    {
+        pthread_cond_signal(&queue[i].cond);
+    }
 #endif
 
     if(tid != 0)
