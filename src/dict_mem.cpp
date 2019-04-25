@@ -110,7 +110,11 @@ DictMem::DictMem(const std::string &mbdir, bool init_header, size_t memsize,
     }
     else
     {
-        memset(header, 0, sizeof(IndexHeader));
+        // Explicitly cast to void* because GCC 8 is (rightfully) upset that this is
+        // "writing to an object of type '...' with no trivial copy-assignment".
+        //
+        // This new warning is `-Werror=class-memaccess`.
+        memset(static_cast<void*>(header), 0, sizeof(IndexHeader));
         header->index_block_size = block_size;
     }
     kv_file = new RollableFile(mbdir + "_mabain_i",
