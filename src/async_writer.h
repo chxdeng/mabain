@@ -19,10 +19,10 @@
 #ifndef __ASYNC_WRITER_H__
 #define __ASYNC_WRITER_H__
 
+#include <mutex>
 #include <pthread.h>
 
 #include "db.h"
-//#include "mb_rc.h"
 #include "dict.h"
 #include "mb_backup.h"
 
@@ -62,8 +62,6 @@ typedef struct _AsyncNode
 class AsyncWriter
 {
 public:
-
-    AsyncWriter(DB *db_ptr);
     ~AsyncWriter();
 
 #ifndef __SHM_QUEUE__
@@ -80,7 +78,23 @@ public:
     int  StopAsyncThread();
     int  ProcessTask(int ntasks, bool rc_mode);
 
+    inline void WriterLock() {
+        writer_lock.lock();
+    }
+    inline void WriterUnlock() {
+        writer_lock.unlock();
+    }
+    inline int AddWithLock(const char *key, int len, MBData &mbdata, bool overwrite) {
+        writer_lock.lock();
+        int rval = dict->Add(reinterpret_cast<const uint8_t*>(key), len, mbdata, overwrite);
+        writer_lock.unlock();
+        return rval;
+    }
+    static AsyncWriter* CreateInstance(DB *db_ptr);
+    static AsyncWriter* GetInstance();
+
 private:
+    AsyncWriter(DB *db_ptr);
     static void *async_thread_wrapper(void *context);
     AsyncNode* AcquireSlot();
     int PrepareSlot(AsyncNode *node_ptr) const;
@@ -108,6 +122,9 @@ private:
 
     bool is_rc_running;
     char *rc_backup_dir;
+
+    std::mutex writer_lock;
+    static AsyncWriter *writer_instance;
 };
 
 }

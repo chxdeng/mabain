@@ -39,6 +39,13 @@ int Dict::SHMQ_Add(const char *key, int key_len, const char *data, int data_len,
     if(node_ptr == NULL)
         return MBError::MUTEX_ERROR;
 
+    if (node_ptr->in_use.load(std::memory_order_consume))
+    {
+        if(pthread_mutex_unlock(&node_ptr->mutex) != 0)
+            return MBError::MUTEX_ERROR;
+        return MBError::TRY_AGAIN;
+    }
+
     memcpy(node_ptr->key, key, key_len);
     memcpy(node_ptr->data, data, data_len);
     node_ptr->key_len = key_len;
@@ -122,24 +129,6 @@ AsyncNode* Dict::SHMQ_AcquireSlot() const
     {
         Logger::Log(LOG_LEVEL_ERROR, "shared memory mutex lock failed: %d", rval);
         return NULL;
-    }
-
-    while(node_ptr->in_use.load(std::memory_order_consume))
-    {
-        tm_exp.tv_sec += MB_ASYNC_SHM_LOCK_TMOUT;
-        rval =  pthread_cond_timedwait(&node_ptr->cond, &node_ptr->mutex, &tm_exp);
-        if(rval != 0)
-        {
-            Logger::Log(LOG_LEVEL_ERROR, "shared memory conditional wait failed: %d", rval);
-            if(rval == ETIMEDOUT)
-            {
-                 Logger::Log(LOG_LEVEL_INFO, "pthread_cond_timedwait timedout, "
-                             "check if async writer is running");
-            }
-            if((rval = pthread_mutex_unlock(&node_ptr->mutex)) != 0)
-                Logger::Log(LOG_LEVEL_ERROR, "shm mutex unlock failed: %d", rval);
-            return NULL;
-        }
     }
 
     return node_ptr;

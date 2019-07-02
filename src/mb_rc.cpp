@@ -68,11 +68,19 @@ int ResourceCollection::LRUEviction()
     if(prune_diff == 0)
         prune_diff = 1;
 
-    for(DB::iterator iter = db_ref.begin(false); iter != db_ref.end(); ++iter)
+    DB db_itr(db_ref);
+    for(DB::iterator iter = db_itr.begin(false); iter != db_itr.end(); ++iter)
     {
         if(CIRCULAR_PRUNE_DIFF(iter.value.bucket_index, header->eviction_bucket_index) < prune_diff)
         {
-            rval = dict->Remove((const uint8_t *)iter.key.data(), iter.key.size());
+            if (async_writer_ptr != NULL)
+            {
+                async_writer_ptr->WriterLock();
+                rval = dict->Remove((const uint8_t *)iter.key.data(), iter.key.size());
+                async_writer_ptr->WriterUnlock();
+            }
+            else
+                rval = dict->Remove((const uint8_t *)iter.key.data(), iter.key.size());
             if(rval != MBError::SUCCESS)
                 Logger::Log(LOG_LEVEL_DEBUG, "failed to run eviction %s", MBError::get_error_str(rval));
             else
@@ -260,8 +268,8 @@ void ResourceCollection::CollectBuffers()
     if((rc_type & RESOURCE_COLLECTION_TYPE_DATA) &&
        (data_reorder_status != MBError::SUCCESS))
         return;
-dmm->ResetSlidingWindow();
-dict->ResetSlidingWindow();
+    dmm->ResetSlidingWindow();
+    dict->ResetSlidingWindow();
     TraverseDB(RESOURCE_COLLECTION_PHASE_COLLECT);
 
     if(rc_type & RESOURCE_COLLECTION_TYPE_INDEX)
@@ -532,10 +540,13 @@ void ResourceCollection::ProcessRCTree()
 
     int count = 0;
     int rval;
-    for(DB::iterator iter = db_ref.begin(false, true); iter != db_ref.end(); ++iter)
+    DB db_itr(db_ref);
+    for(DB::iterator iter = db_itr.begin(false, true); iter != db_itr.end(); ++iter)
     {
         iter.value.options = 0;
+        async_writer_ptr->WriterLock();
         rval = dict->Add((const uint8_t *)iter.key.data(), iter.key.size(), iter.value, true);
+        async_writer_ptr->WriterUnlock();
         if(rval != MBError::SUCCESS)
             Logger::Log(LOG_LEVEL_WARN, "failed to add: %s", MBError::get_error_str(rval));
         if(count++ > RC_TASK_CHECK)
@@ -571,7 +582,7 @@ int ResourceCollection::ExceptionRecovery()
         Logger::Log(LOG_LEVEL_WARN, "previous rc was not completed successfully, retrying...");
         try {
             // This is a blocking call and should be called when writer starts up.
-            ReclaimResource(1, 1, MAX_6B_OFFSET, MAX_6B_OFFSET, NULL);
+            ReclaimResource(1, 1, MAX_6B_OFFSET, MAX_6B_OFFSET, AsyncWriter::GetInstance());
         } catch (int err) {
             if(err != MBError::RC_SKIPPED)
                 rval = err;

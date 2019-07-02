@@ -51,6 +51,19 @@ static void free_async_node(AsyncNode *node_ptr)
     node_ptr->type = MABAIN_ASYNC_TYPE_NONE;
 }
 
+AsyncWriter* AsyncWriter::writer_instance = NULL;
+
+AsyncWriter* AsyncWriter::CreateInstance(DB *db_ptr)
+{
+    writer_instance = new AsyncWriter(db_ptr);
+    return writer_instance;
+}
+
+AsyncWriter* AsyncWriter::GetInstance()
+{
+    return writer_instance;
+}
+
 AsyncWriter::AsyncWriter(DB *db_ptr)
                        : db(db_ptr),
                          tid(0),
@@ -381,7 +394,9 @@ int AsyncWriter::ProcessTask(int ntasks, bool rc_mode)
                     mbd.buff = (uint8_t *) node_ptr->data;
                     mbd.data_len = node_ptr->data_len;
                     try {
+                        writer_lock.lock();
                         rval = dict->Add((uint8_t *)node_ptr->key, node_ptr->key_len, mbd, node_ptr->overwrite);
+                        writer_lock.unlock();
                     } catch (int err) {
                         rval = err;
                         Logger::Log(LOG_LEVEL_ERROR, "dict->Add throws error %s",
@@ -403,7 +418,9 @@ int AsyncWriter::ProcessTask(int ntasks, bool rc_mode)
                     if(!rc_mode)
                     {
                         try {
+                            writer_lock.lock();
                             rval = dict->RemoveAll();
+                            writer_lock.unlock();
                         } catch (int err) {
                             Logger::Log(LOG_LEVEL_ERROR, "dict->Add throws error %s",
                                         MBError::get_error_str(err));
@@ -448,7 +465,6 @@ int AsyncWriter::ProcessTask(int ntasks, bool rc_mode)
 #endif
             free_async_node(node_ptr);
             node_ptr->in_use.store(false, std::memory_order_release);
-            pthread_cond_signal(&node_ptr->cond);
             mbd.Clear();
             count++;
         }
@@ -589,8 +605,10 @@ void* AsyncWriter::async_writer_thread()
                 mbd.buff = (uint8_t *) node_ptr->data;
                 mbd.data_len = node_ptr->data_len;
                 try {
+                    writer_lock.lock();
                     rval = dict->Add((uint8_t *)node_ptr->key, node_ptr->key_len, mbd,
                                      node_ptr->overwrite);
+                    writer_lock.unlock();
                 } catch (int err) {
                     Logger::Log(LOG_LEVEL_ERROR, "dict->Add throws error %s",
                                 MBError::get_error_str(err));
@@ -600,7 +618,9 @@ void* AsyncWriter::async_writer_thread()
             case MABAIN_ASYNC_TYPE_REMOVE:
                 mbd.options |= CONSTS::OPTION_FIND_AND_STORE_PARENT;
                 try {
+                    writer_lock.lock();
                     rval = dict->Remove((uint8_t *)node_ptr->key, node_ptr->key_len, mbd);
+                    writer_lock.unlock();
                 } catch (int err) {
                     Logger::Log(LOG_LEVEL_ERROR, "dict->Remmove throws error %s",
                                 MBError::get_error_str(err));
@@ -610,7 +630,9 @@ void* AsyncWriter::async_writer_thread()
                 break;
             case MABAIN_ASYNC_TYPE_REMOVE_ALL:
                 try {
+                    writer_lock.lock();
                     rval = dict->RemoveAll();
+                    writer_lock.unlock();
                 } catch (int err) {
                     Logger::Log(LOG_LEVEL_ERROR, "dict->RemoveAll throws error %s",
                                 MBError::get_error_str(err));
@@ -655,7 +677,6 @@ void* AsyncWriter::async_writer_thread()
 #endif
         free_async_node(node_ptr);
         node_ptr->in_use.store(false, std::memory_order_release);
-        pthread_cond_signal(&node_ptr->cond);
         if(pthread_mutex_unlock(&node_ptr->mutex) != 0)
         {
             Logger::Log(LOG_LEVEL_ERROR, "failed to unlock mutex");

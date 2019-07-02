@@ -40,7 +40,7 @@
 namespace mabain {
 
 // Current mabain version 1.2.0
-uint16_t version[4] = {1, 2, 0, 0};
+uint16_t version[4] = {1, 2, 1, 0};
 
 DB::~DB()
 {
@@ -298,7 +298,7 @@ void DB::PostDBUpdate(const MBConfig &config, bool init_header, bool update_head
     if(config.options & CONSTS::ACCESS_MODE_WRITER)
     {
         if(config.options & CONSTS::ASYNC_WRITER_MODE)
-            async_writer = new AsyncWriter(this);
+            async_writer = AsyncWriter::CreateInstance(this);
     }
 
 #ifdef __SHM_QUEUE__
@@ -384,6 +384,7 @@ DB::DB(const DB &db) : status(MBError::NOT_INITIALIZED),
 {
     MBConfig db_config = db.dbConfig;
     db_config.mbdir = db.mb_dir.c_str();
+    db_config.options = CONSTS::ACCESS_MODE_READER;
     InitDB(db_config);
 }
 
@@ -500,6 +501,16 @@ int DB::Add(const char* key, int len, MBData &mbdata, bool overwrite)
     {
         rval = dict->SHMQ_Add(reinterpret_cast<const char*>(key), len,
                      reinterpret_cast<const char*>(mbdata.buff), mbdata.data_len, overwrite);
+        if (rval == MBError::TRY_AGAIN)
+        {
+            AsyncWriter *awr = AsyncWriter::GetInstance();
+            if (awr)
+            {
+                rval = awr->AddWithLock(key, len, mbdata, overwrite);
+                if (rval == MBError::IN_DICT)
+                    rval = MBError::SUCCESS;
+            }
+        }
     }
 #endif
 
@@ -508,35 +519,11 @@ int DB::Add(const char* key, int len, MBData &mbdata, bool overwrite)
 
 int DB::Add(const char* key, int len, const char* data, int data_len, bool overwrite)
 {
-    if(key == NULL || data == NULL)
-        return MBError::INVALID_ARG;
-    if(status != MBError::SUCCESS)
-        return MBError::NOT_INITIALIZED;
-
-#ifndef __SHM_QUEUE__
-    if(async_writer != NULL)
-        return async_writer->Add(key, len, data, data_len, overwrite);
-#endif
-
     MBData mbdata;
     mbdata.data_len = data_len;
     mbdata.buff = (uint8_t*) data;
 
-    int rval = MBError::SUCCESS;
-#ifndef __SHM_QUEUE__
-    rval = dict->Add(reinterpret_cast<const uint8_t*>(key), len, mbdata, overwrite);
-#else
-    if (async_writer == NULL && (options & CONSTS::ACCESS_MODE_WRITER))
-    {
-        rval = dict->Add(reinterpret_cast<const uint8_t*>(key), len, mbdata, overwrite);
-    }
-    else
-    {
-        rval = dict->SHMQ_Add(reinterpret_cast<const char*>(key), len,
-                     reinterpret_cast<const char*>(mbdata.buff), mbdata.data_len, overwrite);
-    }
-#endif
-
+    int rval = Add(key, len, mbdata, overwrite);
     mbdata.buff = NULL;
     return rval;
 }
