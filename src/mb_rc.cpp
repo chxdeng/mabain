@@ -25,8 +25,8 @@
 
 #define MAX_PRUNE_COUNT      3                 // maximum lru eviction attempts
 #define NUM_ASYNC_TASK       10                // number of other tasks to be checked during eviction
-#define PRUNE_TASK_CHECK     100               // every Xth eviction check Y number of other tasks
-#define RC_TASK_CHECK        100               // every Xth async task try to reclaim resources
+#define PRUNE_TASK_CHECK     10               // every Xth eviction check Y number of other tasks
+#define RC_TASK_CHECK        10               // every Xth async task try to reclaim resources
 #define MIN_RC_OFFSET_GAP    1ULL*1024*1024    // 1M
 
 
@@ -44,7 +44,7 @@ ResourceCollection::~ResourceCollection()
 
 #define CIRCULAR_INDEX_DIFF(x, y) ((x)>(y) ? ((x)-(y)) : (0xFFFF-(y)+(x)))
 #define CIRCULAR_PRUNE_DIFF(x, y) ((x)>=(y) ? ((x)-(y)) : (0xFFFF-(y)+(x)))
-int ResourceCollection::LRUEviction()
+int ResourceCollection::LRUEviction(int64_t max_dbsz, int64_t max_dbcnt)
 {
     int64_t pruned = 0;
     int64_t count = 0;
@@ -54,19 +54,13 @@ int ResourceCollection::LRUEviction()
 
     uint16_t index_diff = CIRCULAR_INDEX_DIFF(header->eviction_bucket_index,
                               (header->num_update/header->entry_per_bucket) % 0xFFFF);
-    uint16_t prune_diff = 0xFFFF - index_diff;
-    if(index_diff < 655)
-        prune_diff = uint16_t(prune_diff * 0.35); // prune 35%
-    else if(index_diff < 3276)
-        prune_diff = uint16_t(prune_diff * 0.30); // prune 30%
-    else if(index_diff < 6554)
-        prune_diff = uint16_t(prune_diff * 0.25); // prune 25%
-    else if(index_diff < 9830)
-        prune_diff = uint16_t(prune_diff * 0.20); // prune 20%
-    else
-        prune_diff = uint16_t(prune_diff * 0.15); // prune 15%
-    if(prune_diff == 0)
-        prune_diff = 1;
+    double ratio = 0.15;
+    int64_t tot_size = (int64_t) (header->m_data_offset + header->m_index_offset);
+    if (tot_size > max_dbsz)
+        ratio = (tot_size - max_dbsz) * 1.2 / max_dbsz;
+    else if (header->count > max_dbcnt)
+        ratio = (header->count - max_dbcnt) * 1.2 / max_dbcnt;
+    uint16_t prune_diff = uint16_t((0xFFFF - index_diff) * ratio);
 
     DB db_itr(db_ref);
     for(DB::iterator iter = db_itr.begin(false); iter != db_itr.end(); ++iter)
@@ -75,9 +69,7 @@ int ResourceCollection::LRUEviction()
         {
             if (async_writer_ptr != NULL)
             {
-                async_writer_ptr->WriterLock();
                 rval = dict->Remove((const uint8_t *)iter.key.data(), iter.key.size());
-                async_writer_ptr->WriterUnlock();
             }
             else
                 rval = dict->Remove((const uint8_t *)iter.key.data(), iter.key.size());
@@ -138,7 +130,7 @@ void ResourceCollection::ReclaimResource(int64_t min_index_size,
         int cnt = 0;
         gettimeofday(&start,NULL);
         while(cnt < MAX_PRUNE_COUNT) {
-            if(LRUEviction() != MBError::TRY_AGAIN)
+            if(LRUEviction(max_dbsz, max_dbcnt) != MBError::TRY_AGAIN)
                 break;
             cnt++;
         }
@@ -505,8 +497,8 @@ void ResourceCollection::ReorderBuffers()
     db_cnt = 0;
     edge_str_size = 0;
     node_cnt = 0;
-dmm->ResetSlidingWindow();
-dict->ResetSlidingWindow();
+    dmm->ResetSlidingWindow();
+    dict->ResetSlidingWindow();
     TraverseDB(RESOURCE_COLLECTION_PHASE_REORDER);
 
     if(rc_type & RESOURCE_COLLECTION_TYPE_INDEX)
@@ -544,9 +536,7 @@ void ResourceCollection::ProcessRCTree()
     for(DB::iterator iter = db_itr.begin(false, true); iter != db_itr.end(); ++iter)
     {
         iter.value.options = 0;
-        async_writer_ptr->WriterLock();
         rval = dict->Add((const uint8_t *)iter.key.data(), iter.key.size(), iter.value, true);
-        async_writer_ptr->WriterUnlock();
         if(rval != MBError::SUCCESS)
             Logger::Log(LOG_LEVEL_WARN, "failed to add: %s", MBError::get_error_str(rval));
         if(count++ > RC_TASK_CHECK)
@@ -582,7 +572,7 @@ int ResourceCollection::ExceptionRecovery()
         Logger::Log(LOG_LEVEL_WARN, "previous rc was not completed successfully, retrying...");
         try {
             // This is a blocking call and should be called when writer starts up.
-            ReclaimResource(1, 1, MAX_6B_OFFSET, MAX_6B_OFFSET, AsyncWriter::GetInstance());
+            ReclaimResource(1, 1, MAX_6B_OFFSET, MAX_6B_OFFSET, NULL);
         } catch (int err) {
             if(err != MBError::RC_SKIPPED)
                 rval = err;

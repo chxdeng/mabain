@@ -394,9 +394,7 @@ int AsyncWriter::ProcessTask(int ntasks, bool rc_mode)
                     mbd.buff = (uint8_t *) node_ptr->data;
                     mbd.data_len = node_ptr->data_len;
                     try {
-                        writer_lock.lock();
                         rval = dict->Add((uint8_t *)node_ptr->key, node_ptr->key_len, mbd, node_ptr->overwrite);
-                        writer_lock.unlock();
                     } catch (int err) {
                         rval = err;
                         Logger::Log(LOG_LEVEL_ERROR, "dict->Add throws error %s",
@@ -418,9 +416,7 @@ int AsyncWriter::ProcessTask(int ntasks, bool rc_mode)
                     if(!rc_mode)
                     {
                         try {
-                            writer_lock.lock();
                             rval = dict->RemoveAll();
-                            writer_lock.unlock();
                         } catch (int err) {
                             Logger::Log(LOG_LEVEL_ERROR, "dict->Add throws error %s",
                                         MBError::get_error_str(err));
@@ -474,6 +470,7 @@ int AsyncWriter::ProcessTask(int ntasks, bool rc_mode)
             count = ntasks;
         }
 
+        pthread_cond_broadcast(&node_ptr->cond);
         if(pthread_mutex_unlock(&node_ptr->mutex) != 0)
         {
             Logger::Log(LOG_LEVEL_ERROR, "failed to unlock mutex");
@@ -528,6 +525,11 @@ void* AsyncWriter::async_writer_thread()
 #endif
 
     Logger::Log(LOG_LEVEL_INFO, "async writer started");
+    ResourceCollection rc(*db);
+    writer_lock.lock();
+    rc.ExceptionRecovery();
+    writer_lock.unlock();
+
     while(true)
     {
 #ifdef __SHM_QUEUE__
@@ -677,6 +679,7 @@ void* AsyncWriter::async_writer_thread()
 #endif
         free_async_node(node_ptr);
         node_ptr->in_use.store(false, std::memory_order_release);
+        pthread_cond_broadcast(&node_ptr->cond);
         if(pthread_mutex_unlock(&node_ptr->mutex) != 0)
         {
             Logger::Log(LOG_LEVEL_ERROR, "failed to unlock mutex");
@@ -698,6 +701,7 @@ void* AsyncWriter::async_writer_thread()
 #endif
         {
             rval = MBError::SUCCESS;
+            writer_lock.lock();
             try {
                 ResourceCollection rc = ResourceCollection(*db);
                 rc.ReclaimResource(min_index_size, min_data_size, max_dbsize, max_dbcount, this);
@@ -707,6 +711,7 @@ void* AsyncWriter::async_writer_thread()
                 else
                     rval = error;
             }
+            writer_lock.unlock();
 
 #ifdef __SHM_QUEUE__
             header->rc_flag.store(0, std::memory_order_release);
@@ -738,6 +743,20 @@ void* AsyncWriter::async_thread_wrapper(void *context)
 {
     AsyncWriter *instance_ptr = static_cast<AsyncWriter *>(context);
     return instance_ptr->async_writer_thread();
+}
+
+int AsyncWriter::AddWithLock(const char *key, int len, MBData &mbdata, bool overwrite)
+{
+    if (header->rc_flag.load(std::memory_order_relaxed))
+        return MBError::TRY_AGAIN;
+    using Ms = std::chrono::milliseconds;
+    if (writer_lock.try_lock_for(Ms(1))) {
+        int rval = dict->Add(reinterpret_cast<const uint8_t*>(key), len, mbdata, overwrite);
+        writer_lock.unlock();
+        return rval;
+    }
+
+    return MBError::TRY_AGAIN;
 }
 
 }

@@ -56,7 +56,7 @@ private:
     void Finish();
     bool MoveIndexBuffer(int phase, size_t &offset_src, int size);
     bool MoveDataBuffer(int phase, size_t &offset_src, int size);
-    int  LRUEviction();
+    int  LRUEviction(int64_t max_dbsz, int64_t max_dbcnt);
     void ProcessRCTree();
 
     int     rc_type;

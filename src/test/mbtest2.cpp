@@ -22,14 +22,12 @@ static void* run_mb_test(void *arg);
 
 static void* TestThread(void *arg)
 {
-    DB *dbw = (DB *) arg;
     mbconf.options = CONSTS::ReaderOptions();
     DB db(mbconf);
     if(!db.is_open()) {
         std::cerr << "failed tp open db\n";
         abort();
     }
-    assert(db.SetAsyncWriterPtr(dbw) == MBError::SUCCESS);
     assert(db.AsyncWriterEnabled());
     	
 
@@ -62,7 +60,6 @@ static void* TestThread(void *arg)
         usleep(1);
     }    
 
-    assert(db.UnsetAsyncWriterPtr(dbw) == MBError::SUCCESS);
     db.Close();
     return NULL;
 }
@@ -96,6 +93,7 @@ static void* run_mb_test(void *arg)
     mbconf.block_size_data = 32*1024*1024;
     mbconf.memcap_index = 128LL*1024*1024;
     mbconf.memcap_data = 128LL*1024*1024;
+    mbconf.num_entry_per_bucket = 500;
 
     int options = CONSTS::WriterOptions() | CONSTS::ASYNC_WRITER_MODE;
     mbconf.options = options;
@@ -118,7 +116,7 @@ static void* run_mb_test(void *arg)
     int sleep_time;
     while(!stop_processing) {
 	std::cout << "Running rc... " << db->Count() <<"\n";
-        db->CollectResource(8*1024*1024LL, 8*1024*1024LL, 1000000000000, 3000000);
+        db->CollectResource(32*1024*1024LL, 32*1024*1024LL, 134217728LL, 300000000000);
 
 	sleep_time = (rand() % 10) + 1;
 	sleep(sleep_time);

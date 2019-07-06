@@ -123,17 +123,21 @@ static void* AddThread(void *arg)
     TestKey tkey_sha1(MABAIN_TEST_KEY_TYPE_SHA_128);
     TestKey tkey_sha2(MABAIN_TEST_KEY_TYPE_SHA_256);
     std::string keystr;
+    int rval;
 
     for(int i = 0; i < num; i++) {
         key = key_high.fetch_add(1, std::memory_order_release);
         keystr = tkey_int.get_key(key);
-        assert(db.Add(keystr, keystr) == MBError::SUCCESS);
+        rval = db.Add(keystr, keystr);
+        assert(rval == MBError::SUCCESS || rval == MBError::TRY_AGAIN);
 
         keystr = tkey_sha1.get_key(key);
-        assert(db.Add(keystr, keystr) == MBError::SUCCESS);
+        rval = db.Add(keystr, keystr);
+        assert(rval == MBError::SUCCESS || rval == MBError::TRY_AGAIN);
 
         keystr = tkey_sha2.get_key(key);
-        assert(db.Add(keystr, keystr) == MBError::SUCCESS);
+        rval = db.Add(keystr, keystr);
+        assert(rval == MBError::SUCCESS || rval == MBError::TRY_AGAIN);
     }
     db.Close();
     return NULL;

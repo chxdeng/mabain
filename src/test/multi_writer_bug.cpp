@@ -74,19 +74,22 @@ void thread_test()
     TestKey tkey_int(MABAIN_TEST_KEY_TYPE_INT);
     std::string keystr;
     MBData mbd;
+    int cnt = 0;
     std::cout<<"===========\n";
     for (int i = 0; i < num; i++) {
         keystr = tkey_int.get_key(i);
-        if(db->Find(keystr, mbd) != MBError::SUCCESS)
-            assert(db->Add(keystr, keystr) == MBError::SUCCESS);
+        if(db->Find(keystr, mbd) != MBError::SUCCESS) {
+            if (db->Add(keystr, keystr) != MBError::SUCCESS) cnt++;
+        }
     }
+    std::cout<<"DDD "<<cnt<<"\n";
     std::cout<<"===========\n";
     delete db;
 }
 
 int main()
 {
-    int nthread = 16;
+    int nthread = 32;
     std::thread thr[256];
     assert(nthread <= 256);
 

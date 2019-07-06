@@ -17,6 +17,7 @@
 // @author Changxue Deng <chadeng@cisco.com>
 
 #include <pthread.h>
+#include <sys/time.h>
 
 #include "dict.h"
 #include "error.h"
@@ -41,9 +42,20 @@ int Dict::SHMQ_Add(const char *key, int key_len, const char *data, int data_len,
 
     if (node_ptr->in_use.load(std::memory_order_consume))
     {
-        if(pthread_mutex_unlock(&node_ptr->mutex) != 0)
-            return MBError::MUTEX_ERROR;
-        return MBError::TRY_AGAIN;
+        struct timeval curr;
+        struct timespec tm_exp;
+        gettimeofday(&curr, NULL);
+        tm_exp.tv_nsec = (curr.tv_usec + 100) * 1000;
+        tm_exp.tv_sec = curr.tv_sec + tm_exp.tv_nsec / 1000000000L;
+        tm_exp.tv_nsec %= 1000000000L;
+
+        pthread_cond_timedwait(&node_ptr->cond, &node_ptr->mutex, &tm_exp);
+        if (node_ptr->in_use.load(std::memory_order_consume)) 
+        {
+            if(pthread_mutex_unlock(&node_ptr->mutex) != 0)
+                return MBError::MUTEX_ERROR;
+            return MBError::TRY_AGAIN;
+        }
     }
 
     memcpy(node_ptr->key, key, key_len);

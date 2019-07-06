@@ -322,9 +322,12 @@ void DB::PostDBUpdate(const MBConfig &config, bool init_header, bool update_head
 
     if(config.options & CONSTS::ACCESS_MODE_WRITER)
     {
-        // Run rc exception recovery
-        ResourceCollection rc(*this);
-        rc.ExceptionRecovery();
+        if(!(config.options & CONSTS::ASYNC_WRITER_MODE))
+        {
+            // Run rc exception recovery
+            ResourceCollection rc(*this);
+            rc.ExceptionRecovery();
+        }
     }
 }
 
@@ -499,17 +502,20 @@ int DB::Add(const char* key, int len, MBData &mbdata, bool overwrite)
     }
     else
     {
-        rval = dict->SHMQ_Add(reinterpret_cast<const char*>(key), len,
-                     reinterpret_cast<const char*>(mbdata.buff), mbdata.data_len, overwrite);
+        AsyncWriter *awr = AsyncWriter::GetInstance();
+        if (awr)
+        {
+            rval = awr->AddWithLock(key, len, mbdata, overwrite);
+            if (!overwrite && rval == MBError::IN_DICT)
+                rval = MBError::SUCCESS;
+        }
+        else
+            rval = MBError::TRY_AGAIN;
+
         if (rval == MBError::TRY_AGAIN)
         {
-            AsyncWriter *awr = AsyncWriter::GetInstance();
-            if (awr)
-            {
-                rval = awr->AddWithLock(key, len, mbdata, overwrite);
-                if (rval == MBError::IN_DICT)
-                    rval = MBError::SUCCESS;
-            }
+            rval = dict->SHMQ_Add(reinterpret_cast<const char*>(key), len,
+                         reinterpret_cast<const char*>(mbdata.buff), mbdata.data_len, overwrite);
         }
     }
 #endif

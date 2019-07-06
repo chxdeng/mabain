@@ -25,6 +25,7 @@
 #include "db.h"
 #include "dict.h"
 #include "mb_backup.h"
+#include "error.h"
 
 namespace mabain {
 
@@ -77,19 +78,8 @@ public:
 
     int  StopAsyncThread();
     int  ProcessTask(int ntasks, bool rc_mode);
+    int  AddWithLock(const char *key, int len, MBData &mbdata, bool overwrite);
 
-    inline void WriterLock() {
-        writer_lock.lock();
-    }
-    inline void WriterUnlock() {
-        writer_lock.unlock();
-    }
-    inline int AddWithLock(const char *key, int len, MBData &mbdata, bool overwrite) {
-        writer_lock.lock();
-        int rval = dict->Add(reinterpret_cast<const uint8_t*>(key), len, mbdata, overwrite);
-        writer_lock.unlock();
-        return rval;
-    }
     static AsyncWriter* CreateInstance(DB *db_ptr);
     static AsyncWriter* GetInstance();
 
@@ -123,7 +113,7 @@ private:
     bool is_rc_running;
     char *rc_backup_dir;
 
-    std::mutex writer_lock;
+    std::timed_mutex writer_lock;
     static AsyncWriter *writer_instance;
 };
 
