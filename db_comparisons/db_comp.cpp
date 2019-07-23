@@ -116,18 +116,19 @@ static void InitTestDir()
     if(system(cmd.c_str()) != 0) {
     }
 
+    std::string db_dir_tmp;
 #ifdef LEVEL_DB
     std::cout << "===== using leveldb for testing\n";
-    std::string db_dir_tmp = std::string(db_dir) + "/leveldb/";
+    db_dir_tmp = std::string(db_dir) + "/leveldb/";
 #elif KYOTO_CABINET
     std::cout << "===== using kyotocabinet for testing\n";
-    std::string db_dir_tmp = std::string(db_dir) + "/kyotocabinet/";
+    db_dir_tmp = std::string(db_dir) + "/kyotocabinet/";
 #elif LMDB
     std::cout << "===== using lmdb for testing\n";
-    std::string db_dir_tmp = std::string(db_dir) + "/lmdb/";
+    db_dir_tmp = std::string(db_dir) + "/lmdb/";
 #elif MABAIN
     std::cout << "===== using mabain for testing\n";
-    std::string db_dir_tmp = std::string(db_dir) + "/mabain/";
+    db_dir_tmp = std::string(db_dir) + "/mabain/";
 #endif
     cmd = std::string("mkdir -p ") + db_dir_tmp;
     if(system(cmd.c_str()) != 0) {

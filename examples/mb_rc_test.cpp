@@ -30,7 +30,7 @@ using namespace mabain;
 
 #define DB_SIZE 128ULL*1024*1024
 
-static int max_key = 10000000;
+static int max_key = 1000000;
 static std::atomic<int> write_index;
 static bool stop_processing = false;
 static std::string mbdir = "/var/tmp/mabain_test/";
@@ -57,8 +57,6 @@ static void* insert_thread(void *arg)
     DB *db_r = new DB(mbdir.c_str(), CONSTS::ReaderOptions(), 128LL*1024*1024, 128LL*1024*1024);
     // If a reader wants to perform DB update, the async writer pointer must be set.
     assert(db_r->is_open());
-    assert(db_r->SetAsyncWriterPtr((DB *) arg) == MBError::SUCCESS);
-    assert(db_r->AsyncWriterEnabled());
 
     while(!stop_processing) {
         curr_key = write_index.fetch_add(1, std::memory_order_release);
@@ -72,7 +70,6 @@ static void* insert_thread(void *arg)
     }
 
     // Reader must unregister the async writer pointer
-    assert(db_r->UnsetAsyncWriterPtr((DB *) arg) == MBError::SUCCESS);
     db_r->Close();
     delete db_r;
     return NULL;
