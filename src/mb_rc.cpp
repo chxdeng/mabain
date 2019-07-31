@@ -57,9 +57,10 @@ int ResourceCollection::LRUEviction(int64_t max_dbsz, int64_t max_dbcnt)
     double ratio = 0.15;
     int64_t tot_size = (int64_t) (header->m_data_offset + header->m_index_offset);
     if (tot_size > max_dbsz)
-        ratio = (tot_size - max_dbsz) * 1.2 / max_dbsz;
+        ratio = (tot_size - max_dbsz) * 0.88 / max_dbsz;
     else if (header->count > max_dbcnt)
-        ratio = (header->count - max_dbcnt) * 1.2 / max_dbcnt;
+        ratio = (header->count - max_dbcnt) * 0.88 / max_dbcnt;
+    if (ratio > 0.5) ratio = 0.5;
     uint16_t prune_diff = uint16_t((0xFFFF - index_diff) * ratio);
 
     DB db_itr(db_ref);

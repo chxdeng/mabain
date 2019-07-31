@@ -114,7 +114,10 @@ TEST_F(EvictionTest, bucket_256_test)
     for(int i = 0; i < num; i++) {
         key = tkey.get_key(i);
         rval = db->Find(key, mbd);
-        EXPECT_EQ(rval, MBError::NOT_EXIST);
+        if (i < 4864)
+            EXPECT_EQ(rval, MBError::NOT_EXIST);
+        else
+            EXPECT_EQ(rval, MBError::SUCCESS);
     }
 
     Insert(num, 1000);
@@ -131,7 +134,7 @@ TEST_F(EvictionTest, bucket_256_test)
     for(int i = entry_per_bucket; i < num; i++) {
         key = tkey.get_key(i);
         rval = db->Find(key, mbd);
-        if(i < 10000) {
+        if(i < 7680) {
             EXPECT_EQ(rval, MBError::NOT_EXIST);
         } else {
             EXPECT_EQ(rval, MBError::SUCCESS);
