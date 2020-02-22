@@ -44,7 +44,7 @@ typedef struct _MBConfig
     int options;
     size_t memcap_index;
     size_t memcap_data;
-    int data_size;    
+    int data_size;
     uint32_t connect_id;
     uint32_t block_size_index;
     uint32_t block_size_data;
@@ -55,6 +55,7 @@ typedef struct _MBConfig
     // All entries in the oldest buckets will be pruned.
     int num_entry_per_bucket;
     uint32_t queue_size;
+    const char *queue_dir;
 } MBConfig;
 
 // Database handle class
@@ -153,9 +154,6 @@ public:
                         int64_t max_dbsiz = MAX_6B_OFFSET, int64_t max_dbcnt = MAX_6B_OFFSET);
 
     // Multi-thread update using async thread
-    // FOR THIS TO WORK, WRITER MUST BE THE LAST ONE TO CLOSE HANDLE.
-    int  SetAsyncWriterPtr(DB *db_writer);
-    int  UnsetAsyncWriterPtr(DB *db_writer);
     bool AsyncWriterEnabled() const;
     bool AsyncWriterBusy() const;
 

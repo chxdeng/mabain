@@ -86,7 +86,6 @@ public:
     inline size_t GetRootOffset() const;
     void ClearMem() const;
     const int* GetNodeSizePtr() const;
-    void ResetSlidingWindow() const;
 
     void InitLockFreePtr(LockFree *lf);
 

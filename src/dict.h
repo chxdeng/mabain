@@ -27,6 +27,8 @@
 #include "rollable_file.h"
 #include "mb_data.h"
 #include "lock_free.h"
+#include "shm_queue_mgr.h"
+#include "async_writer.h"
 
 namespace mabain {
 
@@ -34,6 +36,8 @@ namespace mabain {
 struct _AsyncNode;
 typedef struct _AsyncNode AsyncNode;
 #endif
+struct _shm_lock_and_queue;
+typedef struct _shm_lock_and_queue shm_lock_and_queue;
 
 // dictionary class
 // This is the work horse class for basic db operations (add, find and remove).
@@ -44,7 +48,8 @@ public:
          int db_options, size_t memsize_index, size_t memsize_data,
          uint32_t block_sz_index, uint32_t block_sz_data,
          int max_num_index_blk, int max_num_data_blk,
-         int64_t entry_per_bucket, uint32_t queue_size);
+         int64_t entry_per_bucket, uint32_t queue_size,
+         const char *queue_dir);
     virtual ~Dict();
     void Destroy();
 
@@ -105,11 +110,11 @@ public:
     // Shared memory objects
     int InitShmObjects();
     pthread_rwlock_t* GetShmLockPtrs() const;
+    AsyncNode* GetAsyncQueuePtr() const;
 
     void UpdateNumReader(int delta) const;
     int  UpdateNumWriter(int delta) const;
 
-    void ResetSlidingWindow() const;
     void Flush() const;
     int  ExceptionRecovery();
 
@@ -141,6 +146,7 @@ private:
     size_t reader_rc_off;
 #ifdef __SHM_QUEUE__
     AsyncNode *queue;
+    shm_lock_and_queue *slaq;
 #endif
 };
 

@@ -48,7 +48,8 @@ Dict::Dict(const std::string &mbdir, bool init_header, int datasize,
            int db_options, size_t memsize_index, size_t memsize_data,
            uint32_t block_sz_idx, uint32_t block_sz_data,
            int max_num_index_blk, int max_num_data_blk,
-           int64_t entry_per_bucket, uint32_t queue_size)
+           int64_t entry_per_bucket, uint32_t queue_size,
+           const char *queue_dir)
          : options(db_options),
 #ifdef __SHM_QUEUE__
            mm(mbdir, init_header, memsize_index, db_options, block_sz_idx, max_num_index_blk, queue_size),
@@ -59,6 +60,7 @@ Dict::Dict(const std::string &mbdir, bool init_header, int datasize,
 {
     status = MBError::NOT_INITIALIZED;
     reader_rc_off = 0;
+    slaq = NULL;
 
     header = mm.GetHeaderPtr();
     if(header == NULL)
@@ -84,21 +86,20 @@ Dict::Dict(const std::string &mbdir, bool init_header, int datasize,
         header->data_block_size = block_sz_data;
     }
 
+    // initialize shared memory queue
+    ShmQueueMgr qmgr;
+    slaq = qmgr.CreateFile(header->shm_queue_id, queue_size, queue_dir);
+#ifdef __SHM_QUEUE__
+    queue = slaq->queue;
+#endif
     lfree.LockFreeInit(&header->lock_free, header, db_options);
     mm.InitLockFreePtr(&lfree);
-
-#ifdef __SHM_QUEUE__
-    // initialize shared memory queue
-    char *hdr_ptr = (char *) header;
-    queue = reinterpret_cast<AsyncNode *>(hdr_ptr + RollableFile::page_size);
-#endif
 
     // Open data file
     kv_file = new RollableFile(mbdir + "_mabain_d",
                                static_cast<size_t>(header->data_block_size),
                                memsize_data, db_options, max_num_data_blk);
 
-    kv_file->InitShmSlidingAddr(&header->shm_data_sliding_start);
     // If init_header is false, we can set the dict status to SUCCESS.
     // Otherwise, the status will be set in the Init.
     if(init_header)
@@ -124,8 +125,7 @@ Dict::Dict(const std::string &mbdir, bool init_header, int datasize,
                 std::cerr << "mabain count per bucket not match\n";
                 throw (int) MBError::INVALID_SIZE;
             }
-            mm.ResetSlidingWindow();
-            ResetSlidingWindow();
+
             free_lists = new FreeList(mbdir+"_dbfl", DATA_BUFFER_ALIGNMENT,
                                       NUM_DATA_BUFFER_RESERVE);
             if(mm.IsValid())
@@ -190,12 +190,6 @@ int Dict::Init(uint32_t id)
 
 void Dict::Destroy()
 {
-    if(options & CONSTS::ACCESS_MODE_WRITER)
-    {
-        mm.ResetSlidingWindow();
-        ResetSlidingWindow();
-    }
-
     mm.Destroy();
 
     if(free_lists != NULL)
@@ -1142,13 +1136,11 @@ int Dict::RemoveAll()
     }
 
     mm.ClearMem();
-    mm.ResetSlidingWindow();
 
     header->count = 0;
     header->m_data_offset = GetStartDataOffset();
     free_lists->Empty();
     header->pending_data_buff_size = 0;
-    ResetSlidingWindow();
 
     header->eviction_bucket_index = 0;
     header->num_update = 0;
@@ -1157,7 +1149,12 @@ int Dict::RemoveAll()
 
 pthread_rwlock_t* Dict::GetShmLockPtrs() const
 {
-    return &header->mb_rw_lock;
+    return &(slaq->lock);
+}
+
+AsyncNode* Dict::GetAsyncQueuePtr() const
+{
+    return slaq->queue;
 }
 
 int Dict::InitShmObjects()
@@ -1168,7 +1165,7 @@ int Dict::InitShmObjects()
     Logger::Log(LOG_LEVEL_INFO, "initializing shared memory objects");
 
 #ifdef __SHM_LOCK__
-    status = InitShmRWLock(&header->mb_rw_lock);
+    status = InitShmRWLock(&slaq->lock);
     if(status != MBError::SUCCESS)
         return status;
 #endif
@@ -1381,13 +1378,6 @@ DictMem* Dict::GetMM() const
 size_t Dict::GetStartDataOffset() const
 {
     return DATA_HEADER_SIZE;
-}
-
-void Dict::ResetSlidingWindow() const
-{
-    kv_file->ResetSlidingWindow();
-    if(header != NULL)
-        header->shm_data_sliding_start.store(0, std::memory_order_relaxed);
 }
 
 LockFree* Dict::GetLockFreePtr()

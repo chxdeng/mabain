@@ -28,6 +28,8 @@
 #include "version.h"
 #include "resource_pool.h"
 #include "async_writer.h"
+#include "util/utils.h"
+#include "shm_queue_mgr.h"
 
 #define OFFSET_SIZE_P1             7
 
@@ -80,9 +82,6 @@ DictMem::DictMem(const std::string &mbdir, bool init_header, size_t memsize,
     size_t hdr_size = RollableFile::page_size;
     if(mode & CONSTS::ACCESS_MODE_WRITER)
         create_hdr = true;
-#ifdef __SHM_QUEUE__
-    hdr_size += sizeof(AsyncNode) * queue_size;
-#endif
     header_file = ResourcePool::getInstance().OpenFile(mbdir + "_mabain_h",
                                                        mode,
                                                        hdr_size,
@@ -121,8 +120,6 @@ DictMem::DictMem(const std::string &mbdir, bool init_header, size_t memsize,
                                static_cast<size_t>(header->index_block_size),
                                memsize, mode, max_num_blk);
 
-    kv_file->InitShmSlidingAddr(&header->shm_index_sliding_start);
-
     if(!(mode & CONSTS::ACCESS_MODE_WRITER))
     {
         node_size = NULL;
@@ -157,6 +154,8 @@ DictMem::DictMem(const std::string &mbdir, bool init_header, size_t memsize,
         header->version[1] = version[1];
         header->version[2] = version[2];
         header->version[3] = 0;
+        // Set up inode number and create queue
+        header->shm_queue_id = get_file_inode(mbdir + "_mabain_h");
         // Cannot set is_valid to true.
         // More init to be dobe in InitRootNode.
     }
@@ -1136,13 +1135,6 @@ void DictMem::PrintStats(std::ostream &out_stream) const
 const int* DictMem::GetNodeSizePtr() const
 {
     return node_size;
-}
-
-void DictMem::ResetSlidingWindow() const
-{
-    kv_file->ResetSlidingWindow();
-    if(header != NULL)
-        header->shm_index_sliding_start.store(0, std::memory_order_relaxed);
 }
 
 void DictMem::InitLockFreePtr(LockFree *lf)

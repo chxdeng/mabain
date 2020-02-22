@@ -29,7 +29,7 @@ namespace mabain {
 
 std::string Logger::log_file = "";
 std::ofstream* Logger::log_stream = NULL;
-int Logger::log_level_       = LOG_LEVEL_WARN;
+int Logger::log_level_       = LOG_LEVEL_INFO;
 int Logger::roll_size        = 50*1024*1024;
 const char* Logger::LOG_LEVEL[4] =
 {

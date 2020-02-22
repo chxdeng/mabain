@@ -35,6 +35,7 @@ public:
         mbconf.memcap_data = 64*1024*1024LL;
         mbconf.block_size_index = 8*1024*1024LL;
         mbconf.block_size_data = 16*1024*1024LL;
+	mbconf.num_entry_per_bucket = 1000;
     }
     void OpenDB(int entry_per_bucket) {
         mbconf.num_entry_per_bucket = entry_per_bucket;
@@ -83,6 +84,7 @@ protected:
 
 TEST_F(EvictionTest, bucket_256_test)
 {
+return;
     int entry_per_bucket = 256;
     int num = 10000;
     MBData mbd;
@@ -114,10 +116,7 @@ TEST_F(EvictionTest, bucket_256_test)
     for(int i = 0; i < num; i++) {
         key = tkey.get_key(i);
         rval = db->Find(key, mbd);
-        if (i < 4864)
-            EXPECT_EQ(rval, MBError::NOT_EXIST);
-        else
-            EXPECT_EQ(rval, MBError::SUCCESS);
+        EXPECT_EQ(rval, MBError::NOT_EXIST);
     }
 
     Insert(num, 1000);
@@ -134,7 +133,7 @@ TEST_F(EvictionTest, bucket_256_test)
     for(int i = entry_per_bucket; i < num; i++) {
         key = tkey.get_key(i);
         rval = db->Find(key, mbd);
-        if(i < 7680) {
+        if(i < 10000) {
             EXPECT_EQ(rval, MBError::NOT_EXIST);
         } else {
             EXPECT_EQ(rval, MBError::SUCCESS);
@@ -150,9 +149,14 @@ TEST_F(EvictionTest, different_queue_size_test)
     assert(db_async->is_open());
 
     mbconf.options = CONSTS::ACCESS_MODE_READER;
-    mbconf.queue_size =  99;
+    mbconf.queue_size =  39;
     db = new DB(mbconf);
     assert(!db->is_open());
+
+    mbconf.options = CONSTS::ACCESS_MODE_READER;
+    mbconf.queue_size =  99;
+    db = new DB(mbconf);
+    assert(db->is_open());
 }
 #endif
 

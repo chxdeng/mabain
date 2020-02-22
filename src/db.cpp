@@ -39,8 +39,8 @@
 
 namespace mabain {
 
-// Current mabain version 1.2.0
-uint16_t version[4] = {1, 2, 1, 0};
+// Current mabain version 1.3.0
+uint16_t version[4] = {1, 3, 0, 0};
 
 DB::~DB()
 {
@@ -150,7 +150,7 @@ int DB::ValidateConfig(MBConfig &config)
         if(config.block_size_data == 0)
             config.block_size_data = DATA_BLOCK_SIZE_DEFAULT;
         if(config.num_entry_per_bucket <= 0)
-            config.num_entry_per_bucket = 1000;
+            config.num_entry_per_bucket = 500;
         if(config.num_entry_per_bucket < 8)
         {
             std::cerr << "count in eviction bucket must be greater than 7\n";
@@ -159,7 +159,8 @@ int DB::ValidateConfig(MBConfig &config)
     }
     if(config.options & CONSTS::USE_SLIDING_WINDOW)
     {
-        std::cout << "sliding window option is enabled\n";
+        std::cout << "sliding window option is deprecated\n";
+        config.options &= ~CONSTS::USE_SLIDING_WINDOW;
     }
 
     if(config.block_size_index != 0 && (config.block_size_index % BLOCK_SIZE_ALIGN != 0))
@@ -177,7 +178,9 @@ int DB::ValidateConfig(MBConfig &config)
         config.max_num_index_block = 1024;
     if(config.max_num_data_block == 0)
         config.max_num_data_block = 1024;
-    if (config.queue_size == 0)
+    if(config.queue_size > MB_MAX_NUM_SHM_QUEUE_NODE)
+        std::cerr << "async queue size exceeds maximum\n";
+    if(config.queue_size == 0 || config.queue_size > MB_MAX_NUM_SHM_QUEUE_NODE)
         config.queue_size = MB_MAX_NUM_SHM_QUEUE_NODE;
 
     return MBError::SUCCESS;
@@ -372,7 +375,8 @@ void DB::InitDB(MBConfig &config)
                     config.memcap_index, config.memcap_data,
                     config.block_size_index, config.block_size_data,
                     config.max_num_index_block, config.max_num_data_block,
-                    config.num_entry_per_bucket, config.queue_size);
+                    config.num_entry_per_bucket, config.queue_size,
+                    config.queue_dir);
 
     PostDBUpdate(config, init_header, update_header);
 }
@@ -735,8 +739,7 @@ int DB::ClearLock() const
     // No db handler should hold mutex when this is called.
     if(status != MBError::SUCCESS)
         return status;
-    IndexHeader *hdr = dict->GetHeaderPtr();
-    return InitShmRWLock(&hdr->mb_rw_lock);
+    return InitShmRWLock(dict->GetShmLockPtrs());
 #else
     // Nothing needs to be done if we don't use shared memory mutex.
     return MBError::SUCCESS;
@@ -774,50 +777,6 @@ void DB::GetDBConfig(MBConfig &config) const
 {
     memcpy(&config, &dbConfig, sizeof(MBConfig));
     config.mbdir = NULL;
-}
-
-int DB::SetAsyncWriterPtr(DB *db_writer)
-{
-#ifndef __SHM_QUEUE__
-    if(db_writer == NULL)
-        return MBError::INVALID_ARG;
-    if(options & CONSTS::ACCESS_MODE_WRITER)
-        return MBError::NOT_ALLOWED;
-    if(db_writer->mb_dir != mb_dir)
-        return MBError::INVALID_ARG;
-    if(!(db_writer->options & CONSTS::ACCESS_MODE_WRITER) ||
-       !(db_writer->options & CONSTS::ASYNC_WRITER_MODE)  ||
-       db_writer->async_writer == NULL)
-    {
-        return MBError::INVALID_ARG;
-    }
-
-   db_writer->async_writer->UpdateNumUsers(1);
-   async_writer = db_writer->async_writer;
-#endif
-   return MBError::SUCCESS;
-}
-
-int DB::UnsetAsyncWriterPtr(DB *db_writer)
-{
-#ifndef __SHM_QUEUE__
-    if(db_writer == NULL)
-        return MBError::INVALID_ARG;
-    if(options & CONSTS::ACCESS_MODE_WRITER)
-        return MBError::NOT_ALLOWED;
-    if(db_writer->mb_dir != mb_dir)
-        return MBError::INVALID_ARG;
-    if(!(db_writer->options & CONSTS::ACCESS_MODE_WRITER) ||
-       !(db_writer->options & CONSTS::ASYNC_WRITER_MODE)  ||
-       db_writer->async_writer == NULL)
-    {
-        return MBError::INVALID_ARG;
-    }
-
-    db_writer->async_writer->UpdateNumUsers(-1);
-    async_writer = NULL;
-#endif
-    return MBError::SUCCESS;
 }
 
 bool DB::AsyncWriterEnabled() const

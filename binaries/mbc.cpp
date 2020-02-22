@@ -574,7 +574,7 @@ int main(int argc, char *argv[])
     std::string script_file = "";
     int64_t index_blk_size = 64LL*1024*1024;
     int64_t data_blk_size = 64LL*1024*1024;
-    int64_t lru_bucket_size = 1000;
+    int64_t lru_bucket_size = 500;
 
     for(int i = 1; i < argc; i++)
     {

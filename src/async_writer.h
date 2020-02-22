@@ -29,37 +29,6 @@
 
 namespace mabain {
 
-#define MABAIN_ASYNC_TYPE_NONE       0
-#define MABAIN_ASYNC_TYPE_ADD        1
-#define MABAIN_ASYNC_TYPE_REMOVE     2
-#define MABAIN_ASYNC_TYPE_REMOVE_ALL 3
-#define MABAIN_ASYNC_TYPE_RC         4
-#define MABAIN_ASYNC_TYPE_BACKUP     5
-
-#define MB_ASYNC_SHM_KEY_SIZE      256
-#define MB_ASYNC_SHM_DATA_SIZE     1024
-#define MB_ASYNC_SHM_LOCK_TMOUT    5
-
-    
-typedef struct _AsyncNode
-{
-    std::atomic<bool> in_use;
-    pthread_mutex_t   mutex;
-    pthread_cond_t    cond;
-
-#ifdef __SHM_QUEUE__
-    char key[MB_ASYNC_SHM_KEY_SIZE];
-    char data[MB_ASYNC_SHM_DATA_SIZE];
-#else
-    char *key;
-    char *data;
-#endif
-    int key_len;
-    int data_len;
-    bool overwrite;
-    char type;
-} AsyncNode;
-
 class AsyncWriter
 {
 public:

@@ -33,8 +33,10 @@ class LockFreeTest : public ::testing::Test
 {
 public:
     LockFreeTest() {
-        memset(&lock_free_data, 0, sizeof(lock_free_data));
-        memset(&header, 0, sizeof(header));
+        int size = sizeof(lock_free_data);
+        memset((char*) &lock_free_data, 0, size);
+        size = sizeof(header);
+        memset((char*) &header, 0, size);
         lfree.LockFreeInit(&lock_free_data, &header, CONSTS::ACCESS_MODE_WRITER);
     }
     virtual ~LockFreeTest() {

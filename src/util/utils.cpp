@@ -21,6 +21,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
+#include <sys/stat.h>
 
 #include "error.h"
 
@@ -59,6 +60,14 @@ void release_writer_lock(int &fd)
         return;
     close(fd);
     fd = -1;
+}
+
+uint64_t get_file_inode(const std::string &path)
+{
+    struct stat sb;
+    if(stat(path.c_str(), &sb) < 0)
+        return 0;
+    return sb.st_ino;
 }
 
 }

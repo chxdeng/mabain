@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2018 Cisco Inc.
+ * Copyright (C) 2020 Cisco Inc.
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU General Public License, version 2,
@@ -16,16 +16,34 @@
 
 // @author Changxue Deng <chadeng@cisco.com>
 
-#ifndef __UTILS_H__
-#define __UTILS_H__
+#ifndef __MTX__VALIDATOR_H__
+#define __MTX__VALIDATOR_H__
 
-#include <string>
+#include <thread>
+#include <pthread.h>
+
+#include "logger.h"
+#include "drm_base.h"
+#include "async_writer.h"
 
 namespace mabain {
 
-int  acquire_writer_lock(const std::string &lock_file_path);
-void release_writer_lock(int &fd);
-uint64_t get_file_inode(const std::string &path);
+class MutexValidator
+{
+public:
+    MutexValidator(const std::string &mbdir, const MBConfig &config);
+    ~MutexValidator();
+    bool IsRunning();
+    void InvalidateDBVersion();
+
+private:
+    void ValidateMutex();
+
+    std::shared_ptr<MmapFileIO> header_file;
+    IndexHeader *header;
+    std::thread tid;
+    bool is_running;
+};
 
 }
 

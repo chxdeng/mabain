@@ -91,8 +91,7 @@ AsyncWriter::AsyncWriter(DB *db_ptr)
     header = dict->GetHeaderPtr();
     if(header == NULL)
         throw (int) MBError::NOT_INITIALIZED;
-    char *hdr_ptr = (char *) header;
-    queue = reinterpret_cast<AsyncNode *>(hdr_ptr + RollableFile::page_size);
+    queue = dict->GetAsyncQueuePtr();
     header->rc_flag.store(0, std::memory_order_release);
 #else
     queue = new AsyncNode[MB_MAX_NUM_SHM_QUEUE_NODE];

@@ -37,7 +37,8 @@ public:
     DictMemTest() {
         dmm = NULL;
         header = NULL;
-        memset(&lfree, 0, sizeof(lfree));
+	int size = sizeof(lfree);
+        memset((char*) &lfree, 0, size);
     }
     virtual ~DictMemTest() {
         DestroyDMM();

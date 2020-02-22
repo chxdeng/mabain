@@ -65,14 +65,14 @@ typedef struct _IndexHeader
     int64_t  edge_str_size;
     int      num_writer;
     int      num_reader;
-    std::atomic<size_t> shm_index_sliding_start;
-    std::atomic<size_t> shm_data_sliding_start;
+    int64_t  shm_queue_id;
+    int64_t  dummy;
 
     // Lock-free data structure
     LockFreeShmData lock_free;
 
     // read/write lock
-    pthread_rwlock_t mb_rw_lock;
+    char padding[56];//pthread_rwlock_t mb_rw_lock;
 
     // block size
     uint32_t index_block_size;
@@ -144,7 +144,7 @@ public:
 protected:
     static void ReadHeaderVersion(const std::string &header_path, uint16_t ver[4]);
     static void ReadHeader(const std::string &header_path, uint8_t *buff, int buf_size);
-    static void WriteHeader(const std::string &header_path, uint8_t *buff, int queue_buff_size);
+    static void WriteHeader(const std::string &header_path, uint8_t *buff);
 
     IndexHeader *header;
     RollableFile *kv_file;
@@ -184,7 +184,7 @@ inline size_t DRMBase::GetResourceCollectionOffset() const
 
 inline void DRMBase::RemoveUnused(size_t max_size, bool writer_mode)
 {
-    return kv_file->RemoveUnused(max_size, writer_mode); 
+    return kv_file->RemoveUnused(max_size, writer_mode);
 }
 
 }
