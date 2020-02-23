@@ -22,7 +22,7 @@ sub insertion_test {
 
 sub query_test {
     my ($db_dir, $count) = @_;
-    my $db = mabain::mb_open($db_dir, 1);
+    my $db = mabain::mb_open($db_dir, 0);
     my $found = 0;
     my $result = mabain::new_mb_query_result();
     for(my $i = 0; $i < $count; $i++) {

@@ -12,7 +12,7 @@ def insertion_test(db_dir, count):
     mabain.mb_close(db)
 
 def query_test(db_dir, count):
-    db = mabain.mb_open(db_dir, 1)
+    db = mabain.mb_open(db_dir, 0)
     result = mabain.mb_query_result()
     found = 0
     for i in range(count):
