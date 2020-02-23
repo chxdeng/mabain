@@ -17,7 +17,7 @@ sub insertion_test {
         }
     }
     mabain::mb_close($db);
-    print ("Successfully added $added KV pair\n"); 
+    print ("Successfully added $added KV pairs\n"); 
 }
 
 sub query_test {
@@ -34,7 +34,7 @@ sub query_test {
         }
     }
     mabain::mb_close($db);
-    print ("Successfully found $found KV pair\n"); 
+    print ("Successfully found $found KV pairs\n"); 
 }
 
 my $db_dir = "/var/tmp/mabain_test";
