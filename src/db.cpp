@@ -67,8 +67,8 @@ int DB::Close()
 
     if(dict != NULL)
     {
-        if(options & CONSTS::ACCESS_MODE_WRITER)
-            dict->PrintStats(Logger::GetLogStream());
+        //if(options & CONSTS::ACCESS_MODE_WRITER)
+        //    dict->PrintStats(Logger::GetLogStream());
         UpdateNumHandlers(options, -1);
 
         dict->Destroy();
