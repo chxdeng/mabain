@@ -126,7 +126,6 @@ public:
     int Find(const char* key, int len, MBData &mdata) const;
     int Find(const std::string &key, MBData &mdata) const;
     // Find all possible prefix matches using a key
-    // This is not fully implemented yet.
     int FindPrefix(const char* key, int len, MBData &data) const;
     // Find the longest prefix match using a key
     int FindLongestPrefix(const char* key, int len, MBData &data) const;

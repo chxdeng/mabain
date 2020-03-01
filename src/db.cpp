@@ -456,8 +456,16 @@ int DB::FindPrefix(const char* key, int len, MBData &data) const
         return MBError::OUT_OF_BOUND;
 
     int rval;
+    int prev_mlen = 0;
+    if(data.match_len == 0)
+        data.options |= CONSTS::OPTION_ALL_PREFIX;
+    else
+        prev_mlen = data.match_len;
     rval = dict->FindPrefix(reinterpret_cast<const uint8_t*>(key+data.match_len),
                             len-data.match_len, data);
+    data.match_len += prev_mlen;
+    if (data.next)
+        rval = MBError::SUCCESS;
 
     return rval;
 }
