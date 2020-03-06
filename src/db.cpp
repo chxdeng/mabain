@@ -440,33 +440,25 @@ int DB::Find(const std::string &key, MBData &mdata) const
     return Find(key.data(), key.size(), mdata);
 }
 
-// Find all possible prefix matches. The caller needs to call this function
-// repeatedly if data.next is true.
-int DB::FindPrefix(const char* key, int len, MBData &data) const
+// Find all possible prefix matches.
+int DB::FindPrefix(const std::string &key, AllPrefixResults &results)
 {
-    if(key == NULL)
-        return MBError::INVALID_ARG;
     if(status != MBError::SUCCESS)
         return MBError::NOT_INITIALIZED;
     // Writer in async mode cannot be used for lookup
     if(options & CONSTS::ASYNC_WRITER_MODE)
         return MBError::NOT_ALLOWED;
 
-    if(data.match_len >= len)
-        return MBError::OUT_OF_BOUND;
-
+    MBData data;
     int rval;
-    int prev_mlen = 0;
-    if(data.match_len == 0)
-        data.options |= CONSTS::OPTION_ALL_PREFIX;
-    else
-        prev_mlen = data.match_len;
-    rval = dict->FindPrefix(reinterpret_cast<const uint8_t*>(key+data.match_len),
-                            len-data.match_len, data);
-    data.match_len += prev_mlen;
-    if (data.next)
-        rval = MBError::SUCCESS;
-
+    data.options |= CONSTS::OPTION_ALL_PREFIX;
+    rval = dict->FindPrefix((const uint8_t*)key.data(), key.size(), data, &results);
+    if (rval == MBError::SUCCESS)
+    {
+        results.results.push_back(PrefixResult(data.match_len, data.data_len, (char*)data.buff));
+        data.buff = nullptr;
+        data.buff_len = 0;
+    }
     return rval;
 }
 
@@ -483,7 +475,7 @@ int DB::FindLongestPrefix(const char* key, int len, MBData &data) const
 
     data.match_len = 0;
 
-    return dict->FindPrefix(reinterpret_cast<const uint8_t*>(key), len, data);
+    return dict->FindPrefix(reinterpret_cast<const uint8_t*>(key), len, data, nullptr);
 }
 
 int DB::FindLongestPrefix(const std::string &key, MBData &data) const

@@ -481,7 +481,7 @@ int Dict::ReadDataFromNode(MBData &data, const uint8_t *node_ptr) const
     return MBError::SUCCESS;
 }
 
-int Dict::FindPrefix(const uint8_t *key, int len, MBData &data)
+int Dict::FindPrefix(const uint8_t *key, int len, MBData &data, AllPrefixResults *presults)
 {
     int rval;
     MBData data_rc;
@@ -489,13 +489,13 @@ int Dict::FindPrefix(const uint8_t *key, int len, MBData &data)
     if(rc_root_offset != 0)
     {
         reader_rc_off = rc_root_offset;
-        rval = FindPrefix_Internal(rc_root_offset, key, len, data_rc);
+        rval = FindPrefix_Internal(rc_root_offset, key, len, data_rc, presults);
 #ifdef __LOCK_FREE__
         while(rval == MBError::TRY_AGAIN)
         {
             nanosleep((const struct timespec[]){{0, 10L}}, NULL);
             data_rc.Clear();
-            rval = FindPrefix_Internal(rc_root_offset, key, len, data_rc);
+            rval = FindPrefix_Internal(rc_root_offset, key, len, data_rc, presults);
         }
 #endif
         if(rval != MBError::NOT_EXIST && rval != MBError::SUCCESS)
@@ -512,13 +512,13 @@ int Dict::FindPrefix(const uint8_t *key, int len, MBData &data)
         }
     }
 
-    rval = FindPrefix_Internal(0, key, len, data);
+    rval = FindPrefix_Internal(0, key, len, data, presults);
 #ifdef __LOCK_FREE__
     while(rval == MBError::TRY_AGAIN)
     {
         nanosleep((const struct timespec[]){{0, 10L}}, NULL);
         data.Clear();
-        rval = FindPrefix_Internal(0, key, len, data);
+        rval = FindPrefix_Internal(0, key, len, data, presults);
     }
 #endif
 
@@ -532,28 +532,25 @@ int Dict::FindPrefix(const uint8_t *key, int len, MBData &data)
 
 }
 
-int Dict::FindPrefix_Internal(size_t root_off, const uint8_t *key, int len, MBData &data)
+int Dict::FindPrefix_Internal(size_t root_off, const uint8_t *key, int len, MBData &data,
+                              AllPrefixResults *presults)
 {
     int rval;
-    data.next = false;
     EdgePtrs &edge_ptrs = data.edge_ptrs;
 #ifdef __LOCK_FREE__
     READER_LOCK_FREE_START
 #endif
 
-    if(data.match_len == 0)
-    {
-        rval = mm.GetRootEdge(data.options & CONSTS::OPTION_RC_MODE, key[0], edge_ptrs);
-        if(rval != MBError::SUCCESS)
-            return MBError::READ_ERROR;
+    rval = mm.GetRootEdge(data.options & CONSTS::OPTION_RC_MODE, key[0], edge_ptrs);
+    if(rval != MBError::SUCCESS)
+        return MBError::READ_ERROR;
 
-        if(edge_ptrs.len_ptr[0] == 0)
-        {
+    if(edge_ptrs.len_ptr[0] == 0)
+    {
 #ifdef __LOCK_FREE__
-            READER_LOCK_FREE_STOP(edge_ptrs.offset, data)
+        READER_LOCK_FREE_STOP(edge_ptrs.offset, data)
 #endif
-            return MBError::NOT_EXIST;
-        }
+        return MBError::NOT_EXIST;
     }
 
     // Compare edge string
@@ -618,16 +615,21 @@ int Dict::FindPrefix_Internal(size_t root_off, const uint8_t *key, int len, MBDa
                     data.match_len = p - key;
                     if(data.options & CONSTS::OPTION_ALL_PREFIX)
                     {
-                        rval = ReadDataFromNode(data, node_buff);
-                        data.next = true;
-                        rval = last_prefix_rval;
-                        break;
+                        int rc = ReadDataFromNode(data, node_buff);
+                        if (rc == MBError::SUCCESS)
+                        {
+                            presults->results.push_back(PrefixResult(data.match_len, data.data_len, (char*)data.buff));
+                            data.buff = nullptr;
+                            data.buff_len = 0;
+                        }
+                        else
+                            rval = rc;
                     }
                     else
                     {
                         memcpy(last_node_buffer, node_buff, NODE_EDGE_KEY_FIRST);
-                        last_prefix_rval = MBError::SUCCESS;
                     }
+                    last_prefix_rval = MBError::SUCCESS;
                 }
             }
 

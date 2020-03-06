@@ -60,7 +60,7 @@ public:
     // Find value by key
     int Find(const uint8_t *key, int len, MBData &data);
     // Find value by key using prefix match
-    int FindPrefix(const uint8_t *key, int len, MBData &data);
+    int FindPrefix(const uint8_t *key, int len, MBData &data, AllPrefixResults *presults = nullptr);
     // Delete entry by key
     int Remove(const uint8_t *key, int len);
     // Delete entry by key
@@ -120,7 +120,8 @@ public:
 
 private:
     int Find_Internal(size_t root_off, const uint8_t *key, int len, MBData &data);
-    int FindPrefix_Internal(size_t root_off, const uint8_t *key, int len, MBData &data);
+    int FindPrefix_Internal(size_t root_off, const uint8_t *key, int len,
+                            MBData &data, AllPrefixResults *presult);
     int ReleaseBuffer(size_t offset);
     int UpdateDataBuffer(EdgePtrs &edge_ptrs, bool overwrite, const uint8_t *buff,
                          int len, bool &inc_count);

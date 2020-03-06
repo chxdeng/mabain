@@ -21,6 +21,7 @@
 
 #include <iostream>
 #include <string>
+#include <vector>
 
 #include "mb_data.h"
 #include "error.h"
@@ -125,11 +126,11 @@ public:
     // Find an entry by exact match using a key
     int Find(const char* key, int len, MBData &mdata) const;
     int Find(const std::string &key, MBData &mdata) const;
-    // Find all possible prefix matches using a key
-    int FindPrefix(const char* key, int len, MBData &data) const;
     // Find the longest prefix match using a key
     int FindLongestPrefix(const char* key, int len, MBData &data) const;
     int FindLongestPrefix(const std::string &key, MBData &data) const;
+    // Find all possible prefix matches using a key
+    int FindPrefix(const std::string &key, AllPrefixResults &result);
     // Remove an entry using a key
     int Remove(const char *key, int len);
     int Remove(const std::string &key);
