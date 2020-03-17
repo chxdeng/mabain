@@ -22,7 +22,6 @@ ENV BUILD_DEPS=" \
 
 ENV MABAIN_SRC=/mabain_src
 ENV BUILD_OUTPUT=/target
-ENV SWIG_SRC=/SWIG_SRC
 
 ENV GOPATH /go
 ENV PATH /usr/local/go/bin:$GOPATH/bin:$PATH
