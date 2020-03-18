@@ -1,7 +1,7 @@
 FROM ubuntu:bionic-20190515
 FROM golang:1.12.5 as builder
 
-ENV MABAIN_VERSION=1.1.0
+ENV MABAIN_VERSION=1.3.0
 ENV MABAIN_RELEASE=1
 
 # Packages to install via APT for building.
@@ -31,7 +31,7 @@ RUN apt-get update && apt -y install \
     rm -rf /var/lib/apt/lists/*
 
 # Download mabain source
-RUN wget -O mabain.zip "https://github.com/chxdeng/mabain/archive/${MABAIN_VERSION}.zip" \
+RUN wget -O mabain.zip "https://github.com/chxdeng/mabain/archive/master.zip" \
     && unzip -q -o mabain.zip -d ${MABAIN_SRC} \
     && rm -f mabain.zip
 
@@ -41,7 +41,7 @@ COPY ./ ${MABAIN_GO}/
 RUN  mkdir $BUILD_OUTPUT; \
      env >> $BUILD_OUTPUT/env.txt; \
      apt-get update -qq; \
-     cd $MABAIN_SRC/mabain-${MABAIN_VERSION}; \
+     cd $MABAIN_SRC/mabain-master; \
      make build 2>&1 | tee -a $BUILD_OUTPUT/build_log.txt; \
      checkinstall -y -d0 --pkgname libmabain --pkgversion ${MABAIN_VERSION} --backup=no --strip=no --stripso=no --install=no --pakdir $BUILD_OUTPUT  2>&1 | tee -a $BUILD_OUTPUT/build_log.txt; \
      chmod -R 777 $BUILD_OUTPUT/ $MABAIN_SRC/;
