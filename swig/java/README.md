@@ -2,8 +2,8 @@
 
 Modify JVM install directory (JVM_INSTALL_DIR) in Makefile is needed.
 
-1. build
-    make
+##build
+make
 
-2. run test
-    make test
+##test
+make test
