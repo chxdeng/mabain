@@ -19,7 +19,7 @@
 #ifndef __RESOURCE_POOL__
 #define __RESOURCE_POOL__
 
-#include <map>
+#include <unordered_map>
 #include <memory>
 #include <string>
 #include <pthread.h>
@@ -54,7 +54,7 @@ public:
 private:
     ResourcePool();
 
-    std::map<std::string, std::shared_ptr<MmapFileIO>> file_pool;
+    std::unordered_map<std::string, std::shared_ptr<MmapFileIO>> file_pool;
     pthread_mutex_t pool_mutex;
 };
 

@@ -4,7 +4,7 @@ import mabain
 import os
 
 def insertion_test(db_dir, count):
-    db = mabain.mb_open(db_dir, 1);
+    db = mabain.mb_open(db_dir, 0);
     for i in range(count):
         key = "TEST_KEY_" + str(i);
         val = "TEST_VAL_" + str(i);
@@ -24,8 +24,9 @@ def query_test(db_dir, count):
     mabain.mb_close(db)
     print("found " + str(found) + " KV pairs")
 
-db_dir = "/var/tmp/mabain_test"
-os.system("mkdir -p " + db_dir)
-os.system("rm -rf " + db_dir + "/*")
+#db_dir = "/var/tmp/mabain_test"
+db_dir = "/var/tmp/db_test/mabain"
+#os.system("mkdir -p " + db_dir)
+#os.system("rm -rf " + db_dir + "/*")
 insertion_test(db_dir, 100)
 query_test(db_dir, 100)

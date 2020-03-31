@@ -49,8 +49,13 @@ int Dict::SHMQ_Add(const char *key, int key_len, const char *data, int data_len,
         tm_exp.tv_sec = curr.tv_sec + tm_exp.tv_nsec / 1000000000L;
         tm_exp.tv_nsec %= 1000000000L;
 
-        pthread_cond_timedwait(&node_ptr->cond, &node_ptr->mutex, &tm_exp);
-        if (node_ptr->in_use.load(std::memory_order_consume)) 
+        int rval = pthread_cond_timedwait(&node_ptr->cond, &node_ptr->mutex, &tm_exp);
+        if(rval == EOWNERDEAD)
+        {
+            rval = pthread_mutex_consistent(&node_ptr->mutex);
+            if (rval != 0) return MBError::MUTEX_ERROR;
+        }
+        if (node_ptr->in_use.load(std::memory_order_consume))
         {
             if(pthread_mutex_unlock(&node_ptr->mutex) != 0)
                 return MBError::MUTEX_ERROR;
@@ -137,7 +142,13 @@ AsyncNode* Dict::SHMQ_AcquireSlot() const
     tm_exp.tv_sec = time(NULL) + MB_ASYNC_SHM_LOCK_TMOUT;
     tm_exp.tv_nsec = 0;
     int rval = pthread_mutex_timedlock(&node_ptr->mutex, &tm_exp);
-    if(rval != 0)
+
+    if(rval == EOWNERDEAD)
+    {
+        rval = pthread_mutex_consistent(&node_ptr->mutex);
+        if (rval != 0) return NULL;
+    }
+    else if(rval != 0)
     {
         Logger::Log(LOG_LEVEL_ERROR, "shared memory mutex lock failed: %d", rval);
         return NULL;

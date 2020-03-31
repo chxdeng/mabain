@@ -34,6 +34,18 @@ int InitShmMutex(pthread_mutex_t *mutex)
         Logger::Log(LOG_LEVEL_WARN, "pthread_mutexkattr_init failed");
         return MBError::MUTEX_ERROR;
     }
+    if(pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_ERRORCHECK))
+    {
+        Logger::Log(LOG_LEVEL_WARN, "failed to set mutex type (PTHREAD_MUTEX_ERRORCHECK)");
+        pthread_mutexattr_destroy(&attr);
+        return MBError::MUTEX_ERROR;
+    }
+    if(pthread_mutexattr_setrobust(&attr, PTHREAD_MUTEX_ROBUST))
+    {
+        Logger::Log(LOG_LEVEL_WARN, "failed to set mutex to robust");
+        pthread_mutexattr_destroy(&attr);
+        return MBError::MUTEX_ERROR;
+    }
     if(pthread_mutexattr_setpshared(&attr, PTHREAD_PROCESS_SHARED))
     {
         Logger::Log(LOG_LEVEL_WARN, "failed to set mutex/PTHREAD_PROCESS_SHARED");
@@ -41,7 +53,6 @@ int InitShmMutex(pthread_mutex_t *mutex)
         return MBError::MUTEX_ERROR;
     }
 
-    // Cannot set mutex as robust because of the glibc bug
     if(pthread_mutex_init(mutex, &attr))
     {
         Logger::Log(LOG_LEVEL_WARN, "pthread_mutex_init failed");

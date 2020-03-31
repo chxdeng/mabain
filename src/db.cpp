@@ -67,8 +67,6 @@ int DB::Close()
 
     if(dict != NULL)
     {
-        //if(options & CONSTS::ACCESS_MODE_WRITER)
-        //    dict->PrintStats(Logger::GetLogStream());
         UpdateNumHandlers(options, -1);
 
         dict->Destroy();
@@ -94,14 +92,10 @@ int DB::UpdateNumHandlers(int mode, int delta)
 {
     int rval = MBError::SUCCESS;
 
-    WrLock();
-
     if(mode & CONSTS::ACCESS_MODE_WRITER)
         rval = dict->UpdateNumWriter(delta);
     else
         dict->UpdateNumReader(delta);
-
-    UnLock();
 
     return rval;
 }

@@ -74,6 +74,7 @@ public:
     short data_len;
     char *buff;
 };
+
 class AllPrefixResults {
 public:
      AllPrefixResults() {}

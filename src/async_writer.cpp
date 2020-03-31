@@ -18,6 +18,7 @@
 
 #include <unistd.h>
 #include <string.h>
+#include <sys/time.h>
 
 #include "async_writer.h"
 #include "error.h"
@@ -121,7 +122,6 @@ AsyncWriter::AsyncWriter(DB *db_ptr)
         tid = 0;
         throw (int) MBError::THREAD_FAILED;
     }
-
 }
 
 AsyncWriter::~AsyncWriter()
@@ -157,7 +157,7 @@ int AsyncWriter::StopAsyncThread()
 #else
     for(int i = 0; i < header->async_queue_size; i++)
     {
-        pthread_cond_signal(&queue[i].cond);
+        pthread_cond_broadcast(&queue[i].cond);
     }
 #endif
 
@@ -368,10 +368,15 @@ int AsyncWriter::ProcessTask(int ntasks, bool rc_mode)
         rval = pthread_mutex_timedlock(&node_ptr->mutex, &tm_exp);
         if(rval == ETIMEDOUT)
         {
-            Logger::Log(LOG_LEVEL_WARN, "mutex lock timeout, need to re-intialize");
-            InitShmMutex(&node_ptr->mutex);
+            Logger::Log(LOG_LEVEL_WARN, "mutex lock timeout");
             count = ntasks;
             continue;
+        }
+        else if (rval == EOWNERDEAD)
+        {
+            Logger::Log(LOG_LEVEL_WARN, "mutex lock owner dead");
+            rval = pthread_mutex_consistent(&node_ptr->mutex);
+            if(rval != 0) throw (int) MBError::MUTEX_ERROR;
         }
         else if(rval != 0)
 #else
@@ -538,10 +543,18 @@ void* AsyncWriter::async_writer_thread()
         rval = pthread_mutex_timedlock(&node_ptr->mutex, &tm_exp);
         if(rval == ETIMEDOUT)
         {
-            Logger::Log(LOG_LEVEL_WARN, "async writer shared memory mutex lock timeout, need to re-intialize");
-            InitShmMutex(&node_ptr->mutex);
+            Logger::Log(LOG_LEVEL_WARN, "async writer shared memory mutex lock timeout");
             header->writer_index++;
             continue;
+        }
+        else if (rval == EOWNERDEAD)
+        {
+            Logger::Log(LOG_LEVEL_WARN, "async writer mutex ower died without unlock");
+            if(pthread_mutex_consistent(&node_ptr->mutex))
+            {
+                Logger::Log(LOG_LEVEL_ERROR, "failed to set mutex consistent:%d",errno);
+                throw (int) MBError::MUTEX_ERROR;
+            }
         }
         else if(rval != 0)
 #else
@@ -563,7 +576,16 @@ void* AsyncWriter::async_writer_thread()
 #ifdef __SHM_QUEUE__
             tm_exp.tv_sec = time(NULL) + MB_ASYNC_SHM_LOCK_TMOUT;
             tm_exp.tv_nsec = 0;
-            pthread_cond_timedwait(&node_ptr->cond, &node_ptr->mutex, &tm_exp);
+            rval = pthread_cond_timedwait(&node_ptr->cond, &node_ptr->mutex, &tm_exp);
+            if(rval == EOWNERDEAD)
+            {
+                Logger::Log(LOG_LEVEL_WARN, "async writer (pthread_cond_timedwait) mutex ower died without unlock");
+                if(pthread_mutex_consistent(&node_ptr->mutex))
+                {
+                    Logger::Log(LOG_LEVEL_ERROR, "failed to set mutex consistent:%d", errno);
+                    throw (int) MBError::MUTEX_ERROR;
+                }
+            }
 
             uint32_t windex = header->writer_index;
             uint32_t qindex = header->queue_index.load(std::memory_order_consume);

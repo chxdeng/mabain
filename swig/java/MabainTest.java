@@ -33,7 +33,7 @@ public class MabainTest {
 
     public static void gcTest(Mabain mdb) {
         int rval;
-        rval = mdb.mbGC(1, 1);
+        rval = mdb.mbGC(32*1024*1023, 32*1024*1024);
         if (rval == 0) {
             System.out.println("successfully ran mabain gc");
         }
@@ -52,7 +52,10 @@ public class MabainTest {
     }
 
     public static void main(String[] args) {
-        Mabain mdb = new Mabain("/var/tmp/mabain_test", true, false);
+        Mabain mdb = new Mabain("/var/tmp/mabain_test", true, true);
+        if (!mdb.mbIsOpen()) {
+            return;
+        }
         int count = 100;
         insertionTest(mdb, count);
         queryTest(mdb, count);

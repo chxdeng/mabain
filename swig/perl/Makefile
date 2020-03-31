@@ -21,5 +21,5 @@ mabain.so: mabain_wrap.o mabain_c_interface.o
 	$(CPP) -shared mabain_wrap.o mabain_c_interface.o -o mabain.so $(LDFLAGS)
 
 clean:
-	rm *.o mabain.so mabain_wrap.cxx mabain.pm
+	rm -rf *.o mabain.so mabain_wrap.cxx mabain.pm
 

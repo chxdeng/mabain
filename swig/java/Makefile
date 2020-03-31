@@ -27,8 +27,7 @@ libmabainJava.so: mabain_interface.o mabain_wrap.o
 	$(CPP) $(LDFLAGS) mabain_interface.o mabain_wrap.o -o libmabainJava.so -L/usr/local/lib -lmabain
 
 target/mabainji.jar: libmabainJava.so
-	#javac $(MABAIN_JAVA_DIR)/*.java -Xlint:deprecation
-	javac $(MABAIN_JAVA_DIR)/*.java
+	javac $(MABAIN_JAVA_DIR)/*.java -Xlint:deprecation
 	jar cf target/mabainji.jar -C src com/$(DOMAIN)/$(PACKAGE_NAME)
 
 test: target/mabainji.jar

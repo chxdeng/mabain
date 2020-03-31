@@ -28,6 +28,7 @@ public:
     int mbAdd(const std::string key, const std::string val);
     int mbFind(const std::string key, mb_query_result &result);
     int mbDelete(const std::string key);
+    bool mbIsOpen() const;
     // mabain GC
     // max_key_size: pending key size to trigger GC on index DB
     // max_val_size: pending value size to trigger GC on value DB
@@ -36,6 +37,7 @@ public:
 
 private:
     mabain::DB *dbi;    
+    mabain::DB *db_async;
 };
 
 #endif

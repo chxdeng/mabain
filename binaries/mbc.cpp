@@ -90,6 +90,8 @@ static void usage(const char *prog)
     std::cout <<"\t-w running in writer mode\n";
     std::cout <<"\t-e run query on command line\n";
     std::cout <<"\t-s run queries in a file\n";
+    std::cout <<"\t--lru-bucket-size bucket size for pruning\n";
+    std::cout <<"\t--async enable async writer mode\n";
     exit(1);
 }
 
@@ -108,7 +110,7 @@ static void show_help()
     std::cout << "\tdecWriterCount\t\tClear writer count in shared memory header\n";
     std::cout << "\tdecReaderCount\t\tdecrement reader count in shared memory header\n";
     std::cout << "\tprintHeader\t\tPrint shared memory header\n";
-    std::cout << "\treclaimResources\tReclaim deleted resources\n";
+    std::cout << "\treclaimResources(max index gc size, max data gc size)\n\t\t\t\tReclaim deleted resources\n";
 }
 
 static void trim_spaces(const char *cmd, std::string &cmd_trim)
@@ -187,15 +189,43 @@ static int parse_key_value_pair(const std::string &kv_str,
     return 0;
 }
 
+static int parse_args(const std::string &arg_str,
+                      std::vector<std::string> &arg_list)
+{
+    size_t start = 0;
+    std::string arg;
+
+    while(true)
+    {
+        size_t found = arg_str.find(',', start);
+        if(found == std::string::npos)
+            break;
+        arg = arg_str.substr(start, found-start);
+        if(arg.length() == 0) return -1;
+
+        arg_list.push_back(arg_str.substr(start, found-start));
+        start = found + 1;
+    }
+
+    arg = arg_str.substr(start);
+    if(arg.length() == 0)
+        return -1;
+    arg_list.push_back(arg);
+
+    return 0;
+}
+
 static int parse_command(std::string &cmd,
                          std::string &key,
-                         std::string &value)
+                         std::string &value,
+                         std::vector<std::string> &arg_list)
 {
     std::string yes;
     bool hex_output = false;
 
     key = "";
     value = "";
+    arg_list.clear();
     switch(cmd[0])
     {
         case 'q':
@@ -273,7 +303,7 @@ static int parse_command(std::string &cmd,
             if(cmd.compare(0, 7, "insert(") == 0)
             {
                 if(cmd[cmd.length()-1] != ')')
-                    return COMMAND_UNKNOWN;
+                    return COMMAND_PARSING_ERROR;
                 if(parse_key_value_pair(cmd.substr(7, cmd.length()-8), key, value) < 0)
                     return COMMAND_PARSING_ERROR;
                 return COMMAND_INSERT;
@@ -283,13 +313,19 @@ static int parse_command(std::string &cmd,
             if(cmd.compare(0, 8, "replace(") == 0)
             {
                 if(cmd[cmd.length()-1] != ')')
-                    return COMMAND_UNKNOWN;
+                    return COMMAND_PARSING_ERROR;
                 if(parse_key_value_pair(cmd.substr(8, cmd.length()-9), key, value) < 0)
                     return COMMAND_PARSING_ERROR;
                 return COMMAND_REPLACE;
             }
-            else if(cmd.compare("reclaimResources") == 0)
+            else if(cmd.compare(0, 17, "reclaimResources(") == 0)
+            {
+                if(cmd[cmd.length()-1] != ')')
+                    return COMMAND_PARSING_ERROR;
+                if(parse_args(cmd.substr(17, cmd.length()-18), arg_list) < 0)
+                    return COMMAND_PARSING_ERROR;
                 return COMMAND_RECLAIM_RESOURCES;
+            }
             else
                 return COMMAND_UNKNOWN;
             break;
@@ -355,7 +391,8 @@ static void display_output(const MBData &mbd, bool hex_output, bool prefix)
     }
 }
 
-static int RunCommand(int mode, DB *db, int cmd_id, const std::string &key, const std::string &value)
+static int RunCommand(int mode, DB *db, int cmd_id, const std::string &key,
+                      const std::string &value, std::vector<std::string> &arg_list)
 {
     int rval = MBError::SUCCESS;
     bool overwrite = false;
@@ -390,24 +427,14 @@ static int RunCommand(int mode, DB *db, int cmd_id, const std::string &key, cons
                 std::cout << MBError::get_error_str(rval) << "\n";
             break;
         case COMMAND_DELETE:
-            if(mode & CONSTS::ACCESS_MODE_WRITER)
-            {
-                rval = db->Remove(key);
-                std::cout << MBError::get_error_str(rval) << "\n";
-            }
-            else
-                std::cout << "permission not allowed\n";
+            rval = db->Remove(key);
+            std::cout << MBError::get_error_str(rval) << "\n";
             break;
         case COMMAND_REPLACE:
             overwrite = true;
         case COMMAND_INSERT:
-            if(mode & CONSTS::ACCESS_MODE_WRITER)
-            {
-                rval = db->Add(key, value, overwrite);
-                std::cout << MBError::get_error_str(rval) << "\n";
-            }
-            else
-                std::cout << "permission not allowed\n";
+            rval = db->Add(key, value, overwrite);
+            std::cout << MBError::get_error_str(rval) << "\n";
             break;
         case COMMAND_STATS:
             db->PrintStats();
@@ -440,12 +467,11 @@ static int RunCommand(int mode, DB *db, int cmd_id, const std::string &key, cons
             db->PrintHeader();
             break;
         case COMMAND_RECLAIM_RESOURCES:
-            if(mode & CONSTS::ACCESS_MODE_WRITER)
-                db->CollectResource(1, 1);
-            else
-                std::cout << "writer is not running, can not perform grabage collection" << std::endl;
+            db->CollectResource(arg_list.size()>=1 ? stol(arg_list[0]) : 1,
+                                arg_list.size()>=2 ? stol(arg_list[1]) : 1);
             break;
         case COMMAND_PARSING_ERROR:
+            std::cout << "invalid query\n";
             break;
         case COMMAND_UNKNOWN:
         default:
@@ -467,6 +493,7 @@ static void mbclient(DB *db, int mode)
     std::string key;
     std::string value;
     std::string cmd;
+    std::vector<std::string> arg_list;
 
     while(true)
     {
@@ -481,9 +508,9 @@ static void mbclient(DB *db, int mode)
         trim_spaces(line, cmd);
         add_history(line);
         free(line);
-        cmd_id = parse_command(cmd, key, value);
+        cmd_id = parse_command(cmd, key, value, arg_list);
 
-        RunCommand(mode, db, cmd_id, key, value);
+        RunCommand(mode, db, cmd_id, key, value, arg_list);
 
         if(quit_mbc) break;
     }
@@ -495,6 +522,7 @@ static void run_query_command(DB *db, int mode, const std::string &command_str)
     int cmd_id;
     std::string key;
     std::string value;
+    std::vector<std::string> arg_list;
 
     trim_spaces(command_str.c_str(), cmd);
     if(cmd.length() == 0)
@@ -503,8 +531,8 @@ static void run_query_command(DB *db, int mode, const std::string &command_str)
         return;
     }
 
-    cmd_id = parse_command(cmd, key, value);
-    RunCommand(mode, db, cmd_id, key, value);
+    cmd_id = parse_command(cmd, key, value, arg_list);
+    RunCommand(mode, db, cmd_id, key, value, arg_list);
 }
 
 static void run_script(DB *db, int mode, const std::string &script_file)
@@ -520,6 +548,7 @@ static void run_script(DB *db, int mode, const std::string &script_file)
     std::string key;
     std::string value;
     std::string cmd;
+    std::vector<std::string> arg_list;
     
     while(getline(script_in, line))
     {
@@ -530,9 +559,9 @@ static void run_script(DB *db, int mode, const std::string &script_file)
             continue;
         }
 
-        cmd_id = parse_command(cmd, key, value);
+        cmd_id = parse_command(cmd, key, value, arg_list);
         std::cout << cmd << ": ";
-        RunCommand(mode, db, cmd_id, key, value);
+        RunCommand(mode, db, cmd_id, key, value, arg_list);
 
         if(quit_mbc) break;
     }
@@ -630,12 +659,22 @@ int main(int argc, char *argv[])
                 usage(argv[0]);
             data_blk_size = atoi(argv[i]);
         }
+        else if(strcmp(argv[i], "--async") == 0)
+        {
+            mode |= CONSTS::ASYNC_WRITER_MODE;
+        }
         else
             usage(argv[0]);
     }
 
     if(db_dir == NULL)
         usage(argv[0]);
+
+    if((mode & CONSTS::ASYNC_WRITER_MODE) && !(mode & CONSTS::ACCESS_MODE_WRITER))
+    {
+        std::cerr << "writer mode must be enabled when using --async option!\n";
+        exit(0);
+    }
 
     MBConfig mbconf;
     memset(&mbconf, 0, sizeof(mbconf));
