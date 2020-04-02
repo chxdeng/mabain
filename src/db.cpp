@@ -298,7 +298,6 @@ void DB::PostDBUpdate(const MBConfig &config, bool init_header, bool update_head
             async_writer = AsyncWriter::CreateInstance(this);
     }
 
-#ifdef __SHM_QUEUE__
     if(!(init_header || update_header))
     {
         IndexHeader *header = dict->GetHeaderPtr();
@@ -310,7 +309,6 @@ void DB::PostDBUpdate(const MBConfig &config, bool init_header, bool update_head
             return;
         }
     }
-#endif
 
     Logger::Log(LOG_LEVEL_INFO, "connector %u successfully opened DB %s for %s",
                 identifier, mb_dir.c_str(),
@@ -487,13 +485,6 @@ int DB::Add(const char* key, int len, MBData &mbdata, bool overwrite)
     if(status != MBError::SUCCESS)
         return MBError::NOT_INITIALIZED;
 
-#ifndef __SHM_QUEUE__
-    if(async_writer != NULL)
-        return async_writer->Add(key, len, reinterpret_cast<const char *>(mbdata.buff),
-                                 mbdata.data_len, overwrite);
-
-    rval = dict->Add(reinterpret_cast<const uint8_t*>(key), len, mbdata, overwrite);
-#else
     if (async_writer == NULL && (options & CONSTS::ACCESS_MODE_WRITER))
     {
         rval = dict->Add(reinterpret_cast<const uint8_t*>(key), len, mbdata, overwrite);
@@ -503,9 +494,13 @@ int DB::Add(const char* key, int len, MBData &mbdata, bool overwrite)
         AsyncWriter *awr = AsyncWriter::GetInstance();
         if (awr)
         {
-            rval = awr->AddWithLock(key, len, mbdata, overwrite);
-            if (!overwrite && rval == MBError::IN_DICT)
-                rval = MBError::SUCCESS;
+            try {
+                rval = awr->AddWithLock(key, len, mbdata, overwrite);
+                if (!overwrite && rval == MBError::IN_DICT)
+                    rval = MBError::SUCCESS;
+            } catch (int error) {
+                rval = error;
+            }
         }
         else
             rval = MBError::TRY_AGAIN;
@@ -516,7 +511,6 @@ int DB::Add(const char* key, int len, MBData &mbdata, bool overwrite)
                          reinterpret_cast<const char*>(mbdata.buff), mbdata.data_len, overwrite);
         }
     }
-#endif
 
     return rval;
 }
@@ -546,12 +540,6 @@ int DB::Remove(const char *key, int len)
     if(status != MBError::SUCCESS)
         return MBError::NOT_INITIALIZED;
 
-#ifndef __SHM_QUEUE__
-    if(async_writer != NULL)
-        return async_writer->Remove(key, len);
-
-    rval = dict->Remove(reinterpret_cast<const uint8_t*>(key), len);
-#else
     if (async_writer == NULL && (options & CONSTS::ACCESS_MODE_WRITER))
     {
         rval = dict->Remove(reinterpret_cast<const uint8_t*>(key), len);
@@ -560,7 +548,6 @@ int DB::Remove(const char *key, int len)
     {
         rval = dict->SHMQ_Remove(reinterpret_cast<const char*>(key), len);
     }
-#endif
 
     return rval;
 }
@@ -574,11 +561,6 @@ int DB::RemoveAll()
 {
     if(status != MBError::SUCCESS)
         return MBError::NOT_INITIALIZED;
-
-#ifndef __SHM_QUEUE__
-    if(async_writer != NULL)
-        return async_writer->RemoveAll();
-#endif
 
     int rval;
     rval = dict->RemoveAll();
@@ -599,18 +581,6 @@ int DB::Backup(const char *bk_dir)
     if(options & MMAP_ANONYMOUS_MODE)
         return MBError::NOT_ALLOWED;
 
-#ifndef __SHM_QUEUE__
-    if(async_writer != NULL)
-        return async_writer->Backup(bk_dir);
-
-    try {
-        DBBackup bk(*this);
-        rval = bk.Backup(bk_dir);
-    } catch  (int error) {
-        Logger::Log(LOG_LEVEL_WARN, "Backup failed :%s", MBError::get_error_str(error));
-        rval = error;
-    }
-#else
     try {
         if (async_writer == NULL && (options & CONSTS::ASYNC_WRITER_MODE))
         {
@@ -625,7 +595,7 @@ int DB::Backup(const char *bk_dir)
         Logger::Log(LOG_LEVEL_WARN, "Backup failed :%s", MBError::get_error_str(error));
         rval = error;
     }
-#endif
+
     return rval;
 }
 
@@ -646,23 +616,6 @@ int DB::CollectResource(int64_t min_index_rc_size, int64_t min_data_rc_size,
     if(status != MBError::SUCCESS)
         return status;
 
-#ifndef __SHM_QUEUE__
-    if(async_writer != NULL)
-        return async_writer->CollectResource(min_index_rc_size, min_data_rc_size,
-                                             max_dbsz, max_dbcnt);
-
-    try {
-        ResourceCollection rc(*this);
-        rc.ReclaimResource(min_index_rc_size, min_data_rc_size, max_dbsz, max_dbcnt);
-    } catch (int error) {
-        if(error != MBError::RC_SKIPPED)
-        {
-            Logger::Log(LOG_LEVEL_ERROR, "failed to run gc: %s",
-                        MBError::get_error_str(error));
-            return error;
-        }
-    }
-#else
     try {
         if (async_writer == NULL && (options & CONSTS::ACCESS_MODE_WRITER))
         {
@@ -681,7 +634,7 @@ int DB::CollectResource(int64_t min_index_rc_size, int64_t min_data_rc_size,
             return error;
         }
     }
-#endif
+
     return MBError::SUCCESS;
 }
 
@@ -775,22 +728,12 @@ void DB::GetDBConfig(MBConfig &config) const
 
 bool DB::AsyncWriterEnabled() const
 {
-#ifdef __SHM_QUEUE__
     return true;
-#else
-    return (async_writer != NULL);
-#endif
 }
 
 bool DB::AsyncWriterBusy() const
 {
-#ifdef __SHM_QUEUE__
     return dict->SHMQ_Busy();
-#else
-    if(async_writer != NULL)
-        return async_writer->Busy();
-    return true;
-#endif
 }
 
 void DB::SetLogFile(const std::string &log_file)

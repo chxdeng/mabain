@@ -23,6 +23,24 @@
 
 namespace mabain {
 
+int ShmMutexLock(pthread_mutex_t &mutex)
+{
+    int rval = pthread_mutex_lock(&mutex);
+    if(rval == EOWNERDEAD)
+    {
+        Logger::Log(LOG_LEVEL_WARN, "owner died without unlock");
+        rval = pthread_mutex_consistent(&mutex);
+        if(rval != 0)
+            Logger::Log(LOG_LEVEL_ERROR, "failed to recover mutex %d", errno);
+    }
+    else if(rval != 0)
+    {
+        Logger::Log(LOG_LEVEL_ERROR, "failed to lock mutex %d", errno);
+    }
+
+    return rval;
+}
+
 int InitShmMutex(pthread_mutex_t *mutex)
 {
     if(mutex == NULL)

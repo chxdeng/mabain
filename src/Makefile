@@ -5,7 +5,7 @@ all: $(TARGET)
 
 CFLAGS  = -I. -I.. -Iutil -Wall -Werror -c -Wwrite-strings -Wsign-compare -Wcast-align -Wformat-security -fdiagnostics-show-option
 CFLAGS += -g -ggdb -fPIC -O2 -std=c++11
-CFLAGS += -D__SHM_LOCK__ -D__LOCK_FREE__ -D__SHM_QUEUE__
+CFLAGS += -D__SHM_LOCK__ -D__LOCK_FREE__
 LDFLAGS = -lpthread
 
 SOURCES = $(wildcard *.cpp) $(wildcard util/*.cpp)

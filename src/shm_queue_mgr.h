@@ -42,13 +42,8 @@ typedef struct _AsyncNode
     pthread_mutex_t   mutex;
     pthread_cond_t    cond;
 
-#ifdef __SHM_QUEUE__
     char key[MB_ASYNC_SHM_KEY_SIZE];
     char data[MB_ASYNC_SHM_DATA_SIZE];
-#else
-    char *key;
-    char *data;
-#endif
     int key_len;
     int data_len;
     bool overwrite;

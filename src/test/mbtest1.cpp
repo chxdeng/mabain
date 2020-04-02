@@ -207,13 +207,13 @@ static void* DeleteThread(void *arg)
         key = key_low.fetch_add(1, std::memory_order_release);
 
         keystr = tkey_int.get_key(key);
-        assert(db.Remove(keystr) == MBError::SUCCESS);
+        db.Remove(keystr);
 
         keystr = tkey_sha1.get_key(key);
-        assert(db.Remove(keystr) == MBError::SUCCESS);
+        db.Remove(keystr);
 
         keystr = tkey_sha2.get_key(key);
-        assert(db.Remove(keystr) == MBError::SUCCESS);
+        db.Remove(keystr);
     }
 
     db.Close();

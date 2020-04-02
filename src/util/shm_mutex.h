@@ -26,6 +26,7 @@ namespace mabain {
 int  InitShmMutex(pthread_mutex_t *mutex);
 int  InitShmRWLock(pthread_rwlock_t *lock);
 int  InitShmCond(pthread_cond_t *cond);
+int  ShmMutexLock(pthread_mutex_t &mutex);
 
 #ifdef __APPLE__
 int pthread_mutex_timedlock(pthread_mutex_t *mutex, const struct timespec *abs_timeout);

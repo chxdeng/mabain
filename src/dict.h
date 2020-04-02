@@ -32,10 +32,8 @@
 
 namespace mabain {
 
-#ifdef __SHM_QUEUE__
 struct _AsyncNode;
 typedef struct _AsyncNode AsyncNode;
-#endif
 struct _shm_lock_and_queue;
 typedef struct _shm_lock_and_queue shm_lock_and_queue;
 
@@ -69,7 +67,6 @@ public:
     // Delete all entries
     int RemoveAll();
 
-#ifdef __SHM_QUEUE__
     // multiple-process updates using shared memory queue
     int  SHMQ_Add(const char *key, int key_len, const char *data, int data_len,
                   bool overwrite);
@@ -79,7 +76,6 @@ public:
     int  SHMQ_CollectResource(int64_t m_index_rc_size, int64_t m_data_rc_size,
                               int64_t max_dbsz, int64_t max_dbcnt);
     bool SHMQ_Busy() const;
-#endif
 
     void ReserveData(const uint8_t* buff, int size, size_t &offset);
     void WriteData(const uint8_t *buff, unsigned len, size_t offset) const;
@@ -129,10 +125,8 @@ private:
     int ReadDataFromNode(MBData &data, const uint8_t *node_ptr) const;
     int DeleteDataFromEdge(MBData &data, EdgePtrs &edge_ptrs);
     int ReadNodeMatch(size_t node_off, int &match, MBData &data) const;
-#ifdef __SHM_QUEUE__
     int SHMQ_PrepareSlot(AsyncNode *node_ptr) const;
-    AsyncNode* SHMQ_AcquireSlot() const;
-#endif
+    AsyncNode* SHMQ_AcquireSlot(int &err) const;
 
     // DB access permission
     int options;
@@ -145,10 +139,8 @@ private:
     LockFree lfree;
 
     size_t reader_rc_off;
-#ifdef __SHM_QUEUE__
     AsyncNode *queue;
     shm_lock_and_queue *slaq;
-#endif
 };
 
 }

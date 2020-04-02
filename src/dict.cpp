@@ -51,12 +51,8 @@ Dict::Dict(const std::string &mbdir, bool init_header, int datasize,
            int64_t entry_per_bucket, uint32_t queue_size,
            const char *queue_dir)
          : options(db_options),
-#ifdef __SHM_QUEUE__
            mm(mbdir, init_header, memsize_index, db_options, block_sz_idx, max_num_index_blk, queue_size),
            queue(NULL)
-#else
-           mm(mbdir, init_header, memsize_index, db_options, block_sz_idx, max_num_index_blk, queue_size)
-#endif
 {
     status = MBError::NOT_INITIALIZED;
     reader_rc_off = 0;
@@ -89,9 +85,7 @@ Dict::Dict(const std::string &mbdir, bool init_header, int datasize,
     // initialize shared memory queue
     ShmQueueMgr qmgr;
     slaq = qmgr.CreateFile(header->shm_queue_id, queue_size, queue_dir);
-#ifdef __SHM_QUEUE__
     queue = slaq->queue;
-#endif
     lfree.LockFreeInit(&header->lock_free, header, db_options);
     mm.InitLockFreePtr(&lfree);
 
@@ -1172,7 +1166,6 @@ int Dict::InitShmObjects()
         return status;
 #endif
 
-#ifdef __SHM_QUEUE__
     for(int i = 0; i < header->async_queue_size; i++)
     {
         status = InitShmMutex(&queue[i].mutex);
@@ -1182,7 +1175,6 @@ int Dict::InitShmObjects()
         if(status  != MBError::SUCCESS)
             break;
     }
-#endif
 
     return status;
 }

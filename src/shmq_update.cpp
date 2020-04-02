@@ -24,8 +24,6 @@
 #include "async_writer.h"
 #include "./util/shm_mutex.h"
 
-#ifdef __SHM_QUEUE__
-
 namespace mabain {
 
 int Dict::SHMQ_Add(const char *key, int key_len, const char *data, int data_len,
@@ -36,32 +34,10 @@ int Dict::SHMQ_Add(const char *key, int key_len, const char *data, int data_len,
         return MBError::OUT_OF_BOUND;
     }
 
-    AsyncNode *node_ptr = SHMQ_AcquireSlot();
-    if(node_ptr == NULL)
-        return MBError::MUTEX_ERROR;
-
-    if (node_ptr->in_use.load(std::memory_order_consume))
-    {
-        struct timeval curr;
-        struct timespec tm_exp;
-        gettimeofday(&curr, NULL);
-        tm_exp.tv_nsec = (curr.tv_usec + 100) * 1000;
-        tm_exp.tv_sec = curr.tv_sec + tm_exp.tv_nsec / 1000000000L;
-        tm_exp.tv_nsec %= 1000000000L;
-
-        int rval = pthread_cond_timedwait(&node_ptr->cond, &node_ptr->mutex, &tm_exp);
-        if(rval == EOWNERDEAD)
-        {
-            rval = pthread_mutex_consistent(&node_ptr->mutex);
-            if (rval != 0) return MBError::MUTEX_ERROR;
-        }
-        if (node_ptr->in_use.load(std::memory_order_consume))
-        {
-            if(pthread_mutex_unlock(&node_ptr->mutex) != 0)
-                return MBError::MUTEX_ERROR;
-            return MBError::TRY_AGAIN;
-        }
-    }
+    int err = MBError::SUCCESS;
+    AsyncNode *node_ptr = SHMQ_AcquireSlot(err);
+    if(node_ptr == nullptr)
+        return err;
 
     memcpy(node_ptr->key, key, key_len);
     memcpy(node_ptr->data, data, data_len);
@@ -78,9 +54,10 @@ int Dict::SHMQ_Remove(const char *key, int len)
     if(len > MB_ASYNC_SHM_KEY_SIZE)
         return MBError::OUT_OF_BOUND;
 
-    AsyncNode *node_ptr = SHMQ_AcquireSlot();
-    if(node_ptr == NULL)
-        return MBError::MUTEX_ERROR;
+    int err = MBError::SUCCESS;
+    AsyncNode *node_ptr = SHMQ_AcquireSlot(err);
+    if(node_ptr == nullptr)
+        return err;
 
     memcpy(node_ptr->key, key, len);
     node_ptr->key_len = len;
@@ -90,9 +67,10 @@ int Dict::SHMQ_Remove(const char *key, int len)
 
 int Dict::SHMQ_RemoveAll()
 {
-    AsyncNode *node_ptr = SHMQ_AcquireSlot();
-    if(node_ptr == NULL)
-        return MBError::MUTEX_ERROR;
+    int err = MBError::SUCCESS;
+    AsyncNode *node_ptr = SHMQ_AcquireSlot(err);
+    if(node_ptr == nullptr)
+        return err;
 
     node_ptr->type = MABAIN_ASYNC_TYPE_REMOVE_ALL;
     return SHMQ_PrepareSlot(node_ptr);
@@ -100,14 +78,15 @@ int Dict::SHMQ_RemoveAll()
 
 int Dict::SHMQ_Backup(const char *backup_dir)
 {
-    if(backup_dir == NULL)
+    if(backup_dir == nullptr)
         return MBError::INVALID_ARG;
     if(strlen(backup_dir) >= MB_ASYNC_SHM_DATA_SIZE)
         return MBError::OUT_OF_BOUND;
 
-    AsyncNode *node_ptr = SHMQ_AcquireSlot();
-    if(node_ptr == NULL)
-        return MBError::MUTEX_ERROR;
+    int err = MBError::SUCCESS;
+    AsyncNode *node_ptr = SHMQ_AcquireSlot(err);
+    if(node_ptr == nullptr)
+        return err;
     snprintf(node_ptr->data, MB_ASYNC_SHM_DATA_SIZE, "%s", backup_dir);
     node_ptr->type = MABAIN_ASYNC_TYPE_BACKUP;
     return SHMQ_PrepareSlot(node_ptr);
@@ -118,9 +97,10 @@ int Dict::SHMQ_CollectResource(int64_t m_index_rc_size,
                                int64_t max_dbsz,
                                int64_t max_dbcnt)
 {
-    AsyncNode *node_ptr = SHMQ_AcquireSlot();
-    if(node_ptr == NULL)
-        return MBError::MUTEX_ERROR;
+    int err = MBError::SUCCESS;
+    AsyncNode *node_ptr = SHMQ_AcquireSlot(err);
+    if(node_ptr == nullptr)
+        return err;
 
     int64_t *data_ptr = (int64_t *) node_ptr->data;
     node_ptr->data_len = sizeof(int64_t)*4;
@@ -133,25 +113,24 @@ int Dict::SHMQ_CollectResource(int64_t m_index_rc_size,
     return SHMQ_PrepareSlot(node_ptr);
 }
 
-AsyncNode* Dict::SHMQ_AcquireSlot() const
+AsyncNode* Dict::SHMQ_AcquireSlot(int &err) const
 {
     uint32_t index = header->queue_index.fetch_add(1, std::memory_order_release);
     AsyncNode *node_ptr = queue + (index % header->async_queue_size);
 
-    struct timespec tm_exp;
-    tm_exp.tv_sec = time(NULL) + MB_ASYNC_SHM_LOCK_TMOUT;
-    tm_exp.tv_nsec = 0;
-    int rval = pthread_mutex_timedlock(&node_ptr->mutex, &tm_exp);
-
-    if(rval == EOWNERDEAD)
+    if(ShmMutexLock(node_ptr->mutex) != 0)
     {
-        rval = pthread_mutex_consistent(&node_ptr->mutex);
-        if (rval != 0) return NULL;
+        err = MBError::MUTEX_ERROR;
+        return nullptr;
     }
-    else if(rval != 0)
+
+    if(node_ptr->in_use.load(std::memory_order_consume))
     {
-        Logger::Log(LOG_LEVEL_ERROR, "shared memory mutex lock failed: %d", rval);
-        return NULL;
+        if(pthread_mutex_unlock(&node_ptr->mutex) != 0)
+            err = MBError::MUTEX_ERROR;
+        else
+            err = MBError::TRY_AGAIN;
+        return nullptr;
     }
 
     return node_ptr;
@@ -160,7 +139,6 @@ AsyncNode* Dict::SHMQ_AcquireSlot() const
 int Dict::SHMQ_PrepareSlot(AsyncNode *node_ptr) const
 {
     node_ptr->in_use.store(true, std::memory_order_release);
-    pthread_cond_signal(&node_ptr->cond);
     if(pthread_mutex_unlock(&node_ptr->mutex) != 0)
         return MBError::MUTEX_ERROR;
 
@@ -177,5 +155,3 @@ bool Dict::SHMQ_Busy() const
 }
 
 }
-
-#endif

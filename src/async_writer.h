@@ -34,17 +34,6 @@ class AsyncWriter
 public:
     ~AsyncWriter();
 
-#ifndef __SHM_QUEUE__
-    void UpdateNumUsers(int delta);
-    int  Add(const char *key, int key_len, const char *data, int data_len, bool overwrite);
-    int  Remove(const char *key, int len);
-    int  RemoveAll();
-    int  Backup(const char *backup_dir);
-    int  CollectResource(int64_t m_index_rc_size, int64_t m_data_rc_size, 
-                         int64_t max_dbsz, int64_t max_dbcnt);
-    bool Busy() const;
-#endif
-
     int  StopAsyncThread();
     int  ProcessTask(int ntasks, bool rc_mode);
     int  AddWithLock(const char *key, int len, MBData &mbdata, bool overwrite);
@@ -58,9 +47,7 @@ private:
     AsyncNode* AcquireSlot();
     int PrepareSlot(AsyncNode *node_ptr) const;
     void* async_writer_thread();
-#ifdef __SHM_QUEUE__
     uint32_t NextShmSlot(uint32_t windex, uint32_t qindex);
-#endif
 
     // db pointer
     DB *db;
@@ -71,13 +58,7 @@ private:
     bool stop_processing;
 
     AsyncNode *queue;
-#ifdef __SHM_QUEUE__
     IndexHeader *header;
-#else
-    std::atomic<int> num_users;
-    std::atomic<uint32_t> queue_index;
-    uint32_t writer_index;
-#endif
 
     bool is_rc_running;
     char *rc_backup_dir;
