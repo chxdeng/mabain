@@ -74,7 +74,7 @@ void DRMBase::WriteHeader(const std::string &header_path, uint8_t *buff)
 }
 
 void DRMBase::ValidateHeaderFile(const std::string &header_path, int mode,
-                                 int queue_buff_size, bool &update_header)
+                                 int queue_size, bool &update_header)
 {
     uint16_t hdr_ver[4];
     ReadHeaderVersion(header_path, hdr_ver);
@@ -110,6 +110,7 @@ void DRMBase::ValidateHeaderFile(const std::string &header_path, int mode,
         throw (int) MBError::OPEN_FAILURE;
     IndexHeader* hdr = reinterpret_cast<IndexHeader *>(hdr_file->GetMapAddr());
     hdr->shm_queue_id = get_file_inode(tmp_header_path);
+    hdr->async_queue_size = queue_size;
     Logger::Log(LOG_LEVEL_INFO, "setting shm queue id to be %ld", hdr->shm_queue_id);
     hdr_file->Flush();
     ResourcePool::getInstance().RemoveResourceByPath(tmp_header_path);

@@ -115,9 +115,7 @@ Dict::Dict(const std::string &mbdir, bool init_header, int datasize,
         {
             if(header->entry_per_bucket != entry_per_bucket)
             {
-                Destroy();
                 std::cerr << "mabain count per bucket not match\n";
-                throw (int) MBError::INVALID_SIZE;
             }
 
             free_lists = new FreeList(mbdir+"_dbfl", DATA_BUFFER_ALIGNMENT,

@@ -138,7 +138,7 @@ public:
 
     void PrintHeader(std::ostream &out_stream) const;
 
-    static void ValidateHeaderFile(const std::string &header_path, int mode, int queue_buff_size,
+    static void ValidateHeaderFile(const std::string &header_path, int mode, int queue_size,
                                    bool &update_header);
 
 protected:

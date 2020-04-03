@@ -254,7 +254,7 @@ void DB::PreCheckDB(const MBConfig &config, bool &init_header, bool &update_head
     {
         try {
             DRMBase::ValidateHeaderFile(mb_dir + "_mabain_h", config.options,
-                                        config.queue_size * sizeof(AsyncNode), update_header);
+                                        config.queue_size, update_header);
         } catch (int error) {
             status = error;
             return;
