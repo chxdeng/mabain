@@ -26,6 +26,7 @@ namespace mabain {
 int ShmMutexLock(pthread_mutex_t &mutex)
 {
     int rval = pthread_mutex_lock(&mutex);
+#ifndef __APPLE__
     if(rval == EOWNERDEAD)
     {
         Logger::Log(LOG_LEVEL_WARN, "owner died without unlock");
@@ -37,6 +38,7 @@ int ShmMutexLock(pthread_mutex_t &mutex)
     {
         Logger::Log(LOG_LEVEL_ERROR, "failed to lock mutex %d", errno);
     }
+#endif
 
     return rval;
 }
@@ -58,12 +60,14 @@ int InitShmMutex(pthread_mutex_t *mutex)
         pthread_mutexattr_destroy(&attr);
         return MBError::MUTEX_ERROR;
     }
+#ifndef __APPLE__
     if(pthread_mutexattr_setrobust(&attr, PTHREAD_MUTEX_ROBUST))
     {
         Logger::Log(LOG_LEVEL_WARN, "failed to set mutex to robust");
         pthread_mutexattr_destroy(&attr);
         return MBError::MUTEX_ERROR;
     }
+#endif
     if(pthread_mutexattr_setpshared(&attr, PTHREAD_PROCESS_SHARED))
     {
         Logger::Log(LOG_LEVEL_WARN, "failed to set mutex/PTHREAD_PROCESS_SHARED");

@@ -27,7 +27,6 @@
 #include "error.h"
 #include "integer_4b_5b.h"
 #include "async_writer.h"
-#include "util/shm_mutex.h"
 
 #define MAX_DATA_BUFFER_RESERVE_SIZE    0xFFFF
 #define NUM_DATA_BUFFER_RESERVE         MAX_DATA_BUFFER_RESERVE_SIZE/DATA_BUFFER_ALIGNMENT
@@ -84,7 +83,7 @@ Dict::Dict(const std::string &mbdir, bool init_header, int datasize,
 
     // initialize shared memory queue
     ShmQueueMgr qmgr;
-    slaq = qmgr.CreateFile(header->shm_queue_id, queue_size, queue_dir);
+    slaq = qmgr.CreateFile(header->shm_queue_id, queue_size, queue_dir, db_options);
     queue = slaq->queue;
     lfree.LockFreeInit(&header->lock_free, header, db_options);
     mm.InitLockFreePtr(&lfree);
@@ -1149,32 +1148,6 @@ pthread_rwlock_t* Dict::GetShmLockPtrs() const
 AsyncNode* Dict::GetAsyncQueuePtr() const
 {
     return slaq->queue;
-}
-
-int Dict::InitShmObjects()
-{
-    if(status != MBError::SUCCESS)
-        return MBError::NOT_INITIALIZED;
-
-    Logger::Log(LOG_LEVEL_INFO, "initializing shared memory objects");
-
-#ifdef __SHM_LOCK__
-    status = InitShmRWLock(&slaq->lock);
-    if(status != MBError::SUCCESS)
-        return status;
-#endif
-
-    for(int i = 0; i < header->async_queue_size; i++)
-    {
-        status = InitShmMutex(&queue[i].mutex);
-        if(status  != MBError::SUCCESS)
-            break;
-        status = InitShmCond(&queue[i].cond);
-        if(status  != MBError::SUCCESS)
-            break;
-    }
-
-    return status;
 }
 
 // Reserve buffer and write to it

@@ -176,6 +176,10 @@ int DB::ValidateConfig(MBConfig &config)
         std::cerr << "async queue size exceeds maximum\n";
     if(config.queue_size == 0 || config.queue_size > MB_MAX_NUM_SHM_QUEUE_NODE)
         config.queue_size = MB_MAX_NUM_SHM_QUEUE_NODE;
+#ifdef __APPLE__
+    if(config.queue_dir == nullptr)
+        config.queue_dir = config.mbdir;
+#endif
 
     return MBError::SUCCESS;
 }
@@ -278,7 +282,6 @@ void DB::PostDBUpdate(const MBConfig &config, bool init_header, bool update_head
         IndexHeader *header = dict->GetHeaderPtr();
         if(header != NULL) header->async_queue_size = config.queue_size;
         dict->Init(identifier);
-        dict->InitShmObjects();
     }
 
     if(dict->Status() != MBError::SUCCESS)
@@ -363,12 +366,21 @@ void DB::InitDB(MBConfig &config)
         return;
     }
 
-    dict = new Dict(mb_dir, init_header, config.data_size, config.options,
+    try {
+        dict = new Dict(mb_dir, init_header, config.data_size, config.options,
                     config.memcap_index, config.memcap_data,
                     config.block_size_index, config.block_size_data,
                     config.max_num_index_block, config.max_num_data_block,
                     config.num_entry_per_bucket, config.queue_size,
                     config.queue_dir);
+    } catch (int error) {
+        status = error;
+        Logger::Log(LOG_LEVEL_ERROR, "database %s check failed: %s", mb_dir.c_str(),
+                    MBError::get_error_str(status));
+        if(!(config.options & CONSTS::ACCESS_MODE_WRITER))
+            Logger::Log(LOG_LEVEL_WARN, "check if db writer is running.");
+        return;
+    }
 
     PostDBUpdate(config, init_header, update_header);
 }

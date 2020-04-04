@@ -103,8 +103,6 @@ public:
     int  ReadRootNode(uint8_t *node_buff, EdgePtrs &edge_ptrs, int &match,
                  MBData &data) const;
 
-    // Shared memory objects
-    int InitShmObjects();
     pthread_rwlock_t* GetShmLockPtrs() const;
     AsyncNode* GetAsyncQueuePtr() const;
 

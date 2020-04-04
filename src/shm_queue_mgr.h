@@ -40,7 +40,6 @@ typedef struct _AsyncNode
 {
     std::atomic<bool> in_use;
     pthread_mutex_t   mutex;
-    pthread_cond_t    cond;
 
     char key[MB_ASYNC_SHM_KEY_SIZE];
     char data[MB_ASYNC_SHM_DATA_SIZE];
@@ -52,6 +51,7 @@ typedef struct _AsyncNode
 
 typedef struct _shm_lock_and_queue
 {
+    int initialized;
     pthread_rwlock_t lock;
     AsyncNode queue[MB_MAX_NUM_SHM_QUEUE_NODE];
 } shm_lock_and_queue;
@@ -61,10 +61,10 @@ class ShmQueueMgr
 public:
     ShmQueueMgr();
     ~ShmQueueMgr();
-    shm_lock_and_queue* CreateFile(uint64_t qid, int qsize, const char *queue_dir);
+    shm_lock_and_queue* CreateFile(uint64_t qid, int qsize, const char *queue_dir, int options);
 
 private:
-    std::string mbdir;
+    void InitShmObjects(shm_lock_and_queue *slaq, int queue_size);
 };
 
 }
