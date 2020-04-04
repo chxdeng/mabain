@@ -54,13 +54,16 @@ int InitShmMutex(pthread_mutex_t *mutex)
         Logger::Log(LOG_LEVEL_WARN, "pthread_mutexkattr_init failed");
         return MBError::MUTEX_ERROR;
     }
-    if(pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_ERRORCHECK))
+#ifndef __APPLE__
+    // Set mutex priority protocol to avoid hang in glibc
+    // See https://bugzilla.redhat.com/show_bug.cgi?id=1401665 and
+    // https://bugs.launchpad.net/ubuntu/+source/glibc/+bug/1706780
+    if(pthread_mutexattr_setprotocol(&attr, PTHREAD_PRIO_INHERIT))
     {
-        Logger::Log(LOG_LEVEL_WARN, "failed to set mutex type (PTHREAD_MUTEX_ERRORCHECK)");
+        Logger::Log(LOG_LEVEL_WARN, "failed to set mutex priority protocol");
         pthread_mutexattr_destroy(&attr);
         return MBError::MUTEX_ERROR;
     }
-#ifndef __APPLE__
     if(pthread_mutexattr_setrobust(&attr, PTHREAD_MUTEX_ROBUST))
     {
         Logger::Log(LOG_LEVEL_WARN, "failed to set mutex to robust");
