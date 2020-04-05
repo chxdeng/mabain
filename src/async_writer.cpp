@@ -107,8 +107,6 @@ int AsyncWriter::ProcessTask(int ntasks, bool rc_mode)
     {
         node_ptr = &queue[header->writer_index % header->async_queue_size];
 
-        if(ShmMutexLock(node_ptr->mutex) != 0)
-            throw (int) MBError::MUTEX_ERROR;
         if(node_ptr->in_use.load(std::memory_order_consume))
         {
             switch(node_ptr->type)
@@ -184,12 +182,6 @@ int AsyncWriter::ProcessTask(int ntasks, bool rc_mode)
         {
             // done processing
             count = ntasks;
-        }
-
-        if(pthread_mutex_unlock(&node_ptr->mutex) != 0)
-        {
-            Logger::Log(LOG_LEVEL_ERROR, "failed to unlock mutex");
-            throw (int) MBError::MUTEX_ERROR;
         }
 
         if(rval != MBError::SUCCESS)
@@ -269,9 +261,6 @@ void* AsyncWriter::async_writer_thread()
 
         if(skip) continue;
 
-        if(ShmMutexLock(node_ptr->mutex) != 0)
-            throw (int) MBError::MUTEX_ERROR;
-
         // process the node
         switch(node_ptr->type)
         {
@@ -343,11 +332,6 @@ void* AsyncWriter::async_writer_thread()
         header->writer_index++;
         node_ptr->type = MABAIN_ASYNC_TYPE_NONE;
         node_ptr->in_use.store(false, std::memory_order_release);
-        if(pthread_mutex_unlock(&node_ptr->mutex) != 0)
-        {
-            Logger::Log(LOG_LEVEL_ERROR, "failed to unlock mutex");
-            throw (int) MBError::MUTEX_ERROR;
-        }
 
         if(rval != MBError::SUCCESS)
         {
