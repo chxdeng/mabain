@@ -39,8 +39,8 @@
 
 namespace mabain {
 
-// Current mabain version 1.3.0
-uint16_t version[4] = {1, 3, 0, 0};
+// Current mabain version 1.3.1
+uint16_t version[4] = {1, 3, 1, 0};
 
 DB::~DB()
 {
@@ -292,7 +292,7 @@ void DB::PostDBUpdate(const MBConfig &config, bool init_header, bool update_head
         return;
     }
 
-    lock.Init(dict->GetShmLockPtrs());
+    lock.Init(dict->GetShmLockPtr());
     UpdateNumHandlers(config.options, 1);
 
     if(config.options & CONSTS::ACCESS_MODE_WRITER)
@@ -575,7 +575,14 @@ int DB::RemoveAll()
         return MBError::NOT_INITIALIZED;
 
     int rval;
-    rval = dict->RemoveAll();
+    if (async_writer == NULL && (options & CONSTS::ACCESS_MODE_WRITER))
+    {
+        rval = dict->RemoveAll();
+    }
+    else
+    {
+        rval = dict->SHMQ_RemoveAll();
+    }
     return rval;
 }
 
@@ -672,14 +679,9 @@ void DB::PrintHeader(std::ostream &out_stream) const
         dict->PrintHeader(out_stream);
 }
 
-int DB::WrLock()
+int DB::Lock()
 {
-    return lock.WrLock();
-}
-
-int DB::RdLock()
-{
-    return lock.RdLock();
+    return lock.Lock();
 }
 
 int DB::UnLock()
@@ -687,22 +689,12 @@ int DB::UnLock()
     return lock.UnLock();
 }
 
-int DB::TryWrLock()
-{
-    return lock.TryWrLock();
-}
-
 int DB::ClearLock() const
 {
-#ifdef __SHM_LOCK__
     // No db handler should hold mutex when this is called.
     if(status != MBError::SUCCESS)
         return status;
-    return InitShmRWLock(dict->GetShmLockPtrs());
-#else
-    // Nothing needs to be done if we don't use shared memory mutex.
-    return MBError::SUCCESS;
-#endif
+    return InitShmMutex(dict->GetShmLockPtr());
 }
 
 int DB::SetLogLevel(int level)

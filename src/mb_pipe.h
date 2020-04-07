@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2017 Cisco Inc.
+ * Copyright (C) 2020 Cisco Inc.
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU General Public License, version 2,
@@ -16,46 +16,30 @@
 
 // @author Changxue Deng <chadeng@cisco.com>
 
-#ifndef __LOCK_H__
-#define __LOCK_H__
+#ifndef __MB_PIPE_H__
+#define __MB_PIPE_H__
 
-#include <pthread.h>
-
-#include "./util/shm_mutex.h"
+#include <string>
 
 namespace mabain {
 
-// multiple-thread/process reader/writer lock
-
-class MBLock
+// Inter-process synchronization using named pipe
+class MBPipe
 {
 public:
-    MBLock();
-    ~MBLock();
-
-    inline int Lock();
-    inline int UnLock();
-    inline int TryLock();
-
-    void Init(pthread_mutex_t *lock);
+    MBPipe();
+    MBPipe(const std::string &mbdir, int mode);
+    ~MBPipe();
+    // timeout is in millisecond
+    void Wait(int timeout);
+    int  Signal();
 
 private:
-    pthread_mutex_t *mb_lock_ptr;
+    void Close();
+
+    std::string fifo_path;
+    int fd;
 };
-
-inline int MBLock::Lock()
-{
-    if(mb_lock_ptr == NULL)
-        return -1;
-    return ShmMutexLock(*mb_lock_ptr);
-}
-
-inline int MBLock::UnLock()
-{
-    if(mb_lock_ptr == NULL)
-        return -1;
-    return pthread_mutex_unlock(mb_lock_ptr);
-}
 
 }
 

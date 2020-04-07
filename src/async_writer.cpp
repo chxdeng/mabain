@@ -27,7 +27,6 @@
 #include "mb_rc.h"
 #include "integer_4b_5b.h"
 #include "dict.h"
-#include "./util/shm_mutex.h"
 
 namespace mabain {
 
@@ -84,6 +83,7 @@ AsyncWriter::~AsyncWriter()
 int AsyncWriter::StopAsyncThread()
 {
     stop_processing = true;
+    dict->SHMQ_Signal();
 
     if(tid != 0)
     {
@@ -225,6 +225,7 @@ void* AsyncWriter::async_writer_thread()
     int64_t max_dbsize = MAX_6B_OFFSET;
     int64_t max_dbcount = MAX_6B_OFFSET;
     bool skip;
+    MBPipe mbp(db->GetDBDir(), CONSTS::ACCESS_MODE_WRITER);
 
     Logger::Log(LOG_LEVEL_INFO, "async writer started");
     ResourceCollection rc(*db);
@@ -245,8 +246,8 @@ void* AsyncWriter::async_writer_thread()
                 break;
             }
 
-#define __ASYNC_THREAD_SLEEP_TIME 50000
-            usleep(__ASYNC_THREAD_SLEEP_TIME);
+#define __ASYNC_THREAD_SLEEP_TIME 1000
+            mbp.Wait(__ASYNC_THREAD_SLEEP_TIME);
 
             auto windex = header->writer_index;
             auto qindex = header->queue_index.load(std::memory_order_consume);
@@ -267,40 +268,40 @@ void* AsyncWriter::async_writer_thread()
             case MABAIN_ASYNC_TYPE_ADD:
                 mbd.buff = (uint8_t *) node_ptr->data;
                 mbd.data_len = node_ptr->data_len;
+                writer_lock.lock();
                 try {
-                    writer_lock.lock();
                     rval = dict->Add((uint8_t *)node_ptr->key, node_ptr->key_len, mbd,
                                      node_ptr->overwrite);
-                    writer_lock.unlock();
                 } catch (int err) {
                     Logger::Log(LOG_LEVEL_ERROR, "dict->Add throws error %s",
                                 MBError::get_error_str(err));
                     rval = err;
                 }
+                writer_lock.unlock();
                 break;
             case MABAIN_ASYNC_TYPE_REMOVE:
                 mbd.options |= CONSTS::OPTION_FIND_AND_STORE_PARENT;
+                writer_lock.lock();
                 try {
-                    writer_lock.lock();
                     rval = dict->Remove((uint8_t *)node_ptr->key, node_ptr->key_len, mbd);
-                    writer_lock.unlock();
                 } catch (int err) {
                     Logger::Log(LOG_LEVEL_ERROR, "dict->Remmove throws error %s",
                                 MBError::get_error_str(err));
                     rval = err;
                 }
+                writer_lock.unlock();
                 mbd.options &= ~CONSTS::OPTION_FIND_AND_STORE_PARENT;
                 break;
             case MABAIN_ASYNC_TYPE_REMOVE_ALL:
+                writer_lock.lock();
                 try {
-                    writer_lock.lock();
                     rval = dict->RemoveAll();
-                    writer_lock.unlock();
                 } catch (int err) {
                     Logger::Log(LOG_LEVEL_ERROR, "dict->RemoveAll throws error %s",
                                 MBError::get_error_str(err));
                     rval = err;
                 }
+                writer_lock.unlock();
                 break;
             case MABAIN_ASYNC_TYPE_RC:
                 rval = MBError::SUCCESS;
@@ -350,9 +351,10 @@ void* AsyncWriter::async_writer_thread()
                 rc.ReclaimResource(min_index_size, min_data_size, max_dbsize, max_dbcount, this);
             } catch (int error) {
                 if(error != MBError::RC_SKIPPED)
+                {
                     Logger::Log(LOG_LEVEL_WARN, "rc failed :%s", MBError::get_error_str(error));
-                else
                     rval = error;
+                }
             }
             writer_lock.unlock();
 
@@ -384,9 +386,15 @@ int AsyncWriter::AddWithLock(const char *key, int len, MBData &mbdata, bool over
 {
     if (header->rc_flag.load(std::memory_order_relaxed))
         return MBError::TRY_AGAIN;
+
     using Ms = std::chrono::milliseconds;
     if (writer_lock.try_lock_for(Ms(1000))) {
-        int rval = dict->Add(reinterpret_cast<const uint8_t*>(key), len, mbdata, overwrite);
+        int rval;
+        try {
+            rval = dict->Add(reinterpret_cast<const uint8_t*>(key), len, mbdata, overwrite);
+        } catch (int error) {
+            rval = error;
+        }
         writer_lock.unlock();
         return rval;
     }

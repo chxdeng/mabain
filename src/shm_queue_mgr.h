@@ -52,7 +52,7 @@ typedef struct _AsyncNode
 typedef struct _shm_lock_and_queue
 {
     int initialized;
-    pthread_rwlock_t lock;
+    pthread_mutex_t lock;
     AsyncNode queue[MB_MAX_NUM_SHM_QUEUE_NODE];
 } shm_lock_and_queue;
 

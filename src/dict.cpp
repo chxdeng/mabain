@@ -87,6 +87,7 @@ Dict::Dict(const std::string &mbdir, bool init_header, int datasize,
     queue = slaq->queue;
     lfree.LockFreeInit(&header->lock_free, header, db_options);
     mm.InitLockFreePtr(&lfree);
+    mbp = MBPipe(mbdir, 0);
 
     // Open data file
     kv_file = new RollableFile(mbdir + "_mabain_d",
@@ -1140,7 +1141,7 @@ int Dict::RemoveAll()
     return rval;
 }
 
-pthread_rwlock_t* Dict::GetShmLockPtrs() const
+pthread_mutex_t* Dict::GetShmLockPtr() const
 {
     return &(slaq->lock);
 }

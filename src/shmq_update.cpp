@@ -136,13 +136,19 @@ AsyncNode* Dict::SHMQ_AcquireSlot(int &err) const
     return node_ptr;
 }
 
-int Dict::SHMQ_PrepareSlot(AsyncNode *node_ptr) const
+int Dict::SHMQ_PrepareSlot(AsyncNode *node_ptr)
 {
     node_ptr->in_use.store(true, std::memory_order_release);
     if(pthread_mutex_unlock(&node_ptr->mutex) != 0)
         return MBError::MUTEX_ERROR;
 
+    mbp.Signal();
     return MBError::SUCCESS;
+}
+
+void Dict::SHMQ_Signal()
+{
+    mbp.Signal();
 }
 
 bool Dict::SHMQ_Busy() const

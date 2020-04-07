@@ -35,11 +35,9 @@ void ShmQueueMgr::InitShmObjects(shm_lock_and_queue *slaq, int queue_size)
 {
     int rval = MBError::SUCCESS;
 
-#ifdef __SHM_LOCK__
-    rval = InitShmRWLock(&slaq->lock);
+    rval = InitShmMutex(&slaq->lock);
     if(rval != MBError::SUCCESS)
         throw rval;
-#endif
 
     AsyncNode *queue = slaq->queue;
     for(int i = 0; i < queue_size; i++)

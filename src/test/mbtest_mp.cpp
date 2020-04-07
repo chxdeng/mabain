@@ -52,7 +52,10 @@ int main(int argc, char *argv[])
 
     for(int i = 0; i < num; i++) {
         std::string kv = tkey.get_key(n0 + i);
-        int rval = db->Add(kv, kv);
+        int rval;
+        do {
+            rval = db->Add(kv, kv);
+        } while(rval == MBError::TRY_AGAIN);
         if(rval != MBError::SUCCESS) {
             std::cout << "failed to add " << kv << " :" << MBError::get_error_str(rval) << std::endl;
         }

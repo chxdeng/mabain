@@ -158,10 +158,8 @@ public:
     bool AsyncWriterBusy() const;
 
     // multi-thread or multi-process locking for DB management
-    int WrLock();
-    int RdLock();
+    int Lock();
     int UnLock();
-    int TryWrLock();
     int ClearLock() const;
 
     int UpdateNumHandlers(int mode, int delta);

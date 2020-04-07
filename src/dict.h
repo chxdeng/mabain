@@ -29,6 +29,7 @@
 #include "lock_free.h"
 #include "shm_queue_mgr.h"
 #include "async_writer.h"
+#include "mb_pipe.h"
 
 namespace mabain {
 
@@ -75,6 +76,7 @@ public:
     int  SHMQ_Backup(const char *backup_dir);
     int  SHMQ_CollectResource(int64_t m_index_rc_size, int64_t m_data_rc_size,
                               int64_t max_dbsz, int64_t max_dbcnt);
+    void SHMQ_Signal();
     bool SHMQ_Busy() const;
 
     void ReserveData(const uint8_t* buff, int size, size_t &offset);
@@ -103,7 +105,7 @@ public:
     int  ReadRootNode(uint8_t *node_buff, EdgePtrs &edge_ptrs, int &match,
                  MBData &data) const;
 
-    pthread_rwlock_t* GetShmLockPtrs() const;
+    pthread_mutex_t* GetShmLockPtr() const;
     AsyncNode* GetAsyncQueuePtr() const;
 
     void UpdateNumReader(int delta) const;
@@ -123,7 +125,7 @@ private:
     int ReadDataFromNode(MBData &data, const uint8_t *node_ptr) const;
     int DeleteDataFromEdge(MBData &data, EdgePtrs &edge_ptrs);
     int ReadNodeMatch(size_t node_off, int &match, MBData &data) const;
-    int SHMQ_PrepareSlot(AsyncNode *node_ptr) const;
+    int SHMQ_PrepareSlot(AsyncNode *node_ptr);
     AsyncNode* SHMQ_AcquireSlot(int &err) const;
 
     // DB access permission
@@ -139,6 +141,7 @@ private:
     size_t reader_rc_off;
     AsyncNode *queue;
     shm_lock_and_queue *slaq;
+    MBPipe mbp;
 };
 
 }
