@@ -21,11 +21,9 @@
 
 #include <pthread.h>
 
-#include "./util/shm_mutex.h"
-
 namespace mabain {
 
-// multiple-thread/process reader/writer lock
+// multiple-thread/process lock
 
 class MBLock
 {
@@ -42,20 +40,6 @@ public:
 private:
     pthread_mutex_t *mb_lock_ptr;
 };
-
-inline int MBLock::Lock()
-{
-    if(mb_lock_ptr == NULL)
-        return -1;
-    return ShmMutexLock(*mb_lock_ptr);
-}
-
-inline int MBLock::UnLock()
-{
-    if(mb_lock_ptr == NULL)
-        return -1;
-    return pthread_mutex_unlock(mb_lock_ptr);
-}
 
 }
 

@@ -17,6 +17,7 @@
 // @author Changxue Deng <chadeng@cisco.com>
 
 #include "lock.h"
+#include "./util/shm_mutex.h"
 
 namespace mabain {
 
@@ -31,6 +32,20 @@ MBLock::MBLock() : mb_lock_ptr(nullptr)
 
 MBLock::~MBLock()
 {
+}
+
+int MBLock::Lock()
+{
+    if(mb_lock_ptr == NULL)
+        return -1;
+    return ShmMutexLock(*mb_lock_ptr);
+}
+
+int MBLock::UnLock()
+{
+    if(mb_lock_ptr == NULL)
+        return -1;
+    return pthread_mutex_unlock(mb_lock_ptr);
 }
 
 }
