@@ -31,9 +31,8 @@ public:
     MBLock();
     ~MBLock();
 
-    inline int Lock();
-    inline int UnLock();
-    inline int TryLock();
+    int Lock();
+    int UnLock();
 
     void Init(pthread_mutex_t *lock);
 

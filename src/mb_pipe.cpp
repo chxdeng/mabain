@@ -99,7 +99,11 @@ void MBPipe::Wait(int timeout)
         usleep(timeout * 1000);
         return;
     }
+#ifdef __APPLE__
+    if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL))
+#else
     if (pfd.revents & (POLLRDHUP | POLLERR | POLLHUP | POLLNVAL))
+#endif
     {
         Logger::Log(LOG_LEVEL_WARN, "pipe read poll error");
         Close();
@@ -159,7 +163,11 @@ int MBPipe::Signal()
                     strerror(errno));
         return MBError::INVALID_ARG;
     }
+#ifdef __APPLE__
+    if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL))
+#else
     if (pfd.revents & (POLLRDHUP | POLLERR | POLLHUP | POLLNVAL))
+#endif
     {
         Logger::Log(LOG_LEVEL_DEBUG, "pipe write poll error");
         Close();
