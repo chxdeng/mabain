@@ -118,18 +118,18 @@ AsyncNode* Dict::SHMQ_AcquireSlot(int &err) const
     uint32_t index = header->queue_index.fetch_add(1, std::memory_order_release);
     AsyncNode *node_ptr = queue + (index % header->async_queue_size);
 
-    if(ShmMutexLock(node_ptr->mutex) != 0)
+    if(node_ptr->in_use.load(std::memory_order_consume))
     {
-        err = MBError::MUTEX_ERROR;
+        // This slot is being processed by writer.
+        err = MBError::TRY_AGAIN;
         return nullptr;
     }
 
-    if(node_ptr->in_use.load(std::memory_order_consume))
+    uint16_t nreader = node_ptr->num_reader.fetch_add(1, std::memory_order_release);
+    if(nreader != 0)
     {
-        if(pthread_mutex_unlock(&node_ptr->mutex) != 0)
-            err = MBError::MUTEX_ERROR;
-        else
-            err = MBError::TRY_AGAIN;
+        // This slot is being processed by another reader.
+        err = MBError::TRY_AGAIN;
         return nullptr;
     }
 
@@ -139,8 +139,6 @@ AsyncNode* Dict::SHMQ_AcquireSlot(int &err) const
 int Dict::SHMQ_PrepareSlot(AsyncNode *node_ptr)
 {
     node_ptr->in_use.store(true, std::memory_order_release);
-    if(pthread_mutex_unlock(&node_ptr->mutex) != 0)
-        return MBError::MUTEX_ERROR;
 
     mbp.Signal();
     return MBError::SUCCESS;

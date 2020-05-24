@@ -39,7 +39,7 @@ namespace mabain {
 typedef struct _AsyncNode
 {
     std::atomic<bool> in_use;
-    pthread_mutex_t   mutex;
+    std::atomic<uint16_t> num_reader;
 
     char key[MB_ASYNC_SHM_KEY_SIZE];
     char data[MB_ASYNC_SHM_DATA_SIZE];

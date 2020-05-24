@@ -173,6 +173,7 @@ int AsyncWriter::ProcessTask(int ntasks, bool rc_mode)
             }
 
             header->writer_index++;
+            node_ptr->num_reader.store(0, std::memory_order_release);
             node_ptr->type = MABAIN_ASYNC_TYPE_NONE;
             node_ptr->in_use.store(false, std::memory_order_release);
             mbd.Clear();
@@ -324,13 +325,14 @@ void* AsyncWriter::async_writer_thread()
                 } catch (int error) {
                     rval = error;
                 }
-                    break;
+                break;
             default:
                 rval = MBError::INVALID_ARG;
                 break;
         }
 
         header->writer_index++;
+        node_ptr->num_reader.store(0, std::memory_order_release);
         node_ptr->type = MABAIN_ASYNC_TYPE_NONE;
         node_ptr->in_use.store(false, std::memory_order_release);
 
