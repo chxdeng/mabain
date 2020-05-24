@@ -380,7 +380,7 @@ void* AsyncWriter::async_writer_thread()
 
 void* AsyncWriter::async_thread_wrapper(void *context)
 {
-    AsyncWriter *instance_ptr = static_cast<AsyncWriter *>(context);
+    AsyncWriter *instance_ptr = reinterpret_cast<AsyncWriter *>(context);
     return instance_ptr->async_writer_thread();
 }
 

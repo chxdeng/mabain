@@ -113,7 +113,7 @@ DictMem::DictMem(const std::string &mbdir, bool init_header, size_t memsize,
         // "writing to an object of type '...' with no trivial copy-assignment".
         //
         // This new warning is `-Werror=class-memaccess`.
-        memset(static_cast<void*>(header), 0, sizeof(IndexHeader));
+        memset(reinterpret_cast<void*>(header), 0, sizeof(IndexHeader));
         header->index_block_size = block_size;
     }
     kv_file = new RollableFile(mbdir + "_mabain_i",

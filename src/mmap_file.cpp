@@ -87,12 +87,12 @@ uint8_t* MmapFileIO::MapFile(size_t size, off_t offset, bool sliding)
     if(options & MMAP_ANONYMOUS_MODE)
     {
         assert(offset == 0 && !sliding);
-        addr = static_cast<unsigned char *>(mmap(NULL, size, mode,
+        addr = reinterpret_cast<unsigned char *>(mmap(NULL, size, mode,
                                   MAP_SHARED | MAP_ANONYMOUS, -1, 0));
     }
     else
     {
-        addr = static_cast<unsigned char *>(FileIO::MapFile(size, mode,
+        addr = reinterpret_cast<unsigned char *>(FileIO::MapFile(size, mode,
                                   MAP_SHARED, offset));
     }
 
@@ -161,7 +161,7 @@ size_t MmapFileIO::RandomWrite(const void *data, size_t size, off_t offset)
 
     // If the file is mmaped, we need to write to the memory or file.
     off_t offset_end = static_cast<off_t>(size) + offset;
-    const unsigned char *ptr = static_cast<const unsigned char *>(data);
+    const unsigned char *ptr = reinterpret_cast<const unsigned char *>(data);
     if(offset < mmap_start)
     {
         if(offset_end <= mmap_start)
@@ -257,7 +257,7 @@ size_t MmapFileIO::RandomRead(void *buff, size_t size, off_t offset)
 
     size_t bytes_read;
     off_t offset_end = static_cast<off_t>(size) + offset;
-    unsigned char *ptr = static_cast<unsigned char *>(buff);
+    unsigned char *ptr = reinterpret_cast<unsigned char *>(buff);
     if(offset < mmap_start)
     {
         if(offset_end <= mmap_start)

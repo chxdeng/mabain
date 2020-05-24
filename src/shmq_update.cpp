@@ -102,7 +102,7 @@ int Dict::SHMQ_CollectResource(int64_t m_index_rc_size,
     if(node_ptr == nullptr)
         return err;
 
-    int64_t *data_ptr = (int64_t *) node_ptr->data;
+    int64_t *data_ptr = reinterpret_cast<int64_t *>(node_ptr->data);
     node_ptr->data_len = sizeof(int64_t)*4;
     data_ptr[0] = m_index_rc_size;
     data_ptr[1] = m_data_rc_size;
