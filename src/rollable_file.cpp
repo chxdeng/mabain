@@ -79,11 +79,11 @@ RollableFile::RollableFile(const std::string &fpath, size_t blocksize, size_t me
         Logger::Log(LOG_LEVEL_INFO, "rc_offset_percentage is set to %d", rc_offset_percentage);
     }
 
-    Logger::Log(LOG_LEVEL_INFO, "opening rollable file %s for %s, mmap size: %d",
+    Logger::Log(LOG_LEVEL_DEBUG, "opening rollable file %s for %s, mmap size: %d",
             path.c_str(), (mode & CONSTS::ACCESS_MODE_WRITER)?"writing":"reading", mmap_mem);
     if(!sliding_mmap)
     {
-        Logger::Log(LOG_LEVEL_INFO, "sliding mmap is turned off for " + fpath);
+        Logger::Log(LOG_LEVEL_DEBUG, "sliding mmap is turned off for " + fpath);
     }
     else
     {

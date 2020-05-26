@@ -1305,7 +1305,7 @@ void Dict::UpdateNumReader(int delta) const
     if(header->num_reader < 0)
         header->num_reader = 0;
 
-    Logger::Log(LOG_LEVEL_INFO, "number of reader is set to: %d",
+    Logger::Log(LOG_LEVEL_DEBUG, "number of reader is set to: %d",
                 header->num_reader);
 }
 

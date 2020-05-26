@@ -51,7 +51,7 @@ MBPipe::MBPipe(const std::string &mbdir, int mode)
         fd = open(fifo_path.c_str(), O_RDONLY | O_NONBLOCK);
         if (fd < 0)
         {
-            Logger::Log(LOG_LEVEL_WARN, "failed to open fifo %s %s",
+            Logger::Log(LOG_LEVEL_DEBUG, "failed to open fifo %s %s",
                         fifo_path.c_str(), strerror(errno));
         }
     }
@@ -76,7 +76,7 @@ void MBPipe::Wait(int timeout)
         fd = open(fifo_path.c_str(), O_RDONLY | O_NONBLOCK);
         if (fd < 0)
         {
-            Logger::Log(LOG_LEVEL_WARN, "failed to open fifo %s %d",
+            Logger::Log(LOG_LEVEL_DEBUG, "failed to open fifo %s %d",
                         fifo_path.c_str(), strerror(errno));
             usleep(timeout * 1000);
             return;
@@ -94,7 +94,7 @@ void MBPipe::Wait(int timeout)
         return;
     if (pollret < 0)
     {
-        Logger::Log(LOG_LEVEL_WARN, "poll on pipe read failed errno: %s",
+        Logger::Log(LOG_LEVEL_DEBUG, "poll on pipe read failed errno: %s",
                     strerror(errno));
         usleep(timeout * 1000);
         return;
@@ -105,7 +105,7 @@ void MBPipe::Wait(int timeout)
     if (pfd.revents & (POLLRDHUP | POLLERR | POLLHUP | POLLNVAL))
 #endif
     {
-        Logger::Log(LOG_LEVEL_WARN, "pipe read poll error");
+        Logger::Log(LOG_LEVEL_DEBUG, "pipe read poll error");
         Close();
         usleep(timeout * 1000);
         return;
@@ -122,7 +122,7 @@ void MBPipe::Wait(int timeout)
                 continue;
             if (!(errno == EAGAIN || errno == EWOULDBLOCK))
             {
-                Logger::Log(LOG_LEVEL_INFO, "pipe read failed %s",
+                Logger::Log(LOG_LEVEL_DEBUG, "pipe read failed %s",
                         strerror(errno));
                 Close();
             }
@@ -130,7 +130,7 @@ void MBPipe::Wait(int timeout)
         }
         else if (nread == 0)
         {
-            Logger::Log(LOG_LEVEL_WARN, "pipe writer disconnected");
+            Logger::Log(LOG_LEVEL_DEBUG, "pipe writer disconnected");
             Close();
         }
     } while (nread == __MB_ASYNC_READ_BUFFER_SIZE);
@@ -159,7 +159,7 @@ int MBPipe::Signal()
         return MBError::NO_RESOURCE;
     if (pollret < 0)
     {
-        Logger::Log(LOG_LEVEL_WARN, "poll on pipe write failed errno: %s",
+        Logger::Log(LOG_LEVEL_DEBUG, "poll on pipe write failed errno: %s",
                     strerror(errno));
         return MBError::INVALID_ARG;
     }
@@ -178,7 +178,7 @@ int MBPipe::Signal()
     {
         if (!(errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR))
         {
-            Logger::Log(LOG_LEVEL_WARN, "failed to signal async writer errno: %s",
+            Logger::Log(LOG_LEVEL_DEBUG, "failed to signal async writer errno: %s",
                         strerror(errno));
             Close();
         }
