@@ -81,10 +81,13 @@ Dict::Dict(const std::string &mbdir, bool init_header, int datasize,
         header->data_block_size = block_sz_data;
     }
 
-    // initialize shared memory queue
-    ShmQueueMgr qmgr;
-    slaq = qmgr.CreateFile(header->shm_queue_id, queue_size, queue_dir, db_options);
-    queue = slaq->queue;
+    if (!(db_options & CONSTS::READ_ONLY_DB))
+    {
+        // initialize shared memory queue
+        ShmQueueMgr qmgr;
+        slaq = qmgr.CreateFile(header->shm_queue_id, queue_size, queue_dir, db_options);
+        queue = slaq->queue;
+    }
     lfree.LockFreeInit(&header->lock_free, header, db_options);
     mm.InitLockFreePtr(&lfree);
     mbp = MBPipe(mbdir, 0);
@@ -375,6 +378,7 @@ int Dict::ReadDataFromEdge(MBData &data, const EdgePtrs &edge_ptrs) const
         if(data.Resize(data_len[0]) != MBError::SUCCESS)
             return MBError::NO_MEMORY;
     }
+
     if(ReadData(data.buff, data_len[0], data_off) != data_len[0])
         return MBError::READ_ERROR;
 

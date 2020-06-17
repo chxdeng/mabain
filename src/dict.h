@@ -60,6 +60,9 @@ public:
     int Find(const uint8_t *key, int len, MBData &data);
     // Find value by key using prefix match
     int FindPrefix(const uint8_t *key, int len, MBData &data, AllPrefixResults *presults = nullptr);
+
+    int FindBound(size_t root_off, const uint8_t *key, int len, MBData &data);
+
     // Delete entry by key
     int Remove(const uint8_t *key, int len);
     // Delete entry by key
@@ -127,6 +130,10 @@ private:
     int ReadNodeMatch(size_t node_off, int &match, MBData &data) const;
     int SHMQ_PrepareSlot(AsyncNode *node_ptr);
     AsyncNode* SHMQ_AcquireSlot(int &err) const;
+    int ReadLowerBound(EdgePtrs &edge_ptrs, MBData &data) const;
+    int ReadUpperBound(EdgePtrs &edge_ptrs, MBData &data) const;
+    int ReadDataFromBoundEdge(bool use_curr_edge, EdgePtrs &edge_ptrs,
+             EdgePtrs &bound_edge_ptrs, MBData &data, int root_key) const;
 
     // DB access permission
     int options;

@@ -878,27 +878,124 @@ void DictMem::ClearMem() const
     header->pending_index_buff_size = 0;
 }
 
-int DictMem::NextEdge(const uint8_t *key, EdgePtrs &edge_ptrs, uint8_t *node_buff,
-                      MBData &mbdata) const
+int DictMem::ReadNode(size_t &node_off, EdgePtrs &edge_ptrs,
+                      uint8_t *node_buff, MBData &mbdata, int &nt) const
 {
-    size_t node_off;
     // Check if need to read saved edge
-    if((mbdata.options & CONSTS::OPTION_READ_SAVED_EDGE) && edge_ptrs.offset == mbdata.edge_ptrs.offset)
+    if ((mbdata.options & CONSTS::OPTION_READ_SAVED_EDGE) && edge_ptrs.offset == mbdata.edge_ptrs.offset)
         node_off = Get6BInteger(mbdata.edge_ptrs.offset_ptr);
     else
         node_off = Get6BInteger(edge_ptrs.offset_ptr);
 
-    int byte_read;
-    byte_read = ReadData(node_buff, NODE_EDGE_KEY_FIRST, node_off);
-    if(byte_read != NODE_EDGE_KEY_FIRST)
+    int byte_read = ReadData(node_buff, NODE_EDGE_KEY_FIRST, node_off);
+    if (byte_read != NODE_EDGE_KEY_FIRST)
         return MBError::READ_ERROR;
 
-    int nt = node_buff[1] + 1;
+    nt = node_buff[1] + 1;
     byte_read = ReadData(node_buff+NODE_EDGE_KEY_FIRST, nt, node_off+NODE_EDGE_KEY_FIRST);
-    if(byte_read != nt)
+    if (byte_read != nt)
         return MBError::READ_ERROR;
 
-    int ret = MBError::NOT_EXIST;
+    return MBError::SUCCESS;
+}
+
+int DictMem::NextMaxEdge(EdgePtrs &edge_ptrs, uint8_t *node_buff, MBData &mbdata) const
+{
+    size_t node_off;
+    int nt = -1;
+    int ret = ReadNode(node_off, edge_ptrs, node_buff, mbdata, nt);
+    if (ret != MBError::SUCCESS)
+        return ret;
+
+#ifdef __DEBUG__
+    assert(nt > 0);
+#endif
+    if (mbdata.options & CONSTS::OPTION_INTERNAL_NODE_BOUND)
+    {
+        return MBError::NOT_EXIST;
+    }
+
+    int curr_max_index = 0;
+    int curr_max_key = (int) node_buff[0 + NODE_EDGE_KEY_FIRST];
+    for (int i = 1; i < nt; i++)
+    {
+        auto key = (int) node_buff[i + NODE_EDGE_KEY_FIRST];
+        if (key > curr_max_key)
+        {
+            curr_max_key = key;
+            curr_max_index = i;
+        }
+    }
+
+    edge_ptrs.offset = node_off + NODE_EDGE_KEY_FIRST + nt + curr_max_index*EDGE_SIZE;
+    int byte_read = ReadData(edge_ptrs.edge_buff, EDGE_SIZE, edge_ptrs.offset);
+    if (byte_read != EDGE_SIZE)
+            return MBError::READ_ERROR;
+    return MBError::SUCCESS;
+}
+
+int DictMem::NextLowerBoundEdge(const uint8_t *key, int len,
+                                EdgePtrs &edge_ptrs,
+                                uint8_t *node_buff,
+                                MBData &mbdata,
+                                EdgePtrs &less_edge_ptrs) const
+{
+    size_t node_off;
+    int nt = -1;
+    int ret = ReadNode(node_off, edge_ptrs, node_buff, mbdata, nt);
+    if (ret != MBError::SUCCESS)
+        return ret;
+
+    if (node_buff[0] & FLAG_NODE_MATCH)
+    {
+        mbdata.options |= CONSTS::OPTION_INTERNAL_NODE_BOUND;
+        less_edge_ptrs.curr_edge_index = 0;
+        less_edge_ptrs.offset = edge_ptrs.offset;
+    }
+
+    int le_edge_key = -1;
+    int le_edge_index = -1;
+    int byte_read;
+    ret = MBError::NOT_EXIST;
+    for (int i = 0; i < nt; i++)
+    {
+        int curr = (int) node_buff[i + NODE_EDGE_KEY_FIRST];
+        if (curr == key[0])
+        {
+            edge_ptrs.offset = node_off + NODE_EDGE_KEY_FIRST + nt + i*EDGE_SIZE;
+            byte_read = ReadData(edge_ptrs.edge_buff, EDGE_SIZE, edge_ptrs.offset);
+            if (byte_read != EDGE_SIZE)
+                return MBError::READ_ERROR;
+            ret = MBError::SUCCESS;
+        }
+        else if (curr < key[0] && curr > le_edge_key)
+        {
+            le_edge_index = i;
+            le_edge_key = curr;
+        }
+    }
+
+    if (le_edge_index >= 0)
+    {
+        mbdata.options &= ~CONSTS::OPTION_INTERNAL_NODE_BOUND;
+        less_edge_ptrs.curr_edge_index = le_edge_index;
+        less_edge_ptrs.offset = node_off + NODE_EDGE_KEY_FIRST + nt
+                              + le_edge_index*EDGE_SIZE;
+    }
+
+    return ret;
+}
+
+int DictMem::NextEdge(const uint8_t *key, EdgePtrs &edge_ptrs, uint8_t *node_buff,
+                      MBData &mbdata) const
+{
+    size_t node_off;
+    int nt = -1;
+    int ret = ReadNode(node_off, edge_ptrs, node_buff, mbdata, nt);
+    if (ret != MBError::SUCCESS)
+        return ret;
+
+    ret = MBError::NOT_EXIST;
     for(int i = 0; i < nt; i++)
     {
         if(node_buff[i+NODE_EDGE_KEY_FIRST] == key[0])
@@ -912,7 +1009,7 @@ int DictMem::NextEdge(const uint8_t *key, EdgePtrs &edge_ptrs, uint8_t *node_buf
                 edge_ptrs.curr_node_offset = node_off;
             }
             size_t offset_new = node_off + NODE_EDGE_KEY_FIRST + nt + i*EDGE_SIZE;
-            byte_read = ReadData(edge_ptrs.edge_buff, EDGE_SIZE, offset_new);
+            int byte_read = ReadData(edge_ptrs.edge_buff, EDGE_SIZE, offset_new);
             if(byte_read != EDGE_SIZE)
             {
                 ret = MBError::READ_ERROR;

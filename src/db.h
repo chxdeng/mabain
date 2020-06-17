@@ -131,6 +131,10 @@ public:
     int FindLongestPrefix(const std::string &key, MBData &data) const;
     // Find all possible prefix matches using a key
     int FindPrefix(const std::string &key, AllPrefixResults &result);
+    // Find lower bound does not support reader/writer concurrency currently.
+    // FindLowerBound returns that largest entry that is not greater than the given key.
+    int FindLowerBound(const char* key, int len, MBData &data) const;
+    int FindLowerBound(const std::string &key, MBData &data) const;
     // Remove an entry using a key
     int Remove(const char *key, int len);
     int Remove(const std::string &key);

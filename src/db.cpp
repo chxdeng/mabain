@@ -39,8 +39,8 @@
 
 namespace mabain {
 
-// Current mabain version 1.3.1
-uint16_t version[4] = {1, 3, 1, 0};
+// Current mabain version 1.3.2
+uint16_t version[4] = {1, 3, 2, 0};
 
 DB::~DB()
 {
@@ -442,6 +442,25 @@ int DB::Find(const char* key, int len, MBData &mdata) const
 int DB::Find(const std::string &key, MBData &mdata) const
 {
     return Find(key.data(), key.size(), mdata);
+}
+
+int DB::FindLowerBound(const std::string &key, MBData &data) const
+{
+    return FindLowerBound(key.data(), key.size(), data);
+}
+
+int DB::FindLowerBound(const char* key, int len, MBData &data) const
+{
+    if(key == NULL)
+        return MBError::INVALID_ARG;
+    if(status != MBError::SUCCESS)
+        return MBError::NOT_INITIALIZED;
+    // Writer in async mode cannot be used for lookup
+    if(options & CONSTS::ASYNC_WRITER_MODE)
+        return MBError::NOT_ALLOWED;
+
+    data.options = 0;
+    return dict->FindBound(0, reinterpret_cast<const uint8_t*>(key), len, data);
 }
 
 // Find all possible prefix matches.

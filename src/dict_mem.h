@@ -79,6 +79,9 @@ public:
                      bool map_new_sliding=true);
     int  NextEdge(const uint8_t *key, EdgePtrs &edge_ptrs,
                   uint8_t *tmp_buff, MBData &mbdata) const;
+    int  NextLowerBoundEdge(const uint8_t *key, int len, EdgePtrs &edge_ptrs,
+                  uint8_t *node_buff, MBData &mbdata, EdgePtrs &less_edge_ptrs) const;
+    int  NextMaxEdge(EdgePtrs &edge_ptrs, uint8_t *node_buff, MBData &mbdata) const;
     int  RemoveEdgeByIndex(const EdgePtrs &edge_ptrs, MBData &data);
     void InitRootNode();
     inline void WriteEdge(const EdgePtrs &edge_ptrs) const;
@@ -115,6 +118,8 @@ private:
     int      RemoveEdgeSizeOne(uint8_t *old_node_buffer, size_t parent_edge_offset,
                             size_t node_offset, int nt, size_t &str_off_rel,
                             int &str_size_rel);
+    int      ReadNode(size_t &offset, EdgePtrs &edge_ptrs, uint8_t *node_buff,
+                      MBData &mbdata, int &nt) const;
 
     int *node_size;
     bool is_valid;

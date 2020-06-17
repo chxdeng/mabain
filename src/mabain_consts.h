@@ -30,12 +30,13 @@ public:
     static const int SYNC_ON_WRITE;
     static const int USE_SLIDING_WINDOW;
     static const int MEMORY_ONLY_MODE;
-    static const int OPTION_ALL_PREFIX;
+    static const int READ_ONLY_DB;
 
+    static const int OPTION_ALL_PREFIX;
     static const int OPTION_FIND_AND_STORE_PARENT;
     static const int OPTION_RC_MODE;
     static const int OPTION_READ_SAVED_EDGE; // Used internally only
-    // not init shared memory ptr, not update db counter
+    static const int OPTION_INTERNAL_NODE_BOUND;
     static const int MAX_KEY_LENGHTH;
     static const int MAX_DATA_SIZE;
 

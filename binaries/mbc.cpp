@@ -59,6 +59,7 @@ enum mbc_command {
     COMMAND_FIND_LPREFIX_HEX = 16,
     COMMAND_RECLAIM_RESOURCES = 17,
     COMMAND_PARSING_ERROR = 18,
+    COMMAND_FIND_LOWER_BOUND = 19,
 };
 
 volatile bool quit_mbc = false;
@@ -87,6 +88,7 @@ static void usage(const char *prog)
     std::cout <<"\t-d mabain databse directory\n";
     std::cout <<"\t-im index memcap\n";
     std::cout <<"\t-dm data memcap\n";
+    std::cout <<"\t-r read-only mode\n";
     std::cout <<"\t-w running in writer mode\n";
     std::cout <<"\t-e run query on command line\n";
     std::cout <<"\t-s run queries in a file\n";
@@ -99,6 +101,7 @@ static void show_help()
 {
     std::cout << "\tfind(\"key\")\t\tsearch entry by key\n";
     std::cout << "\tfindPrefix(\"key\")\tsearch entry by key using longest prefix match\n";
+    std::cout << "\tfindLower(\"key\")\tsearch entry by key using lower bound if not found\n";
     std::cout << "\tfindAll\t\t\tlist all entries\n";
     std::cout << "\tinsert(\"key\":\"value\")\tinsert a key-value pair\n";
     std::cout << "\treplace(\"key\":\"value\")\treplace a key-value pair\n";
@@ -260,6 +263,13 @@ static int parse_command(std::string &cmd,
                     return COMMAND_FIND_LPREFIX_HEX;
                 return COMMAND_FIND_LPREFIX;
             }
+            else if(cmd.compare(0, 10, "findLower(") == 0)
+            {
+                if(cmd[cmd.length()-1] != ')') return COMMAND_PARSING_ERROR;
+                ExprParser expr(cmd.substr(10, cmd.length()-11));
+                if(expr.Evaluate(key) < 0) return COMMAND_PARSING_ERROR;
+                return COMMAND_FIND_LOWER_BOUND;
+            }
             else if(cmd.compare("findAll") == 0)
                 return COMMAND_FIND_ALL;
             break;
@@ -275,11 +285,6 @@ static int parse_command(std::string &cmd,
             }
             else if(cmd.compare("deleteAll") == 0)
             {
-                std::cout << "Do you want to delete all entries? Press \'Y\' to continue: ";
-                std::string del_all;
-                std::getline(std::cin, del_all);
-                if(del_all.length() == 0 || del_all[0] != 'Y')
-                    return COMMAND_NONE;
                 return COMMAND_DELETE_ALL;
             }
             else if(cmd.compare("decReaderCount") == 0)
@@ -426,6 +431,13 @@ static int RunCommand(int mode, DB *db, int cmd_id, const std::string &key,
             else
                 std::cout << MBError::get_error_str(rval) << "\n";
             break;
+        case COMMAND_FIND_LOWER_BOUND:
+            rval = db->FindLowerBound(key, mbd);
+            if(rval == MBError::SUCCESS)
+                display_output(mbd, false, false);
+            else
+                std::cout << MBError::get_error_str(rval) << "\n";
+            break;
         case COMMAND_DELETE:
             rval = db->Remove(key);
             std::cout << MBError::get_error_str(rval) << "\n";
@@ -443,13 +455,8 @@ static int RunCommand(int mode, DB *db, int cmd_id, const std::string &key,
             show_help();
             break;
         case COMMAND_DELETE_ALL:
-            if(mode & CONSTS::ACCESS_MODE_WRITER)
-            {
-                rval = db->RemoveAll();
-                std::cout << MBError::get_error_str(rval) << "\n";
-            }
-            else
-                std::cout << "permission not allowed\n";
+            rval = db->RemoveAll();
+            std::cout << MBError::get_error_str(rval) << "\n";
             break;
         case COMMAND_FIND_ALL:
             display_all_kvs(db);
@@ -628,6 +635,14 @@ int main(int argc, char *argv[])
         else if(strcmp(argv[i], "-w") == 0)
         {
             mode |= CONSTS::ACCESS_MODE_WRITER;
+            if(mode & CONSTS::READ_ONLY_DB)
+                usage(argv[0]);
+        }
+        else if(strcmp(argv[i], "-r") == 0)
+        {
+            mode |= CONSTS::READ_ONLY_DB;
+            if(mode & CONSTS::ACCESS_MODE_WRITER)
+                usage(argv[0]);
         }
         else if(strcmp(argv[i], "-e") == 0)
         {
