@@ -139,6 +139,7 @@ public:
     int Remove(const char *key, int len);
     int Remove(const std::string &key);
     int RemoveAll();
+    int RemoveAllSync();
     // DB Backup
     int Backup(const char *backup_dir);
 
