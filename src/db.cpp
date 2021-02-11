@@ -605,6 +605,16 @@ int DB::RemoveAll()
     return rval;
 }
 
+int DB::RemoveAllSync()
+{
+    if (status != MBError::SUCCESS)
+        return MBError::NOT_INITIALIZED;
+    if (!(options & CONSTS::ACCESS_MODE_WRITER))
+        return MBError::NOT_ALLOWED;
+    int rval = dict->RemoveAll();
+    return rval;
+}
+
 int DB::Backup(const char *bk_dir)
 {
     int rval = MBError::SUCCESS;

@@ -112,7 +112,7 @@ int main(int argc, char *argv[])
     int options = CONSTS::WriterOptions() | CONSTS::ASYNC_WRITER_MODE;
     DB *db = new DB(mbdir.c_str(), options, 128LL*1024*1024, 128LL*1024*1024);
     assert(db->is_open());
-    db->RemoveAll();
+    db->RemoveAllSync();
 
     for(int i = 0; i < nthread; i++) {
         if(pthread_create(&pid[i], NULL, insert_thread, db) != 0) {
