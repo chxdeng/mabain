@@ -142,6 +142,8 @@ public:
     int RemoveAllSync();
     // DB Backup
     int Backup(const char *backup_dir);
+    // Freeze copy current DB to target directory and clear current DB.
+    int Freeze(const char *target_dir);
 
     // Close the DB handle
     int  Close();
@@ -204,6 +206,7 @@ private:
     void InitDB(MBConfig &config);
     void PreCheckDB(const MBConfig &config, bool &init_header, bool &update_header);
     void PostDBUpdate(const MBConfig &config, bool init_header, bool update_header);
+    int  Copy(const char *bk_dir, bool remove_original);
     static int ValidateConfig(MBConfig &config);
 
     // DB directory

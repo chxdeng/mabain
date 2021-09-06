@@ -76,7 +76,7 @@ int Dict::SHMQ_RemoveAll()
     return SHMQ_PrepareSlot(node_ptr);
 }
 
-int Dict::SHMQ_Backup(const char *backup_dir)
+int Dict::SHMQ_Backup(const char *backup_dir, bool remove_original)
 {
     if(backup_dir == nullptr)
         return MBError::INVALID_ARG;
@@ -88,7 +88,10 @@ int Dict::SHMQ_Backup(const char *backup_dir)
     if(node_ptr == nullptr)
         return err;
     snprintf(node_ptr->data, MB_ASYNC_SHM_DATA_SIZE, "%s", backup_dir);
-    node_ptr->type = MABAIN_ASYNC_TYPE_BACKUP;
+    if (remove_original)
+        node_ptr->type = MABAIN_ASYNC_TYPE_FREEZE;
+    else
+        node_ptr->type = MABAIN_ASYNC_TYPE_BACKUP;
     return SHMQ_PrepareSlot(node_ptr);
 }
 

@@ -615,7 +615,17 @@ int DB::RemoveAllSync()
     return rval;
 }
 
+int DB::Freeze(const char *target_dir)
+{
+    return Copy(target_dir, true);
+}
+
 int DB::Backup(const char *bk_dir)
+{
+    return Copy(bk_dir, false);
+}
+
+int DB::Copy(const char *bk_dir, bool remove_original)
 {
     int rval = MBError::SUCCESS;
 
@@ -634,10 +644,13 @@ int DB::Backup(const char *bk_dir)
         {
             DBBackup bk(*this);
             rval = bk.Backup(bk_dir);
+            if (rval == MBError::SUCCESS) {
+                dict->RemoveAll();
+            }
         }
         else
         {
-            rval = dict->SHMQ_Backup(bk_dir);
+            rval = dict->SHMQ_Backup(bk_dir, remove_original);
         }
     } catch  (int error) {
         Logger::Log(LOG_LEVEL_WARN, "Backup failed :%s", MBError::get_error_str(error));

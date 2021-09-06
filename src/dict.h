@@ -76,7 +76,7 @@ public:
                   bool overwrite);
     int  SHMQ_Remove(const char *key, int len);
     int  SHMQ_RemoveAll();
-    int  SHMQ_Backup(const char *backup_dir);
+    int  SHMQ_Backup(const char *backup_dir, bool remove_original);
     int  SHMQ_CollectResource(int64_t m_index_rc_size, int64_t m_data_rc_size,
                               int64_t max_dbsz, int64_t max_dbcnt);
     void SHMQ_Signal();

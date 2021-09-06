@@ -62,6 +62,7 @@ private:
 
     bool is_rc_running;
     char *rc_backup_dir;
+    bool remove_original;
 
     std::timed_mutex writer_lock;
     static AsyncWriter *writer_instance;

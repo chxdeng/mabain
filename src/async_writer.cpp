@@ -67,6 +67,7 @@ AsyncWriter::AsyncWriter(DB *db_ptr)
     header->rc_flag.store(0, std::memory_order_release);
 
     rc_backup_dir = NULL;
+    remove_original = false;
     // start the thread
     if(pthread_create(&tid, NULL, async_thread_wrapper, this) != 0)
     {
@@ -158,6 +159,8 @@ int AsyncWriter::ProcessTask(int ntasks, bool rc_mode)
                 case MABAIN_ASYNC_TYPE_NONE:
                     rval = MBError::SUCCESS;
                     break;
+                case MABAIN_ASYNC_TYPE_FREEZE:
+                    remove_original = true;
                 case MABAIN_ASYNC_TYPE_BACKUP:
                     // clean up existing backup dir varibale buffer.
                     if (rc_backup_dir != NULL)
@@ -318,13 +321,20 @@ void* AsyncWriter::async_writer_thread()
             case MABAIN_ASYNC_TYPE_NONE:
                 rval = MBError::SUCCESS;
                 break;
+            case MABAIN_ASYNC_TYPE_FREEZE:
+                remove_original = true;
             case MABAIN_ASYNC_TYPE_BACKUP:
                 try {
                     DBBackup mbbk(*db);
                     rval = mbbk.Backup((const char*) node_ptr->data);
+                    if (MBError::SUCCESS == rval && remove_original) {
+                        Logger::Log(LOG_LEVEL_INFO, "DB copy successful, clearing current DB");
+                        dict->RemoveAll();
+                    }
                 } catch (int error) {
                     rval = error;
                 }
+                remove_original = false;
                 break;
             default:
                 rval = MBError::INVALID_ARG;
@@ -365,10 +375,11 @@ void* AsyncWriter::async_writer_thread()
             {
                 if(rval == MBError::SUCCESS)
                 {
-                    dict->SHMQ_Backup(rc_backup_dir);
+                    dict->SHMQ_Backup(rc_backup_dir, remove_original);
                 }
                 free(rc_backup_dir);
                 rc_backup_dir = NULL;
+                remove_original = false;
             }
         }
     }
