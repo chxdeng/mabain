@@ -27,6 +27,7 @@
 #include "error.h"
 #include "lock.h"
 #include "integer_4b_5b.h"
+#include "iterator.h"
 
 namespace mabain {
 
@@ -89,7 +90,7 @@ public:
                  size_t &node_offset);
         int  load_node(const std::string &curr_node_key, size_t &parent_edge_off);
         int  load_kv_for_node(const std::string &curr_node_key);
-        int  load_kvs(const std::string &curr_node_key, MBlsq *chid_node_list);
+        int  load_kvs(const std::string &curr_node_key, std::vector<iterator_node*> &chid_node_list);
         void iter_obj_init();
         bool next_dbt_buffer(struct _DBTraverseNode *dbt_n);
         void add_node_offset(size_t node_offset);

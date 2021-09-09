@@ -16,6 +16,9 @@
 
 // @author Changxue Deng <chadeng@cisco.com>
 
+#include <algorithm>
+#include <iostream>
+
 #include "db.h"
 #include "dict.h"
 #include "integer_4b_5b.h"
@@ -23,52 +26,46 @@
 
 namespace mabain {
 
-typedef struct _iterator_node
-{
-    std::string *key;
-    uint8_t     *data;
-    int          data_len;
-    uint16_t     bucket_index;
-} iterator_node;
-
 static void free_iterator_node(void *n)
 {
-    if(n == NULL)
+    if(n == nullptr)
         return;
-
     iterator_node *inode = (iterator_node *) n;
-    if(inode->key != NULL)
+    if(inode->key != nullptr)
         delete inode->key;
-    if(inode->data != NULL)
+    if(inode->data != nullptr)
         free(inode->data);
 
     free(inode);
 }
 
-static iterator_node* new_iterator_node(const std::string &key, MBData *mbdata)
+static iterator_node* new_iterator_node(const std::string &key)
 {
     iterator_node *inode = (iterator_node *) malloc(sizeof(*inode));
-    if(inode == NULL)
+    if(inode == nullptr)
         throw (int) MBError::NO_MEMORY;
 
     inode->key = new std::string(key);
-    if(mbdata != NULL)
-    {
-	inode->bucket_index = mbdata->bucket_index;
-        mbdata->TransferValueTo(inode->data, inode->data_len);
-        if(inode->data == NULL || inode->data_len <= 0)
-        {
-            free_iterator_node(inode);
-            inode = NULL;
-        }
-    }
-    else
-    {
-        inode->data = NULL;
-        inode->data_len = 0;
-    }
+    inode->data = nullptr;
+    inode->data_len = 0;
+    inode->match = false;
+    inode->leaf_node = false;
 
     return inode;
+}
+
+static bool CompareIteratorNode(iterator_node *l, iterator_node *r)
+{
+    return *(l->key) > *(r->key);
+}
+
+static void ClearNodeVec(std::vector<iterator_node*> &vec)
+{
+    for (unsigned i = 0; i < vec.size(); i++)
+    {
+        free_iterator_node(vec[i]);
+    }
+    vec.clear();
 }
 
 /////////////////////////////////////////////////////////////////////
@@ -96,7 +93,6 @@ const DB::iterator DB::end() const
 void DB::iterator::iter_obj_init()
 {
     node_stack = NULL;
-    kv_per_node = NULL;
     lfree = NULL;
 
     if(!(db_ref.GetDBOptions() & CONSTS::ACCESS_MODE_WRITER))
@@ -126,8 +122,6 @@ DB::iterator::~iterator()
 {
     if(node_stack != NULL)
         delete node_stack;
-    if(kv_per_node != NULL)
-        delete kv_per_node;
 }
 
 // Initialize the iterator, get the very first key-value pair.
@@ -141,7 +135,6 @@ void DB::iterator::init(bool check_async_mode)
     }
 
     node_stack = new MBlsq(free_iterator_node);
-    kv_per_node = new MBlsq(free_iterator_node);
 
     load_kv_for_node("");
     if(next() == NULL)
@@ -153,7 +146,6 @@ void DB::iterator::init(bool check_async_mode)
 int DB::iterator::init_no_next()
 {
     node_stack = new MBlsq(NULL);
-    kv_per_node = NULL;
 
     int rval = db_ref.dict->ReadRootNode(node_buff, edge_ptrs, match, value);
     if(rval != MBError::SUCCESS)
@@ -202,7 +194,7 @@ int DB::iterator::get_node_offset(const std::string &node_key,
 }
 
 int DB::iterator::load_kvs(const std::string &curr_node_key,
-                           MBlsq *child_node_list)
+                           std::vector<iterator_node*> &child_node_list)
 {
     int rval;
     size_t child_node_off;
@@ -237,32 +229,20 @@ int DB::iterator::load_kvs(const std::string &curr_node_key,
             break;
 
         match_str = curr_node_key + match_str;
-        if(child_node_off > 0)
-        {
-            inode = new_iterator_node(match_str, NULL);
-            if(inode != NULL)
-            {
-                rval = child_node_list->AddToTail(inode);
-                if(rval != MBError::SUCCESS)
-                {
-                    free_iterator_node(inode);
-                    return rval;
-                }
+        if (child_node_off > 0 || match != MATCH_NONE) {
+            inode = new_iterator_node(match_str);
+            if (inode == nullptr) {
+                return MBError::NO_MEMORY;
             }
-        }
-
-        if(match != MATCH_NONE)
-        {
-            inode = new_iterator_node(match_str, &value);
-            if(inode != NULL)
-            {
-                rval = kv_per_node->AddToTail(inode);
-                if(rval != MBError::SUCCESS)
-                {
-                    free_iterator_node(inode);
-                    return rval;
-                }
+            if (child_node_off == 0) {
+                inode->leaf_node = true;
             }
+            if (match != MATCH_NONE) {
+                inode->match = true;
+                inode->bucket_index = value.bucket_index;
+                value.TransferValueTo(inode->data, inode->data_len);
+            }
+            child_node_list.push_back(inode);
         }
     }
 
@@ -296,14 +276,14 @@ int DB::iterator::load_node(const std::string &curr_node_key,
 int DB::iterator::load_kv_for_node(const std::string &curr_node_key)
 {
     int rval;
-    MBlsq child_node_list(free_iterator_node);
+    std::vector<iterator_node*> child_node_list;
     size_t parent_edge_off;
 
     if(lfree == NULL)
     {
         rval = load_node(curr_node_key, parent_edge_off);
         if(rval == MBError::SUCCESS)
-            rval = load_kvs(curr_node_key, &child_node_list);
+            rval = load_kvs(curr_node_key, child_node_list);
     }
     else
     {
@@ -319,12 +299,11 @@ int DB::iterator::load_kv_for_node(const std::string &curr_node_key)
             rval = load_node(curr_node_key, parent_edge_off);
             if(rval == MBError::SUCCESS)
             {
-                rval = load_kvs(curr_node_key, &child_node_list);
+                rval = load_kvs(curr_node_key, child_node_list);
 #ifdef __LOCK_FREE__
                 if(rval == MBError::TRY_AGAIN)
                 {
-                    kv_per_node->Clear();
-                    child_node_list.Clear();
+                    ClearNodeVec(child_node_list);
                     continue;
                 }
 #endif
@@ -333,8 +312,7 @@ int DB::iterator::load_kv_for_node(const std::string &curr_node_key)
             lf_ret = lfree->ReaderLockFreeStop(snapshot, parent_edge_off, value);
             if(lf_ret == MBError::TRY_AGAIN)
             {
-                kv_per_node->Clear();
-                child_node_list.Clear();
+                ClearNodeVec(child_node_list);
                 continue;
             }
 #endif
@@ -344,17 +322,16 @@ int DB::iterator::load_kv_for_node(const std::string &curr_node_key)
 
     if(rval == MBError::SUCCESS)
     {
-        iterator_node *inode;
-        while((inode = (iterator_node *) child_node_list.RemoveFromHead()))
+        std::sort(child_node_list.begin(), child_node_list.end(), CompareIteratorNode);
+        for (unsigned i = 0; i < child_node_list.size(); i++)
         {
-            node_stack->AddToHead(inode);
+            node_stack->AddToHead(child_node_list[i]);
         }
     }
     else
     {
-        std::cerr << "failed to run ietrator: " << MBError::get_error_str(rval) << "\n";
-        kv_per_node->Clear();
-        child_node_list.Clear();
+        std::cerr << "failed to load iterator node: " << MBError::get_error_str(rval) << "\n";
+        ClearNodeVec(child_node_list);
     }
     return rval;
 }
@@ -362,32 +339,26 @@ int DB::iterator::load_kv_for_node(const std::string &curr_node_key)
 // Find next iterator match
 DB::iterator* DB::iterator::next()
 {
-    iterator_node *inode;
-
-    while(kv_per_node->Count() == 0)
-    {
-        inode = (iterator_node *) node_stack->RemoveFromHead();
-        if(inode == NULL)
-            return NULL;
-
-        int rval = load_kv_for_node(*inode->key);
+    iterator* iter = nullptr;
+    while (true) {
+        if (node_stack->Count() == 0) break;
+        iterator_node* inode = (iterator_node *) node_stack->RemoveFromHead();
+        if (!inode->leaf_node) {
+            int rval = load_kv_for_node(*inode->key);
+            if (rval != MBError::SUCCESS) break;
+        }
+        if (inode->match) {
+            match = MATCH_NODE_OR_EDGE;
+            key = *inode->key;
+            value.TransferValueFrom(inode->data, inode->data_len);
+            value.bucket_index = inode->bucket_index;
+            iter = this;
+        }
         free_iterator_node(inode);
-        if(rval != MBError::SUCCESS)
-            return NULL;
+        if (iter != nullptr) break;
     }
 
-    if(kv_per_node->Count() > 0)
-    {
-        inode = (iterator_node *) kv_per_node->RemoveFromHead();
-        match = MATCH_NODE_OR_EDGE;
-        key = *inode->key;
-        value.TransferValueFrom(inode->data, inode->data_len);
-	value.bucket_index = inode->bucket_index;
-        free_iterator_node(inode);
-        return this;
-    }
-
-    return NULL;
+    return iter;
 }
 
 // There is no need to perform lock-free check in next_dbt_buffer
@@ -463,7 +434,7 @@ void DB::iterator::add_node_offset(size_t node_offset)
 {
     int rval = node_stack->AddIntToHead(node_offset);
     if(rval != MBError::SUCCESS)
-        throw rval; 
+        throw rval;
 }
 
 }
