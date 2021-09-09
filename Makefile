@@ -18,6 +18,7 @@ install: build
 	cp src/error.h $(MABAIN_INSTALL_DIR)/include/mabain
 	cp src/integer_4b_5b.h $(MABAIN_INSTALL_DIR)/include/mabain
 	cp src/mb_iter.h $(MABAIN_INSTALL_DIR)/include/mabain
+	cp src/iterator.h $(MABAIN_INSTALL_DIR)/include/mabain
 
 	mkdir -p $(MABAIN_INSTALL_DIR)/lib
 	cp src/libmabain.so $(MABAIN_INSTALL_DIR)/lib
