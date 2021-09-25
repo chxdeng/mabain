@@ -28,6 +28,7 @@ MBData::MBData()
     data_len = 0;
     buff_len = 0;
     buff = NULL;
+    data_offset = 0;
 
     match_len = 0;
     options = 0;

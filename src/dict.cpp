@@ -203,7 +203,7 @@ int Dict::Status() const
 int Dict::UpdateData(EdgePtrs &edge_ptrs, MBData &data, bool &inc_count)
 {
     int rval = MBError::SUCCESS;
-    if (data.options % CONSTS::OPTION_ADD_APPEND) {
+    if (data.options & CONSTS::OPTION_ADD_APPEND) {
         Append app(*this, edge_ptrs);
         rval = app.AddDataBuffer(data.buff, data.data_len);
         inc_count = !app.IsExistingKey();
@@ -1277,7 +1277,6 @@ int Dict::UpdateDataBuffer(EdgePtrs &edge_ptrs, bool overwrite, const uint8_t *b
                            int len, bool &inc_count)
 {
     size_t data_off;
-
     if(edge_ptrs.flag_ptr[0] & EDGE_FLAG_DATA_OFF)
     {
         inc_count = false;
@@ -1525,6 +1524,22 @@ void Dict::WriteData(const uint8_t *buff, unsigned len, size_t offset) const
 
     if(kv_file->RandomWrite(buff, len, offset) != len)
         throw (int) MBError::WRITE_ERROR;
+}
+
+// TODO: this is a temp solution.
+int Dict::AddOldDataLink(const uint8_t *old_key, int old_key_len, MBData &mbd)
+{
+    if (mbd.data_offset == 0) {
+        return MBError::SUCCESS;
+    }
+    mbd.options = 0;
+    uint8_t link_key[8];
+    assert(old_key_len >= 3);
+    assert(mbd.data_len >= 4);
+    memcpy(link_key, old_key, 3);
+    link_key[3] = 'a';
+    memcpy(link_key+4, mbd.buff, 4);
+    return Add(link_key, 8, mbd);
 }
 
 }

@@ -62,6 +62,7 @@ public:
     int FindPrefix(const uint8_t *key, int len, MBData &data, AllPrefixResults *presults = nullptr);
 
     int FindBound(size_t root_off, const uint8_t *key, int len, MBData &data);
+    int AddOldDataLink(const uint8_t *old_key, int old_key_len, MBData &mbd);
 
     // Delete entry by key
     int Remove(const uint8_t *key, int len);

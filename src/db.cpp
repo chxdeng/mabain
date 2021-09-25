@@ -516,6 +516,7 @@ int DB::Add(const char* key, int len, MBData &mbdata, bool overwrite)
     if(status != MBError::SUCCESS)
         return MBError::NOT_INITIALIZED;
 
+    mbdata.data_offset = 0;
     if (overwrite) mbdata.options |= CONSTS::OPTION_ADD_OVERWRITE;
     if (async_writer == NULL && (options & CONSTS::ACCESS_MODE_WRITER))
     {
@@ -549,8 +550,25 @@ int DB::Add(const char* key, int len, MBData &mbdata, bool overwrite)
 
 int DB::Append(const char* key, int len, const char* data, int data_len)
 {
-    // TODO: currently async only
-    return dict->SHMQ_Append(key, len, data, data_len);
+    if(key == nullptr || data == nullptr)
+        return MBError::INVALID_ARG;
+    if(status != MBError::SUCCESS)
+        return MBError::NOT_INITIALIZED;
+    int rval = MBError::SUCCESS;
+
+    if (async_writer == NULL && (options & CONSTS::ACCESS_MODE_WRITER)) {
+        MBData mbdata;
+        mbdata.data_len = data_len;
+        mbdata.buff = (uint8_t*) data;
+        mbdata.options |= CONSTS::OPTION_ADD_APPEND;
+        rval = dict->Add(reinterpret_cast<const uint8_t*>(key), len, mbdata);
+        if (rval == MBError::SUCCESS) {
+            rval = dict->AddOldDataLink(reinterpret_cast<const uint8_t*>(key), len, mbdata);
+        }
+    } else {
+        rval = dict->SHMQ_Append(key, len, data, data_len);
+    }
+    return rval;
 }
 
 int DB::Add(const char* key, int len, const char* data, int data_len, bool overwrite)

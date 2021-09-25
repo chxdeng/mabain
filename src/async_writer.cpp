@@ -133,7 +133,7 @@ int AsyncWriter::ProcessTask(int ntasks, bool rc_mode)
                     try {
                         rval = dict->Add((uint8_t *)node_ptr->key, node_ptr->key_len, mbd);
                         if (rval == MBError::SUCCESS) {
-                            rval = AddOldDataLink((uint8_t *)node_ptr->key, node_ptr->key_len, mbd);
+                            rval = dict->AddOldDataLink((uint8_t *)node_ptr->key, node_ptr->key_len, mbd);
                         }
                     } catch (int err) {
                         rval = err;
@@ -307,7 +307,7 @@ void* AsyncWriter::async_writer_thread()
                 try {
                     rval = dict->Add((uint8_t *)node_ptr->key, node_ptr->key_len, mbd);
                     if (rval == MBError::SUCCESS) {
-                        rval = AddOldDataLink((uint8_t *)node_ptr->key, node_ptr->key_len, mbd);
+                        rval = dict->AddOldDataLink((uint8_t *)node_ptr->key, node_ptr->key_len, mbd);
                     }
                 } catch (int err) {
                     Logger::Log(LOG_LEVEL_ERROR, "dict->Add throws error %s",
@@ -446,22 +446,6 @@ int AsyncWriter::AddWithLock(const char *key, int len, MBData &mbdata)
     }
 
     return MBError::TRY_AGAIN;
-}
-
-// TODO: this is a temp solution.
-int AsyncWriter::AddOldDataLink(uint8_t *old_key, int old_key_len, MBData mbd)
-{
-    if (mbd.data_offset == 0) {
-        return MBError::SUCCESS;
-    }
-    mbd.options = 0;
-    uint8_t link_key[8];
-    assert(old_key_len >= 3);
-    assert(mbd.data_len >= 4);
-    memcpy(link_key, old_key, 3);
-    link_key[3] = 'a';
-    memcpy(link_key+4, mbd.buff, 4);
-    return dict->Add(link_key, 8, mbd);
 }
 
 }
