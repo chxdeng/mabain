@@ -124,6 +124,7 @@ public:
     int Add(const char* key, int len, const char* data, int data_len, bool overwrite = false);
     int Add(const char* key, int len, MBData &data, bool overwrite = false);
     int Add(const std::string &key, const std::string &value, bool overwrite = false);
+    int Append(const char* key, int len, const char* data, int data_len);
     // Find an entry by exact match using a key
     int Find(const char* key, int len, MBData &mdata) const;
     int Find(const std::string &key, MBData &mdata) const;

@@ -534,8 +534,8 @@ void ResourceCollection::ProcessRCTree()
     DB db_itr(db_ref);
     for(DB::iterator iter = db_itr.begin(false, true); iter != db_itr.end(); ++iter)
     {
-        iter.value.options = 0;
-        rval = dict->Add((const uint8_t *)iter.key.data(), iter.key.size(), iter.value, true);
+        iter.value.options = CONSTS::OPTION_ADD_OVERWRITE;
+        rval = dict->Add((const uint8_t *)iter.key.data(), iter.key.size(), iter.value);
         if(rval != MBError::SUCCESS)
             Logger::Log(LOG_LEVEL_WARN, "failed to add: %s", MBError::get_error_str(rval));
         if(count++ > RC_TASK_CHECK)

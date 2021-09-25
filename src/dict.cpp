@@ -27,6 +27,7 @@
 #include "error.h"
 #include "integer_4b_5b.h"
 #include "async_writer.h"
+#include "append.h"
 
 #define MAX_DATA_BUFFER_RESERVE_SIZE    0xFFFF
 #define NUM_DATA_BUFFER_RESERVE         MAX_DATA_BUFFER_RESERVE_SIZE/DATA_BUFFER_ALIGNMENT
@@ -199,10 +200,29 @@ int Dict::Status() const
     return status;
 }
 
+int Dict::UpdateData(EdgePtrs &edge_ptrs, MBData &data, bool &inc_count)
+{
+    int rval = MBError::SUCCESS;
+    if (data.options % CONSTS::OPTION_ADD_APPEND) {
+        Append app(*this, edge_ptrs);
+        rval = app.AddDataBuffer(data.buff, data.data_len);
+        inc_count = !app.IsExistingKey();
+        data.data_offset = app.GetOldDataOffset();
+    } else {
+        bool overwrite = false;
+        if (data.options % CONSTS::OPTION_ADD_OVERWRITE) {
+            overwrite = true;
+        }
+        rval = UpdateDataBuffer(edge_ptrs, overwrite, data.buff,
+                                data.data_len, inc_count);
+    }
+    return rval;
+}
+
 // Add a key-value pair
 // if overwrite is true and an entry with input key already exists, the old data will
 // be overwritten. Otherwise, IN_DICT will be returned.
-int Dict::Add(const uint8_t *key, int len, MBData &data, bool overwrite)
+int Dict::Add(const uint8_t *key, int len, MBData &data)
 {
     if(!(options & CONSTS::ACCESS_MODE_WRITER))
     {
@@ -222,7 +242,11 @@ int Dict::Add(const uint8_t *key, int len, MBData &data, bool overwrite)
 
     if(edge_ptrs.len_ptr[0] == 0)
     {
-        ReserveData(data.buff, data.data_len, data_offset);
+        if (data.data_offset == 0) {
+            ReserveData(data.buff, data.data_len, data_offset);
+        } else {
+            data_offset = data.data_offset;
+        }
         // Add the first edge along this edge
         mm.AddRootEdge(edge_ptrs, key, len, data_offset);
         if(data.options & CONSTS::OPTION_RC_MODE)
@@ -279,31 +303,47 @@ int Dict::Add(const uint8_t *key, int len, MBData &data, bool overwrite)
             }
             if(!next)
             {
-                ReserveData(data.buff, data.data_len, data_offset);
+                if (data.data_offset == 0) {
+                    ReserveData(data.buff, data.data_len, data_offset);
+                } else {
+                    data_offset = data.data_offset;
+                }
                 rval = mm.UpdateNode(edge_ptrs, p, len, data_offset);
             }
             else if(match_len < static_cast<int>(edge_ptrs.len_ptr[0]))
             {
                 if(len > match_len)
                 {
-                    ReserveData(data.buff, data.data_len, data_offset);
+                    if (data.data_offset == 0) {
+                        ReserveData(data.buff, data.data_len, data_offset);
+                    } else {
+                        data_offset = data.data_offset;
+                    }
                     rval = mm.AddLink(edge_ptrs, match_len, p+match_len, len-match_len,
                                       data_offset, data);
                 }
                 else if(len == match_len)
                 {
-                    ReserveData(data.buff, data.data_len, data_offset);
+                    if (data.data_offset == 0) {
+                        ReserveData(data.buff, data.data_len, data_offset);
+                    } else {
+                        data_offset = data.data_offset;
+                    }
                     rval = mm.InsertNode(edge_ptrs, match_len, data_offset, data);
                 }
             }
             else if(len == 0)
             {
-                rval = UpdateDataBuffer(edge_ptrs, overwrite, data.buff, data.data_len, inc_count);
+                rval = UpdateData(edge_ptrs, data, inc_count);
             }
         }
         else
         {
-            ReserveData(data.buff, data.data_len, data_offset);
+            if (data.data_offset == 0) {
+                ReserveData(data.buff, data.data_len, data_offset);
+            } else {
+                data_offset = data.data_offset;
+            }
             rval = mm.AddLink(edge_ptrs, i, p+i, len-i, data_offset, data);
         }
     }
@@ -316,19 +356,27 @@ int Dict::Add(const uint8_t *key, int len, MBData &data, bool overwrite)
         }
         if(i < len)
         {
-            ReserveData(data.buff, data.data_len, data_offset);
+            if (data.data_offset == 0) {
+                ReserveData(data.buff, data.data_len, data_offset);
+            } else {
+                data_offset = data.data_offset;
+            }
             rval = mm.AddLink(edge_ptrs, i, p+i, len-i, data_offset, data);
         }
         else
         {
             if(edge_ptrs.len_ptr[0] > len)
             {
-                ReserveData(data.buff, data.data_len, data_offset);
+                if (data.data_offset == 0) {
+                    ReserveData(data.buff, data.data_len, data_offset);
+                } else {
+                    data_offset = data.data_offset;
+                }
                 rval = mm.InsertNode(edge_ptrs, i, data_offset, data);
             }
             else
             {
-                rval = UpdateDataBuffer(edge_ptrs, overwrite, data.buff, data.data_len, inc_count);
+                rval = UpdateData(edge_ptrs, data, inc_count);
             }
         }
     }
@@ -342,7 +390,7 @@ int Dict::Add(const uint8_t *key, int len, MBData &data, bool overwrite)
     {
         if(rval == MBError::SUCCESS)
             header->num_update++;
-        if(inc_count)
+        if(inc_count && data.data_offset == 0)
             header->count++;
     }
     return rval;

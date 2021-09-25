@@ -32,6 +32,7 @@ namespace mabain {
 #define MABAIN_ASYNC_TYPE_RC         4
 #define MABAIN_ASYNC_TYPE_BACKUP     5
 #define MABAIN_ASYNC_TYPE_FREEZE     6
+#define MABAIN_ASYNC_TYPE_APPEND     7
 
 #define MB_ASYNC_SHM_KEY_SIZE      256
 #define MB_ASYNC_SHM_DATA_SIZE     1024

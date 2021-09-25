@@ -109,7 +109,7 @@ public:
     int buff_len;
 
     // data offset
-    size_t data_offset;
+    size_t data_offset; // For append, save the old data offset
     uint16_t bucket_index;
 
     // Search options

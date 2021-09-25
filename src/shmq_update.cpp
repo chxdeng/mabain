@@ -49,6 +49,26 @@ int Dict::SHMQ_Add(const char *key, int key_len, const char *data, int data_len,
     return SHMQ_PrepareSlot(node_ptr);
 }
 
+int Dict::SHMQ_Append(const char *key, int key_len, const char *data, int data_len)
+{
+    if(key_len > MB_ASYNC_SHM_KEY_SIZE || data_len > MB_ASYNC_SHM_DATA_SIZE) {
+        return MBError::OUT_OF_BOUND;
+    }
+
+    int err = MBError::SUCCESS;
+    AsyncNode *node_ptr = SHMQ_AcquireSlot(err);
+    if(node_ptr == nullptr)
+        return err;
+
+    memcpy(node_ptr->key, key, key_len);
+    memcpy(node_ptr->data, data, data_len);
+    node_ptr->key_len = key_len;
+    node_ptr->data_len = data_len;
+
+    node_ptr->type = MABAIN_ASYNC_TYPE_APPEND;
+    return SHMQ_PrepareSlot(node_ptr);
+}
+
 int Dict::SHMQ_Remove(const char *key, int len)
 {
     if(len > MB_ASYNC_SHM_KEY_SIZE)

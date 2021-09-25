@@ -55,7 +55,7 @@ public:
     // Called by writer only
     int Init(uint32_t id);
     // Add key-value pair
-    int Add(const uint8_t *key, int len, MBData &data, bool overwrite);
+    int Add(const uint8_t *key, int len, MBData &data);
     // Find value by key
     int Find(const uint8_t *key, int len, MBData &data);
     // Find value by key using prefix match
@@ -74,6 +74,7 @@ public:
     // multiple-process updates using shared memory queue
     int  SHMQ_Add(const char *key, int key_len, const char *data, int data_len,
                   bool overwrite);
+    int  SHMQ_Append(const char *key, int key_len, const char *data, int data_len);
     int  SHMQ_Remove(const char *key, int len);
     int  SHMQ_RemoveAll();
     int  SHMQ_Backup(const char *backup_dir, bool remove_original);
@@ -92,6 +93,7 @@ public:
     int64_t Count() const;
     size_t GetRootOffset() const;
     size_t GetStartDataOffset() const;
+    int ReleaseBuffer(size_t offset);
 
     DictMem *GetMM() const;
 
@@ -121,7 +123,6 @@ private:
     int Find_Internal(size_t root_off, const uint8_t *key, int len, MBData &data);
     int FindPrefix_Internal(size_t root_off, const uint8_t *key, int len,
                             MBData &data, AllPrefixResults *presult);
-    int ReleaseBuffer(size_t offset);
     int UpdateDataBuffer(EdgePtrs &edge_ptrs, bool overwrite, const uint8_t *buff,
                          int len, bool &inc_count);
     int ReadDataFromEdge(MBData &data, const EdgePtrs &edge_ptrs) const;
@@ -134,6 +135,7 @@ private:
     int ReadUpperBound(EdgePtrs &edge_ptrs, MBData &data) const;
     int ReadDataFromBoundEdge(bool use_curr_edge, EdgePtrs &edge_ptrs,
              EdgePtrs &bound_edge_ptrs, MBData &data, int root_key) const;
+    int UpdateData(EdgePtrs &edge_ptrs, MBData &data, bool &inc_count);
 
     // DB access permission
     int options;

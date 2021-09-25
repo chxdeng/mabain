@@ -36,7 +36,8 @@ public:
 
     int  StopAsyncThread();
     int  ProcessTask(int ntasks, bool rc_mode);
-    int  AddWithLock(const char *key, int len, MBData &mbdata, bool overwrite);
+    int  AddWithLock(const char *key, int len, MBData &mbdata);
+    int  AddOldDataLink(uint8_t *old_key, int old_key_len, MBData mbd);
 
     static AsyncWriter* CreateInstance(DB *db_ptr);
     static AsyncWriter* GetInstance();

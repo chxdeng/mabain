@@ -113,12 +113,28 @@ int AsyncWriter::ProcessTask(int ntasks, bool rc_mode)
             switch(node_ptr->type)
             {
                 case MABAIN_ASYNC_TYPE_ADD:
-                    if(rc_mode)
-                        mbd.options = CONSTS::OPTION_RC_MODE;
+                    if (rc_mode) mbd.options = CONSTS::OPTION_RC_MODE;
+                    if (node_ptr->overwrite) mbd.options |= CONSTS::OPTION_ADD_OVERWRITE;
                     mbd.buff = (uint8_t *) node_ptr->data;
                     mbd.data_len = node_ptr->data_len;
                     try {
-                        rval = dict->Add((uint8_t *)node_ptr->key, node_ptr->key_len, mbd, node_ptr->overwrite);
+                        rval = dict->Add((uint8_t *)node_ptr->key, node_ptr->key_len, mbd);
+                    } catch (int err) {
+                        rval = err;
+                        Logger::Log(LOG_LEVEL_ERROR, "dict->Add throws error %s",
+                                MBError::get_error_str(err));
+                    }
+                    break;
+                case MABAIN_ASYNC_TYPE_APPEND:
+                    if (rc_mode) mbd.options = CONSTS::OPTION_RC_MODE;
+                    mbd.options |= CONSTS::OPTION_ADD_APPEND;
+                    mbd.buff = (uint8_t *) node_ptr->data;
+                    mbd.data_len = node_ptr->data_len;
+                    try {
+                        rval = dict->Add((uint8_t *)node_ptr->key, node_ptr->key_len, mbd);
+                        if (rval == MBError::SUCCESS) {
+                            rval = AddOldDataLink((uint8_t *)node_ptr->key, node_ptr->key_len, mbd);
+                        }
                     } catch (int err) {
                         rval = err;
                         Logger::Log(LOG_LEVEL_ERROR, "dict->Add throws error %s",
@@ -270,12 +286,29 @@ void* AsyncWriter::async_writer_thread()
         switch(node_ptr->type)
         {
             case MABAIN_ASYNC_TYPE_ADD:
+                if (node_ptr->overwrite) mbd.options |= CONSTS::OPTION_ADD_OVERWRITE;
                 mbd.buff = (uint8_t *) node_ptr->data;
                 mbd.data_len = node_ptr->data_len;
                 writer_lock.lock();
                 try {
-                    rval = dict->Add((uint8_t *)node_ptr->key, node_ptr->key_len, mbd,
-                                     node_ptr->overwrite);
+                    rval = dict->Add((uint8_t *)node_ptr->key, node_ptr->key_len, mbd);
+                } catch (int err) {
+                    Logger::Log(LOG_LEVEL_ERROR, "dict->Add throws error %s",
+                                MBError::get_error_str(err));
+                    rval = err;
+                }
+                writer_lock.unlock();
+                break;
+            case MABAIN_ASYNC_TYPE_APPEND:
+                mbd.options |= CONSTS::OPTION_ADD_APPEND;
+                mbd.buff = (uint8_t *) node_ptr->data;
+                mbd.data_len = node_ptr->data_len;
+                writer_lock.lock();
+                try {
+                    rval = dict->Add((uint8_t *)node_ptr->key, node_ptr->key_len, mbd);
+                    if (rval == MBError::SUCCESS) {
+                        rval = AddOldDataLink((uint8_t *)node_ptr->key, node_ptr->key_len, mbd);
+                    }
                 } catch (int err) {
                     Logger::Log(LOG_LEVEL_ERROR, "dict->Add throws error %s",
                                 MBError::get_error_str(err));
@@ -395,7 +428,7 @@ void* AsyncWriter::async_thread_wrapper(void *context)
     return instance_ptr->async_writer_thread();
 }
 
-int AsyncWriter::AddWithLock(const char *key, int len, MBData &mbdata, bool overwrite)
+int AsyncWriter::AddWithLock(const char *key, int len, MBData &mbdata)
 {
     if (header->rc_flag.load(std::memory_order_relaxed))
         return MBError::TRY_AGAIN;
@@ -404,7 +437,7 @@ int AsyncWriter::AddWithLock(const char *key, int len, MBData &mbdata, bool over
     if (writer_lock.try_lock_for(Ms(1000))) {
         int rval;
         try {
-            rval = dict->Add(reinterpret_cast<const uint8_t*>(key), len, mbdata, overwrite);
+            rval = dict->Add(reinterpret_cast<const uint8_t*>(key), len, mbdata);
         } catch (int error) {
             rval = error;
         }
@@ -413,6 +446,22 @@ int AsyncWriter::AddWithLock(const char *key, int len, MBData &mbdata, bool over
     }
 
     return MBError::TRY_AGAIN;
+}
+
+// TODO: this is a temp solution.
+int AsyncWriter::AddOldDataLink(uint8_t *old_key, int old_key_len, MBData mbd)
+{
+    if (mbd.data_offset == 0) {
+        return MBError::SUCCESS;
+    }
+    mbd.options = 0;
+    uint8_t link_key[8];
+    assert(old_key_len >= 3);
+    assert(mbd.data_len >= 4);
+    memcpy(link_key, old_key, 3);
+    link_key[3] = 'a';
+    memcpy(link_key+4, mbd.buff, 4);
+    return dict->Add(link_key, 8, mbd);
 }
 
 }
