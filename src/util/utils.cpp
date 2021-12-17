@@ -27,7 +27,7 @@
 
 namespace mabain {
 
-int acquire_writer_lock(const std::string &lock_file_path)
+int acquire_file_lock(const std::string &lock_file_path)
 {
     int fd = open(lock_file_path.c_str(), O_WRONLY | O_CREAT,
                   S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
@@ -54,7 +54,21 @@ int acquire_writer_lock(const std::string &lock_file_path)
     return fd;
 }
 
-void release_writer_lock(int &fd)
+#define FILE_LOCK_RETRY_COUNT 5000
+int acquire_file_lock_wait(const std::string &lock_file_path)
+{
+    int fd = -1;
+    int cnt = 0;
+    while (cnt++ < FILE_LOCK_RETRY_COUNT)
+    {
+        fd = acquire_file_lock(lock_file_path);
+        if (fd >= 0) break;
+        usleep(1000);
+    }
+    return fd;
+}
+
+void release_file_lock(int &fd)
 {
     if(fd < 0)
         return;
@@ -68,6 +82,29 @@ uint64_t get_file_inode(const std::string &path)
     if(stat(path.c_str(), &sb) < 0)
         return 0;
     return sb.st_ino;
+}
+
+bool directory_exists(const std::string &path)
+{
+    struct stat st;
+    if (stat(path.c_str(), &st) == 0)
+    {
+        if ((st.st_mode & S_IFDIR) != 0) return true;
+    }
+    return false;
+}
+
+int remove_db_files(const std::string &db_dir)
+{
+    std::string cmd = "rm /dev/shm/_mabain_q*";
+    if (system(cmd.c_str()) != 0) {
+        std::cout << "failed to removed shared queue file\n";
+    }
+    cmd = "rm " + db_dir + "/_mabain_*";
+    if (system(cmd.c_str()) != 0) {
+        std::cout << "failed to removed shared db files\n";
+    }
+    return 0;
 }
 
 }

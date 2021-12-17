@@ -81,8 +81,8 @@ int DB::Close()
     status = MBError::DB_CLOSED;
     if(options & CONSTS::ACCESS_MODE_WRITER)
     {
-        ResourcePool::getInstance().RemoveResourceByPath(mb_dir + "_lock");
-        release_writer_lock(writer_lock_fd);
+        release_file_lock(writer_lock_fd);
+        ResourcePool::getInstance().RemoveResourceByDB(mb_dir);
     }
     Logger::Log(LOG_LEVEL_INFO, "connector %u disconnected from DB", identifier);
     return rval;
@@ -196,7 +196,7 @@ void DB::PreCheckDB(const MBConfig &config, bool &init_header, bool &update_head
             if(!(config.options & CONSTS::MEMORY_ONLY_MODE))
             {
                 // process check by file lock
-                writer_lock_fd = acquire_writer_lock(lock_file);
+                writer_lock_fd = acquire_file_lock(lock_file);
                 if(writer_lock_fd < 0)
                     status = MBError::WRITER_EXIST;
             }
@@ -329,7 +329,37 @@ void DB::PostDBUpdate(const MBConfig &config, bool init_header, bool update_head
     }
 }
 
+void DB::ReInit(MBConfig &config)
+{
+    std::cout << "failed to open db with error: " << MBError::get_error_str(status) << "\n";
+    std::cout << "erase corrupted DB and retry\n";
+    Close();
+    std::string db_dir = std::string(config.mbdir);
+    remove_db_files(db_dir);
+    status = MBError::NOT_INITIALIZED;
+    InitDBEx(config);
+}
+
 void DB::InitDB(MBConfig &config)
+{
+    if (config.mbdir == nullptr)
+        return;
+    std::string db_dir = std::string(config.mbdir);
+    std::string lock_file = "/tmp/_mbh_lock";
+    if (directory_exists(db_dir)) {
+        lock_file = db_dir + "/_mbh_lock";
+    }
+
+    int fd = acquire_file_lock_wait(lock_file);
+    InitDBEx(config);
+    if ((config.options & CONSTS::ACCESS_MODE_WRITER) && !is_open() && status != MBError::WRITER_EXIST)
+    {
+        ReInit(config);
+    }
+    release_file_lock(fd);
+}
+
+void DB::InitDBEx(MBConfig &config)
 {
     dict = NULL;
     async_writer = NULL;

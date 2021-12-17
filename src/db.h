@@ -202,6 +202,8 @@ public:
 
 private:
     void InitDB(MBConfig &config);
+    void InitDBEx(MBConfig &config);
+    void ReInit(MBConfig &config);
     void PreCheckDB(const MBConfig &config, bool &init_header, bool &update_header);
     void PostDBUpdate(const MBConfig &config, bool init_header, bool update_header);
     static int ValidateConfig(MBConfig &config);
