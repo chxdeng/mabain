@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2018 Cisco Inc.
+ * Copyright (C) 2021 Cisco Inc.
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU General Public License, version 2,
@@ -16,12 +16,13 @@
 
 // @author Changxue Deng <chadeng@cisco.com>
 
-#include <string>
+#include <cstring>
 #include <iostream>
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
 #include <sys/stat.h>
+#include <dirent.h>
 
 #include "error.h"
 
@@ -45,8 +46,6 @@ int acquire_file_lock(const std::string &lock_file_path)
     writer_lock.l_len = 0;
     if(fcntl(fd, F_SETLK, &writer_lock) != 0)
     {
-        std::cerr << "failed to lock file " << lock_file_path
-                  << " errno: " << errno << std::endl;
         close(fd);
         return -1;
     }
@@ -54,16 +53,23 @@ int acquire_file_lock(const std::string &lock_file_path)
     return fd;
 }
 
-#define FILE_LOCK_RETRY_COUNT 5000
-int acquire_file_lock_wait(const std::string &lock_file_path)
+int acquire_file_lock_wait_n(const std::string &lock_file_path, int ntry)
 {
     int fd = -1;
     int cnt = 0;
-    while (cnt++ < FILE_LOCK_RETRY_COUNT)
+
+    do
     {
         fd = acquire_file_lock(lock_file_path);
         if (fd >= 0) break;
+        if (++cnt >= ntry) break;
         usleep(1000);
+    } while (cnt < ntry);
+
+    if (fd < 0)
+    {
+        std::cerr << "failed to lock file " << lock_file_path
+                  << " errno: " << errno << std::endl;
     }
     return fd;
 }
@@ -94,16 +100,32 @@ bool directory_exists(const std::string &path)
     return false;
 }
 
+static int remove_matched_files(const std::string &dpath, const std::string &pattern)
+{
+    DIR *d;
+    struct dirent *dir;
+    d = opendir(dpath.c_str());
+    if (d == NULL)
+        return MBError::OPEN_FAILURE;
+
+    while ( (dir = readdir(d)) != NULL )
+    {
+        if (strncmp(pattern.c_str(), dir->d_name, pattern.size()) == 0)
+        {
+            std::string fpath = dpath + "/" + dir->d_name;
+            if (std::remove(fpath.c_str()) != 0)
+                std::cerr << "failed to remove " << fpath << std::endl;
+        }
+    }
+    closedir(d);
+
+    return MBError::SUCCESS;
+}
+
 int remove_db_files(const std::string &db_dir)
 {
-    std::string cmd = "rm /dev/shm/_mabain_q*";
-    if (system(cmd.c_str()) != 0) {
-        std::cout << "failed to removed shared queue file\n";
-    }
-    cmd = "rm " + db_dir + "/_mabain_*";
-    if (system(cmd.c_str()) != 0) {
-        std::cout << "failed to removed shared db files\n";
-    }
+    remove_matched_files("/dev/shm", "_mabain_q");
+    remove_matched_files(db_dir, "_mabain_");
     return 0;
 }
 

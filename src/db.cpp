@@ -39,8 +39,8 @@
 
 namespace mabain {
 
-// Current mabain version 1.3.2
-uint16_t version[4] = {1, 3, 2, 0};
+// Current mabain version 1.3.3
+uint16_t version[4] = {1, 3, 3, 0};
 
 DB::~DB()
 {
@@ -196,7 +196,7 @@ void DB::PreCheckDB(const MBConfig &config, bool &init_header, bool &update_head
             if(!(config.options & CONSTS::MEMORY_ONLY_MODE))
             {
                 // process check by file lock
-                writer_lock_fd = acquire_file_lock(lock_file);
+                writer_lock_fd = acquire_file_lock_wait_n(lock_file, 1);
                 if(writer_lock_fd < 0)
                     status = MBError::WRITER_EXIST;
             }
@@ -350,7 +350,7 @@ void DB::InitDB(MBConfig &config)
         lock_file = db_dir + "/_mbh_lock";
     }
 
-    int fd = acquire_file_lock_wait(lock_file);
+    int fd = acquire_file_lock_wait_n(lock_file, 5000);
     InitDBEx(config);
     if ((config.options & CONSTS::ACCESS_MODE_WRITER) && !is_open() && status != MBError::WRITER_EXIST)
     {
