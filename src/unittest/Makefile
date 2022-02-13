@@ -22,5 +22,5 @@ unit-test: clean build
 
 clean:
 	-rm -rf $(TEST_BIN_NAME)
-	-rm -rf *.gcda *.gcno *.tap
+	-rm -rf *.gcda *.gcno
 	-rm -rf $(TEST_COVRAGE_DIR)
