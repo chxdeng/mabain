@@ -75,7 +75,8 @@ public:
         MBData mbd;
         mbd.data_len = data_len; 
         mbd.buff = (uint8_t *) FAKE_DATA;
-        int rval = dict->Add((const uint8_t *)FAKE_KEY, key_len, mbd, overwrite);
+        if (overwrite) mbd.options |= CONSTS::OPTION_ADD_OVERWRITE;
+        int rval = dict->Add((const uint8_t *)FAKE_KEY, key_len, mbd);
         mbd.buff = NULL;
         return rval;
     }
@@ -152,9 +153,11 @@ TEST_F(DictTest, Add_test)
     mbd.data_len = 100;
     mbd.Resize(mbd.data_len);
     memcpy(mbd.buff, FAKE_DATA, mbd.data_len);
-    rval = dict->Add(key, key_len, mbd, false);
+    mbd.options &= ~CONSTS::OPTION_ADD_OVERWRITE;
+    rval = dict->Add(key, key_len, mbd);
     EXPECT_EQ(rval, MBError::SUCCESS);
-    rval = dict->Add(key, key_len, mbd, false);
+    mbd.options &= ~CONSTS::OPTION_ADD_OVERWRITE;
+    rval = dict->Add(key, key_len, mbd);
     EXPECT_EQ(rval, MBError::IN_DICT);
     EXPECT_EQ(dict->Count(), 1);
     shm_ptr = dict->GetShmPtr(header->m_data_offset-mbd.data_len, mbd.data_len);
@@ -166,7 +169,8 @@ TEST_F(DictTest, Add_test)
     mbd.data_len = 101;
     mbd.Resize(mbd.data_len);
     memcpy(mbd.buff, FAKE_DATA, mbd.data_len);
-    rval = dict->Add(key, key_len, mbd, false);
+    mbd.options &= ~CONSTS::OPTION_ADD_OVERWRITE;
+    rval = dict->Add(key, key_len, mbd);
     EXPECT_EQ(rval, MBError::SUCCESS);
     EXPECT_EQ(dict->Count(), 2);
     shm_ptr = dict->GetShmPtr(header->m_data_offset-mbd.data_len, mbd.data_len);
@@ -178,7 +182,8 @@ TEST_F(DictTest, Add_test)
     mbd.data_len = 105;
     mbd.Resize(mbd.data_len);
     memcpy(mbd.buff, FAKE_DATA, mbd.data_len);
-    rval = dict->Add(key, key_len, mbd, false);
+    mbd.options &= ~CONSTS::OPTION_ADD_OVERWRITE;
+    rval = dict->Add(key, key_len, mbd);
     EXPECT_EQ(rval, MBError::SUCCESS);
     EXPECT_EQ(dict->Count(), 3);
     shm_ptr = dict->GetShmPtr(header->m_data_offset-mbd.data_len, mbd.data_len);
@@ -190,7 +195,8 @@ TEST_F(DictTest, Add_test)
     mbd.data_len = 108;
     mbd.Resize(mbd.data_len);
     memcpy(mbd.buff, FAKE_DATA, mbd.data_len);
-    rval = dict->Add(key, key_len, mbd, true);
+    mbd.options |= CONSTS::OPTION_ADD_OVERWRITE;
+    rval = dict->Add(key, key_len, mbd);
     EXPECT_EQ(rval, MBError::SUCCESS);
     EXPECT_EQ(dict->Count(), 3);
     shm_ptr = dict->GetShmPtr(header->m_data_offset-mbd.data_len, mbd.data_len);
