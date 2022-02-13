@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2017 Cisco Inc.
+ * Copyright (C) 2022 Cisco Inc.
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU General Public License, version 2,
@@ -109,7 +109,7 @@ public:
     int buff_len;
 
     // data offset
-    size_t data_offset; // For append, save the old data offset
+    size_t data_offset;
     uint16_t bucket_index;
 
     // Search options

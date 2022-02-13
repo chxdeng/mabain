@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2021 Cisco Inc.
+ * Copyright (C) 2022 Cisco Inc.
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU General Public License, version 2,
@@ -18,6 +18,7 @@
 #include <iostream>
 
 #include "append.h"
+#include "mabain_consts.h"
 
 #define MAX_APPEND_SIZE 512
 
@@ -26,8 +27,7 @@ namespace mabain {
 Append::Append(Dict &dict_ref, EdgePtrs &eptrs)
                               : dict(dict_ref), 
                                 edge_ptrs(eptrs),
-                                existing_key(false),
-                                old_data_offset(0)
+                                existing_key(false)
 {
 }
 
@@ -40,23 +40,21 @@ bool Append::IsExistingKey() const
     return existing_key;
 }
 
-size_t Append::GetOldDataOffset() const
-{
-    return old_data_offset;
-}
-
 // data_offset: both input and output
-int Append::AppendDataBuffer(size_t &data_offset, const uint8_t *buff, int buff_len)
+int Append::AppendDataBuffer(size_t &data_offset, MBData &data)
 {
     uint16_t curr_data_size;
     if (dict.ReadData(reinterpret_cast<uint8_t*>(&curr_data_size),
                       DATA_SIZE_BYTE, data_offset) != DATA_SIZE_BYTE) {
         return MBError::READ_ERROR;
     }
-    uint16_t appended_data_len = curr_data_size + buff_len;
+    uint16_t appended_data_len = curr_data_size + data.buff_len;
     if (appended_data_len > MAX_APPEND_SIZE) {
-        old_data_offset = data_offset;
-        dict.ReserveData(buff, buff_len, data_offset);
+        if (!(data.options & CONSTS::OPTION_ADD_APPEND_LINK_KEY)) {
+            // data_offset always points to the original (non-link) data
+            data.data_offset = data_offset;
+        }
+        return MBError::APPEND_OVERFLOW;
     } else {
         uint8_t *combined_buff = new uint8_t[appended_data_len];
         if (dict.ReadData(combined_buff, curr_data_size, data_offset + DATA_HDR_BYTE)
@@ -64,7 +62,7 @@ int Append::AppendDataBuffer(size_t &data_offset, const uint8_t *buff, int buff_
             delete []combined_buff;
             return MBError::READ_ERROR;
         }
-        memcpy(combined_buff + curr_data_size, buff, buff_len);
+        memcpy(combined_buff + curr_data_size, data.buff, data.buff_len);
         dict.ReleaseBuffer(data_offset);
         dict.ReserveData(combined_buff, appended_data_len, data_offset); 
         delete []combined_buff;
@@ -72,12 +70,12 @@ int Append::AppendDataBuffer(size_t &data_offset, const uint8_t *buff, int buff_
     return MBError::SUCCESS;
 }
 
-int Append::AddDataToLeafNode(const uint8_t *buff, int buff_len)
+int Append::AddDataToLeafNode(MBData &data)
 {
     int rval;
     existing_key = true;
     size_t data_offset = Get6BInteger(edge_ptrs.offset_ptr);
-    rval = AppendDataBuffer(data_offset, buff, buff_len);
+    rval = AppendDataBuffer(data_offset, data);
     if (rval != MBError::SUCCESS) {
         return rval;
     }
@@ -96,11 +94,11 @@ int Append::AddDataToLeafNode(const uint8_t *buff, int buff_len)
     return MBError::SUCCESS;
 }
 
-int Append::AddDataBuffer(const uint8_t *buff, int buff_len)
+int Append::AddDataBuffer(MBData &data)
 {
     if (edge_ptrs.flag_ptr[0] & EDGE_FLAG_DATA_OFF) {
         // leaf node
-        return AddDataToLeafNode(buff, buff_len);
+        return AddDataToLeafNode(data);
     }
 
     IndexHeader *header = dict.GetHeaderPtr();
@@ -117,7 +115,7 @@ int Append::AddDataBuffer(const uint8_t *buff, int buff_len)
         // existing key
         existing_key = true; 
         data_off = Get6BInteger(node_buff+2);
-        int rval = AppendDataBuffer(data_off, buff, buff_len);
+        int rval = AppendDataBuffer(data_off, data);
         if (rval != MBError::SUCCESS) {
             return rval;
         }
@@ -126,7 +124,18 @@ int Append::AddDataBuffer(const uint8_t *buff, int buff_len)
         // new key
         node_buff[0] |= FLAG_NODE_MATCH;
         node_buff[NODE_EDGE_KEY_FIRST] = 1;
-        dict.ReserveData(buff, buff_len, data_off);
+        if (data.options & CONSTS::OPTION_ADD_APPEND_LINK_KEY) {
+            // This is a a new link key
+            dict.ReserveData(data.buff, data.buff_len, data_off);
+        } else {
+            // This is the first key (original key) in appending, also need to allocate the link pointer (4 byte)
+            dict.ReserveData(nullptr, data.buff_len + TAIL_POINTER_SIZE, data_off);
+            // write a zero tail pointer since this is the current tail
+            uint32_t curr_tail = 0;
+            dict.WriteData((const uint8_t*) &curr_tail, TAIL_POINTER_SIZE, data_off + DATA_HDR_BYTE);
+            // write data buffer
+            dict.WriteData(data.buff, data.buff_len, data_off + DATA_HDR_BYTE + DATA_HDR_BYTE);
+        }
     }
     Write6BInteger(node_buff+2, data_off);
 

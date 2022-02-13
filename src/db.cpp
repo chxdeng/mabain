@@ -592,8 +592,8 @@ int DB::Append(const char* key, int len, const char* data, int data_len)
         mbdata.buff = (uint8_t*) data;
         mbdata.options |= CONSTS::OPTION_ADD_APPEND;
         rval = dict->Add(reinterpret_cast<const uint8_t*>(key), len, mbdata);
-        if (rval == MBError::SUCCESS) {
-            rval = dict->AddOldDataLink(reinterpret_cast<const uint8_t*>(key), len, mbdata);
+        if (MBError::APPEND_OVERFLOW == rval) {
+            rval = dict->IncAndAppendTail(reinterpret_cast<const uint8_t*>(key), len, mbdata);
         }
     } else {
         rval = dict->SHMQ_Append(key, len, data, data_len);

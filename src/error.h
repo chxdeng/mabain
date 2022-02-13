@@ -53,6 +53,7 @@ public:
         THREAD_FAILED = 21,
         RC_SKIPPED = 22,
         VERSION_MISMATCH = 23,
+        APPEND_OVERFLOW = 24,
 
         // NO_DB should be the last enum.
         NO_DB

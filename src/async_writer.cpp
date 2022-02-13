@@ -118,7 +118,7 @@ int AsyncWriter::ProcessTask(int ntasks, bool rc_mode)
                     mbd.buff = (uint8_t *) node_ptr->data;
                     mbd.data_len = node_ptr->data_len;
                     try {
-                        rval = dict->Add((uint8_t *)node_ptr->key, node_ptr->key_len, mbd);
+                        rval = dict->Add((const uint8_t *)node_ptr->key, node_ptr->key_len, mbd);
                     } catch (int err) {
                         rval = err;
                         Logger::Log(LOG_LEVEL_ERROR, "dict->Add throws error %s",
@@ -131,9 +131,9 @@ int AsyncWriter::ProcessTask(int ntasks, bool rc_mode)
                     mbd.buff = (uint8_t *) node_ptr->data;
                     mbd.data_len = node_ptr->data_len;
                     try {
-                        rval = dict->Add((uint8_t *)node_ptr->key, node_ptr->key_len, mbd);
-                        if (rval == MBError::SUCCESS) {
-                            rval = dict->AddOldDataLink((uint8_t *)node_ptr->key, node_ptr->key_len, mbd);
+                        rval = dict->Add((const uint8_t *)node_ptr->key, node_ptr->key_len, mbd);
+                        if (MBError::APPEND_OVERFLOW == rval) {
+                            rval = dict->IncAndAppendTail((const uint8_t*)node_ptr->key, node_ptr->key_len, mbd);
                         }
                     } catch (int err) {
                         rval = err;
@@ -291,7 +291,7 @@ void* AsyncWriter::async_writer_thread()
                 mbd.data_len = node_ptr->data_len;
                 writer_lock.lock();
                 try {
-                    rval = dict->Add((uint8_t *)node_ptr->key, node_ptr->key_len, mbd);
+                    rval = dict->Add((const uint8_t *)node_ptr->key, node_ptr->key_len, mbd);
                 } catch (int err) {
                     Logger::Log(LOG_LEVEL_ERROR, "dict->Add throws error %s",
                                 MBError::get_error_str(err));
@@ -305,9 +305,9 @@ void* AsyncWriter::async_writer_thread()
                 mbd.data_len = node_ptr->data_len;
                 writer_lock.lock();
                 try {
-                    rval = dict->Add((uint8_t *)node_ptr->key, node_ptr->key_len, mbd);
-                    if (rval == MBError::SUCCESS) {
-                        rval = dict->AddOldDataLink((uint8_t *)node_ptr->key, node_ptr->key_len, mbd);
+                    rval = dict->Add((const uint8_t *)node_ptr->key, node_ptr->key_len, mbd);
+                    if (MBError::APPEND_OVERFLOW == rval) {
+                        rval = dict->IncAndAppendTail((const uint8_t*)node_ptr->key, node_ptr->key_len, mbd);
                     }
                 } catch (int err) {
                     Logger::Log(LOG_LEVEL_ERROR, "dict->Add throws error %s",

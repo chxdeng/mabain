@@ -35,7 +35,7 @@ const int CONSTS::OPTION_READ_SAVED_EDGE       = 0x8;
 const int CONSTS::OPTION_INTERNAL_NODE_BOUND   = 0x10;
 const int CONSTS::OPTION_ADD_OVERWRITE         = 0x20;
 const int CONSTS::OPTION_ADD_APPEND            = 0x40;
-
+const int CONSTS::OPTION_ADD_APPEND_LINK_KEY   = 0x80; // this is a link key, instead of original key
 
 const int CONSTS::MAX_KEY_LENGHTH              = 256;
 const int CONSTS::MAX_DATA_SIZE                = 0x7FFF;

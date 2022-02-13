@@ -62,7 +62,6 @@ public:
     int FindPrefix(const uint8_t *key, int len, MBData &data, AllPrefixResults *presults = nullptr);
 
     int FindBound(size_t root_off, const uint8_t *key, int len, MBData &data);
-    int AddOldDataLink(const uint8_t *old_key, int old_key_len, MBData &mbd);
 
     // Delete entry by key
     int Remove(const uint8_t *key, int len);
@@ -71,6 +70,9 @@ public:
 
     // Delete all entries
     int RemoveAll();
+
+    // Increment tail pointer and append data to new tail
+    int IncAndAppendTail(const uint8_t *key, int len, MBData &data);
 
     // multiple-process updates using shared memory queue
     int  SHMQ_Add(const char *key, int key_len, const char *data, int data_len,

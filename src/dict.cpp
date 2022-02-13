@@ -205,12 +205,11 @@ int Dict::UpdateData(EdgePtrs &edge_ptrs, MBData &data, bool &inc_count)
     int rval = MBError::SUCCESS;
     if (data.options & CONSTS::OPTION_ADD_APPEND) {
         Append app(*this, edge_ptrs);
-        rval = app.AddDataBuffer(data.buff, data.data_len);
+        rval = app.AddDataBuffer(data);
         inc_count = !app.IsExistingKey();
-        data.data_offset = app.GetOldDataOffset();
     } else {
         bool overwrite = false;
-        if (data.options % CONSTS::OPTION_ADD_OVERWRITE) {
+        if (data.options & CONSTS::OPTION_ADD_OVERWRITE) {
             overwrite = true;
         }
         rval = UpdateDataBuffer(edge_ptrs, overwrite, data.buff,
@@ -1226,7 +1225,9 @@ void Dict::ReserveData(const uint8_t* buff, int size, size_t &offset)
     {
         offset = free_lists->RemoveBufferByIndex(buf_index);
         WriteData(reinterpret_cast<const uint8_t*>(&dsize[0]), DATA_HDR_BYTE, offset);
-        WriteData(buff, size, offset+DATA_HDR_BYTE);
+        if (buff != nullptr) {
+            WriteData(buff, size, offset+DATA_HDR_BYTE);
+        }
         header->pending_data_buff_size -= buf_size;
     }
     else
@@ -1250,12 +1251,16 @@ void Dict::ReserveData(const uint8_t* buff, int size, size_t &offset)
         if(ptr != NULL)
         {
             memcpy(ptr, &dsize[0], DATA_HDR_BYTE);
-            memcpy(ptr+DATA_HDR_BYTE, buff, size);
+            if (buff != nullptr) {
+                memcpy(ptr+DATA_HDR_BYTE, buff, size);
+            }
         }
         else
         {
             WriteData(reinterpret_cast<const uint8_t*>(&dsize[0]), DATA_HDR_BYTE, offset);
-            WriteData(buff, size, offset+DATA_HDR_BYTE);
+            if (buff != nullptr) {
+                WriteData(buff, size, offset+DATA_HDR_BYTE);
+            }
         }
     }
 }
@@ -1526,20 +1531,29 @@ void Dict::WriteData(const uint8_t *buff, unsigned len, size_t offset) const
         throw (int) MBError::WRITE_ERROR;
 }
 
-// TODO: this is a temp solution.
-int Dict::AddOldDataLink(const uint8_t *old_key, int old_key_len, MBData &mbd)
+int Dict::IncAndAppendTail(const uint8_t *key, int len, MBData &data)
 {
-    if (mbd.data_offset == 0) {
-        return MBError::SUCCESS;
+    size_t tail_ptr_offset = data.data_offset + DATA_HDR_BYTE;
+    uint32_t tail_ptr;
+
+    // increment the tail pointer first
+    if (ReadData(reinterpret_cast<uint8_t*>(&tail_ptr), TAIL_POINTER_SIZE,
+                tail_ptr_offset) != TAIL_POINTER_SIZE) {
+        return MBError::READ_ERROR;
     }
-    mbd.options = 0;
-    uint8_t link_key[8];
-    assert(old_key_len >= 3);
-    assert(mbd.data_len >= 4);
-    memcpy(link_key, old_key, 3);
-    link_key[3] = 'a';
-    memcpy(link_key+4, mbd.buff, 4);
-    return Add(link_key, 8, mbd);
+    tail_ptr++;
+    WriteData(reinterpret_cast<uint8_t*>(&tail_ptr), TAIL_POINTER_SIZE, tail_ptr_offset);
+
+    // build the link key
+    int link_key_len = 1 + len + TAIL_POINTER_SIZE;
+    if (link_key_len > CONSTS::MAX_KEY_LENGHTH) {
+        return MBError::OUT_OF_BOUND;
+    }
+    char link_key[link_key_len];
+    link_key[0] = 'a';
+    memcpy(link_key+1, key, len);
+    memcpy(link_key+1+len, reinterpret_cast<const void*>(&tail_ptr), TAIL_POINTER_SIZE);
+    return Add(reinterpret_cast<const uint8_t*>(link_key), link_key_len, data);
 }
 
 }
