@@ -133,7 +133,7 @@ int AsyncWriter::ProcessTask(int ntasks, bool rc_mode)
                     try {
                         rval = dict->Add((const uint8_t *)node_ptr->key, node_ptr->key_len, mbd);
                         if (MBError::APPEND_OVERFLOW == rval) {
-                            rval = dict->IncAndAppendTail((const uint8_t*)node_ptr->key, node_ptr->key_len, mbd);
+                            rval = dict->UpdateAndAppendTail((const uint8_t*)node_ptr->key, node_ptr->key_len, mbd);
                         }
                     } catch (int err) {
                         rval = err;
@@ -307,7 +307,7 @@ void* AsyncWriter::async_writer_thread()
                 try {
                     rval = dict->Add((const uint8_t *)node_ptr->key, node_ptr->key_len, mbd);
                     if (MBError::APPEND_OVERFLOW == rval) {
-                        rval = dict->IncAndAppendTail((const uint8_t*)node_ptr->key, node_ptr->key_len, mbd);
+                        rval = dict->UpdateAndAppendTail((const uint8_t*)node_ptr->key, node_ptr->key_len, mbd);
                     }
                 } catch (int err) {
                     Logger::Log(LOG_LEVEL_ERROR, "dict->Add throws error %s",

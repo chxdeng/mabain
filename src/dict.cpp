@@ -1515,18 +1515,16 @@ void Dict::WriteData(const uint8_t *buff, unsigned len, size_t offset) const
         throw (int) MBError::WRITE_ERROR;
 }
 
-int Dict::IncAndAppendTail(const uint8_t *key, int len, MBData &data)
+int Dict::UpdateAndAppendTail(const uint8_t *key, int len, MBData &data)
 {
     size_t tail_ptr_offset = data.data_offset + DATA_HDR_BYTE;
     uint32_t tail_ptr;
 
-    // increment the tail pointer first
+    // Read tail pointer
     if (ReadData(reinterpret_cast<uint8_t*>(&tail_ptr), TAIL_POINTER_SIZE,
                 tail_ptr_offset) != TAIL_POINTER_SIZE) {
         return MBError::READ_ERROR;
     }
-    tail_ptr++;
-    WriteData(reinterpret_cast<uint8_t*>(&tail_ptr), TAIL_POINTER_SIZE, tail_ptr_offset);
 
     // build the link key
     // link key is "a" + original_key + tail_ptr
@@ -1538,7 +1536,16 @@ int Dict::IncAndAppendTail(const uint8_t *key, int len, MBData &data)
     link_key[0] = 'a';
     memcpy(link_key+1, key, len);
     memcpy(link_key+1+len, reinterpret_cast<const void*>(&tail_ptr), TAIL_POINTER_SIZE);
-    return Add(reinterpret_cast<const uint8_t*>(link_key), link_key_len, data);
+    data.options |= CONSTS::OPTION_APPEND_LINK_KEY;
+    int rval = Add(reinterpret_cast<const uint8_t*>(link_key), link_key_len, data);
+    if (rval == MBError::APPEND_OVERFLOW) {
+        // Increment tail pointer
+        tail_ptr++;
+        WriteData(reinterpret_cast<uint8_t*>(&tail_ptr), TAIL_POINTER_SIZE, tail_ptr_offset);
+        memcpy(link_key+1+len, reinterpret_cast<const void*>(&tail_ptr), TAIL_POINTER_SIZE);
+        rval = Add(reinterpret_cast<const uint8_t*>(link_key), link_key_len, data);
+    }
+    return rval;
 }
 
 }

@@ -48,11 +48,15 @@ int Append::AppendDataBuffer(size_t &data_offset, MBData &data)
                       DATA_SIZE_BYTE, data_offset) != DATA_SIZE_BYTE) {
         return MBError::READ_ERROR;
     }
-    uint16_t appended_data_len = curr_data_size + data.buff_len;
+    uint16_t appended_data_len = curr_data_size + data.data_len;
     if (appended_data_len > MAX_APPEND_SIZE) {
         if (!(data.options & CONSTS::OPTION_APPEND_LINK_KEY)) {
+            // This is the first/original or non-link key, set the tail pointer to 1
             // data_offset always points to the original (non-link) data
             data.data_offset = data_offset;
+	    // update tail pointer to 1
+            uint32_t tail_ptr = 1;
+            dict.WriteData(reinterpret_cast<uint8_t*>(&tail_ptr), TAIL_POINTER_SIZE, data.data_offset + DATA_HDR_BYTE);
         }
         return MBError::APPEND_OVERFLOW;
     } else {
@@ -62,7 +66,7 @@ int Append::AppendDataBuffer(size_t &data_offset, MBData &data)
             delete []combined_buff;
             return MBError::READ_ERROR;
         }
-        memcpy(combined_buff + curr_data_size, data.buff, data.buff_len);
+        memcpy(combined_buff + curr_data_size, data.buff, data.data_len);
         dict.ReleaseBuffer(data_offset);
         dict.ReserveData(combined_buff, appended_data_len, data_offset); 
         delete []combined_buff;

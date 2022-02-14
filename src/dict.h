@@ -71,8 +71,8 @@ public:
     // Delete all entries
     int RemoveAll();
 
-    // Increment tail pointer and append data to new tail
-    int IncAndAppendTail(const uint8_t *key, int len, MBData &data);
+    // Append to tail and update tail pointer if needed
+    int UpdateAndAppendTail(const uint8_t *key, int len, MBData &data);
 
     // multiple-process updates using shared memory queue
     int  SHMQ_Add(const char *key, int key_len, const char *data, int data_len,
