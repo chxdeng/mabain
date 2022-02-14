@@ -28,7 +28,6 @@ MBData::MBData()
     data_len = 0;
     buff_len = 0;
     buff = NULL;
-    data_offset = 0;
 
     match_len = 0;
     options = 0;
@@ -55,7 +54,6 @@ MBData::MBData(int size, int match_options)
     data_len = 0;
     match_len = 0;
     options = match_options;
-    data_offset = 0;
 }
 
 // Caller must free data.
@@ -116,8 +114,6 @@ void MBData::Clear()
 {
     match_len = 0;
     data_len = 0;
-    data_offset = 0;
-    options = 0;
 }
 
 int MBData::Resize(int size)

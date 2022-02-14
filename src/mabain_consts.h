@@ -38,8 +38,8 @@ public:
     static const int OPTION_READ_SAVED_EDGE; // Used internally only
     static const int OPTION_INTERNAL_NODE_BOUND;
     static const int OPTION_ADD_OVERWRITE;
-    static const int OPTION_ADD_APPEND;
-    static const int OPTION_ADD_APPEND_LINK_KEY;
+    static const int OPTION_APPEND;
+    static const int OPTION_APPEND_LINK_KEY;
 
     static const int MAX_KEY_LENGHTH;
     static const int MAX_DATA_SIZE;

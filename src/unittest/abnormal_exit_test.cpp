@@ -499,7 +499,7 @@ TEST_F(AbnormalExitTest, RC_RECOVERY_RC_ROOT_TREE_test)
         mbd.buff = (uint8_t *) key_str.c_str();
         mbd.data_len = key_str.size();
 
-        int rval = dict->Add((const uint8_t *)key_str.c_str(), key_str.size(), mbd, false);
+        int rval = dict->Add((const uint8_t *)key_str.c_str(), key_str.size(), mbd);
         if(rval != MBError::SUCCESS) {
             std::cout << "failed to add " << key_str << "\n";
         }

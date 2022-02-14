@@ -546,7 +546,6 @@ int DB::Add(const char* key, int len, MBData &mbdata, bool overwrite)
     if(status != MBError::SUCCESS)
         return MBError::NOT_INITIALIZED;
 
-    mbdata.data_offset = 0;
     if (overwrite) mbdata.options |= CONSTS::OPTION_ADD_OVERWRITE;
     if (async_writer == NULL && (options & CONSTS::ACCESS_MODE_WRITER))
     {
@@ -590,7 +589,7 @@ int DB::Append(const char* key, int len, const char* data, int data_len)
         MBData mbdata;
         mbdata.data_len = data_len;
         mbdata.buff = (uint8_t*) data;
-        mbdata.options |= CONSTS::OPTION_ADD_APPEND;
+        mbdata.options |= CONSTS::OPTION_APPEND;
         rval = dict->Add(reinterpret_cast<const uint8_t*>(key), len, mbdata);
         if (MBError::APPEND_OVERFLOW == rval) {
             rval = dict->IncAndAppendTail(reinterpret_cast<const uint8_t*>(key), len, mbdata);

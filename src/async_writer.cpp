@@ -127,7 +127,7 @@ int AsyncWriter::ProcessTask(int ntasks, bool rc_mode)
                     break;
                 case MABAIN_ASYNC_TYPE_APPEND:
                     if (rc_mode) mbd.options = CONSTS::OPTION_RC_MODE;
-                    mbd.options |= CONSTS::OPTION_ADD_APPEND;
+                    mbd.options |= CONSTS::OPTION_APPEND;
                     mbd.buff = (uint8_t *) node_ptr->data;
                     mbd.data_len = node_ptr->data_len;
                     try {
@@ -300,7 +300,7 @@ void* AsyncWriter::async_writer_thread()
                 writer_lock.unlock();
                 break;
             case MABAIN_ASYNC_TYPE_APPEND:
-                mbd.options |= CONSTS::OPTION_ADD_APPEND;
+                mbd.options |= CONSTS::OPTION_APPEND;
                 mbd.buff = (uint8_t *) node_ptr->data;
                 mbd.data_len = node_ptr->data_len;
                 writer_lock.lock();

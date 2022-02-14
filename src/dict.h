@@ -86,6 +86,7 @@ public:
     void SHMQ_Signal();
     bool SHMQ_Busy() const;
 
+    void ReserveAppendData(MBData &data, size_t &offset);
     void ReserveData(const uint8_t* buff, int size, size_t &offset);
     void WriteData(const uint8_t *buff, unsigned len, size_t offset) const;
 

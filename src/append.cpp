@@ -50,7 +50,7 @@ int Append::AppendDataBuffer(size_t &data_offset, MBData &data)
     }
     uint16_t appended_data_len = curr_data_size + data.buff_len;
     if (appended_data_len > MAX_APPEND_SIZE) {
-        if (!(data.options & CONSTS::OPTION_ADD_APPEND_LINK_KEY)) {
+        if (!(data.options & CONSTS::OPTION_APPEND_LINK_KEY)) {
             // data_offset always points to the original (non-link) data
             data.data_offset = data_offset;
         }
@@ -124,18 +124,7 @@ int Append::AddDataBuffer(MBData &data)
         // new key
         node_buff[0] |= FLAG_NODE_MATCH;
         node_buff[NODE_EDGE_KEY_FIRST] = 1;
-        if (data.options & CONSTS::OPTION_ADD_APPEND_LINK_KEY) {
-            // This is a a new link key
-            dict.ReserveData(data.buff, data.buff_len, data_off);
-        } else {
-            // This is the first key (original key) in appending, also need to allocate the link pointer (4 byte)
-            dict.ReserveData(nullptr, data.buff_len + TAIL_POINTER_SIZE, data_off);
-            // write a zero tail pointer since this is the current tail
-            uint32_t curr_tail = 0;
-            dict.WriteData((const uint8_t*) &curr_tail, TAIL_POINTER_SIZE, data_off + DATA_HDR_BYTE);
-            // write data buffer
-            dict.WriteData(data.buff, data.buff_len, data_off + DATA_HDR_BYTE + DATA_HDR_BYTE);
-        }
+        dict.ReserveAppendData(data, data_off);
     }
     Write6BInteger(node_buff+2, data_off);
 
