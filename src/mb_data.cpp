@@ -114,6 +114,8 @@ void MBData::Clear()
 {
     match_len = 0;
     data_len = 0;
+    options = 0;
+    append_tail_ptr = 0;
 }
 
 int MBData::Resize(int size)

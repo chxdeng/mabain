@@ -111,6 +111,7 @@ public:
     // data offset
     size_t data_offset;
     uint16_t bucket_index;
+    uint32_t append_tail_ptr;
 
     // Search options
     int options;
