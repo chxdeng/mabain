@@ -25,19 +25,18 @@
 
 namespace mabain {
 
-#define MABAIN_ASYNC_TYPE_NONE       0
-#define MABAIN_ASYNC_TYPE_ADD        1
-#define MABAIN_ASYNC_TYPE_REMOVE     2
+#define MABAIN_ASYNC_TYPE_NONE 0
+#define MABAIN_ASYNC_TYPE_ADD 1
+#define MABAIN_ASYNC_TYPE_REMOVE 2
 #define MABAIN_ASYNC_TYPE_REMOVE_ALL 3
-#define MABAIN_ASYNC_TYPE_RC         4
-#define MABAIN_ASYNC_TYPE_BACKUP     5
+#define MABAIN_ASYNC_TYPE_RC 4
+#define MABAIN_ASYNC_TYPE_BACKUP 5
 
-#define MB_ASYNC_SHM_KEY_SIZE      256
-#define MB_ASYNC_SHM_DATA_SIZE     1024
-#define MB_ASYNC_SHM_LOCK_TMOUT    5
+#define MB_ASYNC_SHM_KEY_SIZE 256
+#define MB_ASYNC_SHM_DATA_SIZE 1024
+#define MB_ASYNC_SHM_LOCK_TMOUT 5
 
-typedef struct _AsyncNode
-{
+typedef struct _AsyncNode {
     std::atomic<bool> in_use;
     std::atomic<uint16_t> num_reader;
 
@@ -49,22 +48,20 @@ typedef struct _AsyncNode
     char type;
 } AsyncNode;
 
-typedef struct _shm_lock_and_queue
-{
+typedef struct _shm_lock_and_queue {
     int initialized;
     pthread_mutex_t lock;
     AsyncNode queue[MB_MAX_NUM_SHM_QUEUE_NODE];
 } shm_lock_and_queue;
 
-class ShmQueueMgr
-{
+class ShmQueueMgr {
 public:
     ShmQueueMgr();
     ~ShmQueueMgr();
-    shm_lock_and_queue* CreateFile(uint64_t qid, int qsize, const char *queue_dir, int options);
+    shm_lock_and_queue* CreateFile(uint64_t qid, int qsize, const char* queue_dir, int options);
 
 private:
-    void InitShmObjects(shm_lock_and_queue *slaq, int queue_size);
+    void InitShmObjects(shm_lock_and_queue* slaq, int queue_size);
 };
 
 }

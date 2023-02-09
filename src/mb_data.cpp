@@ -18,8 +18,8 @@
 
 #include <string.h>
 
-#include "mb_data.h"
 #include "error.h"
+#include "mb_data.h"
 
 namespace mabain {
 
@@ -38,15 +38,12 @@ MBData::MBData(int size, int match_options)
 {
     buff_len = size;
     buff = NULL;
-    if(buff_len > 0)
+    if (buff_len > 0)
         buff = reinterpret_cast<uint8_t*>(malloc(buff_len + 1));
 
-    if(buff != NULL)
-    {
+    if (buff != NULL) {
         free_buffer = true;
-    }
-    else
-    {
+    } else {
         buff_len = 0;
         free_buffer = false;
     }
@@ -57,27 +54,23 @@ MBData::MBData(int size, int match_options)
 }
 
 // Caller must free data.
-int MBData::TransferValueTo(uint8_t* &data, int &dlen)
+int MBData::TransferValueTo(uint8_t*& data, int& dlen)
 {
-    if(buff == NULL || data_len <= 0)
-    {
+    if (buff == NULL || data_len <= 0) {
         dlen = 0;
         data = NULL;
         return MBError::INVALID_ARG;
     }
 
-    if(free_buffer)
-    {
+    if (free_buffer) {
         data = buff;
         buff = NULL;
         dlen = data_len;
-        free_buffer = false; 
+        free_buffer = false;
         buff_len = 0;
-    }
-    else
-    {
-        data = (uint8_t *) malloc(data_len + 1);
-        if(data == NULL)
+    } else {
+        data = (uint8_t*)malloc(data_len + 1);
+        if (data == NULL)
             return MBError::NO_MEMORY;
         memcpy(data, buff, data_len);
         dlen = data_len;
@@ -87,12 +80,12 @@ int MBData::TransferValueTo(uint8_t* &data, int &dlen)
 }
 
 // Data must be allocated using malloc or calloc.
-int MBData::TransferValueFrom(uint8_t* &data, int dlen)
+int MBData::TransferValueFrom(uint8_t*& data, int dlen)
 {
-    if(data == NULL)
+    if (data == NULL)
         return MBError::INVALID_ARG;
 
-    if(free_buffer && buff != NULL)
+    if (free_buffer && buff != NULL)
         free(buff);
     buff = data;
     buff_len = dlen;
@@ -105,7 +98,7 @@ int MBData::TransferValueFrom(uint8_t* &data, int dlen)
 
 MBData::~MBData()
 {
-    if(free_buffer)
+    if (free_buffer)
         free(buff);
 }
 
@@ -118,26 +111,20 @@ void MBData::Clear()
 
 int MBData::Resize(int size)
 {
-    if(size > buff_len)
-    {
+    if (size > buff_len) {
         buff_len = size;
-        if(free_buffer)
-        {
+        if (free_buffer) {
             free(buff);
-        }
-        else
-        {
+        } else {
             free_buffer = true;
         }
 
         buff = reinterpret_cast<uint8_t*>(malloc(buff_len + 1));
-        if(buff == NULL)
-        {
+        if (buff == NULL) {
             buff_len = 0;
             free_buffer = false;
             return MBError::NO_MEMORY;
         }
-
     }
     return MBError::SUCCESS;
 }

@@ -24,15 +24,14 @@
 namespace mabain {
 
 // Inter-process synchronization using named pipe
-class MBPipe
-{
+class MBPipe {
 public:
     MBPipe();
-    MBPipe(const std::string &mbdir, int mode);
+    MBPipe(const std::string& mbdir, int mode);
     ~MBPipe();
     // timeout is in millisecond
     void Wait(int timeout);
-    int  Signal();
+    int Signal();
 
 private:
     void Close();

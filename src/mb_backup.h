@@ -23,22 +23,22 @@
 
 #include "db.h"
 #include "dict.h"
+#include "drm_base.h"
 
 namespace mabain {
 
-class DBBackup
-{
+class DBBackup {
 public:
-	DBBackup(const DB &db);
-	~DBBackup();
-	int Backup(const char* bkup_dir);
+    DBBackup(const DB& db);
+    ~DBBackup();
+    int Backup(const char* bkup_dir);
 
 private:
-    static void copy_file (const std::string &src_path,
-        const std::string &dest_path, char *buffer, int buffer_size);
-    
-    const DB &db_ref;
-    const IndexHeader *header;
+    static void copy_file(const std::string& src_path,
+        const std::string& dest_path, char* buffer, int buffer_size);
+
+    const DB& db_ref;
+    const IndexHeader* header;
 };
 
 }

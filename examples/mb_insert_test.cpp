@@ -20,19 +20,19 @@
 
 using namespace mabain;
 
-const char *db_dir = "./tmp_dir/";
+const char* db_dir = "./tmp_dir/";
 
 // Insert key-value pair to mabain db
-int main(int argc, char *argv[])
+int main(int argc, char* argv[])
 {
-    if(argc == 2) {
+    if (argc == 2) {
         db_dir = argv[1];
     }
 
     mabain::DB::SetLogFile("/var/tmp/mabain_test/mabain.log");
 
     DB db(db_dir, CONSTS::WriterOptions());
-    if(!db.is_open()) {
+    if (!db.is_open()) {
         std::cerr << "failed to open mabain db: " << db.StatusStr() << "\n";
         exit(1);
     }
@@ -47,9 +47,9 @@ int main(int argc, char *argv[])
     key[2] = "Grape";
     value[2] = "Purple";
 
-    for(int i = 0; i < 3; i++) {
+    for (int i = 0; i < 3; i++) {
         rval = db.Add(key[i], value[i]);
-        if(rval != MBError::SUCCESS) {
+        if (rval != MBError::SUCCESS) {
             std::cout << key[i] << ": " << MBError::get_error_str(rval) << std::endl;
         }
     }

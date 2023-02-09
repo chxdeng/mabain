@@ -1,19 +1,20 @@
+#include <assert.h>
 #include <fstream>
 #include <time.h>
-#include <assert.h> 
-#include <unistd.h> 
+#include <unistd.h>
 
 #include "../db.h"
 
 using namespace std;
 using namespace mabain;
 
-const char *db_dir = "/var/tmp/mabain_test";
+const char* db_dir = "/var/tmp/mabain_test";
 
-static void create_header_file(int size) {
+static void create_header_file(int size)
+{
     char hdr[size];
     for (int i = 0; i < size; i++) {
-        hdr[i] = (char) (rand() % 256);
+        hdr[i] = (char)(rand() % 256);
     }
     string path = string(db_dir) + "/_mabain_h";
     ofstream wf(path.c_str(), ios::out | ios::binary);
@@ -21,7 +22,7 @@ static void create_header_file(int size) {
     wf.close();
 }
 
-int main(int argc, char *argv[])
+int main(int argc, char* argv[])
 {
     srand(time(NULL));
     string cmd = string("rm ") + db_dir + "/_mabain*";

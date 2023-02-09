@@ -17,34 +17,34 @@
 // @author Changxue Deng <chadeng@cisco.com>
 
 #include <iostream>
-#include <unistd.h>
 #include <sys/syscall.h>
+#include <unistd.h>
 
 #include <errno.h>
 
-#include "dict.h"
-#include "db.h"
-#include "error.h"
-#include "logger.h"
-#include "mb_lsq.h"
-#include "version.h"
-#include "mb_rc.h"
-#include "integer_4b_5b.h"
 #include "async_writer.h"
-#include "mb_backup.h"
-#include "resource_pool.h"
+#include "db.h"
+#include "dict.h"
 #include "drm_base.h"
+#include "error.h"
+#include "integer_4b_5b.h"
+#include "logger.h"
+#include "mb_backup.h"
+#include "mb_lsq.h"
+#include "mb_rc.h"
+#include "resource_pool.h"
 #include "util/shm_mutex.h"
 #include "util/utils.h"
+#include "version.h"
 
 namespace mabain {
 
 // Current mabain version 1.3.3
-uint16_t version[4] = {1, 3, 3, 0};
+uint16_t version[4] = { 1, 3, 3, 0 };
 
 DB::~DB()
 {
-    if(status != MBError::DB_CLOSED)
+    if (status != MBError::DB_CLOSED)
         Close();
 }
 
@@ -52,35 +52,29 @@ int DB::Close()
 {
     int rval = MBError::SUCCESS;
 
-    if((options & CONSTS::ACCESS_MODE_WRITER) && async_writer != NULL)
-    {
+    if ((options & CONSTS::ACCESS_MODE_WRITER) && async_writer != NULL) {
         rval = async_writer->StopAsyncThread();
-        if(rval != MBError::SUCCESS)
-        {
+        if (rval != MBError::SUCCESS) {
             Logger::Log(LOG_LEVEL_WARN, "failed to stop async writer thread: %s",
-                        MBError::get_error_str(rval));
+                MBError::get_error_str(rval));
         }
 
         delete async_writer;
         async_writer = NULL;
     }
 
-    if(dict != NULL)
-    {
+    if (dict != NULL) {
         UpdateNumHandlers(options, -1);
 
         dict->Destroy();
         delete dict;
         dict = NULL;
-    }
-    else
-    {
+    } else {
         rval = status;
     }
 
     status = MBError::DB_CLOSED;
-    if(options & CONSTS::ACCESS_MODE_WRITER)
-    {
+    if (options & CONSTS::ACCESS_MODE_WRITER) {
         release_file_lock(writer_lock_fd);
         ResourcePool::getInstance().RemoveResourceByDB(mb_dir);
     }
@@ -92,7 +86,7 @@ int DB::UpdateNumHandlers(int mode, int delta)
 {
     int rval = MBError::SUCCESS;
 
-    if(mode & CONSTS::ACCESS_MODE_WRITER)
+    if (mode & CONSTS::ACCESS_MODE_WRITER)
         rval = dict->UpdateNumWriter(delta);
     else
         dict->UpdateNumReader(delta);
@@ -101,13 +95,14 @@ int DB::UpdateNumHandlers(int mode, int delta)
 }
 
 // Constructor for initializing DB handle
-DB::DB(const char *db_path,
-       int db_options,
-       size_t memcap_index,
-       size_t memcap_data,
-       uint32_t id,
-       uint32_t queue_size) : status(MBError::NOT_INITIALIZED),
-                      writer_lock_fd(-1)
+DB::DB(const char* db_path,
+    int db_options,
+    size_t memcap_index,
+    size_t memcap_data,
+    uint32_t id,
+    uint32_t queue_size)
+    : status(MBError::NOT_INITIALIZED)
+    , writer_lock_fd(-1)
 {
     MBConfig config;
     memset(&config, 0, sizeof(config));
@@ -121,132 +116,113 @@ DB::DB(const char *db_path,
     InitDB(config);
 }
 
-DB::DB(MBConfig &config) : status(MBError::NOT_INITIALIZED),
-                           writer_lock_fd(-1)
+DB::DB(MBConfig& config)
+    : status(MBError::NOT_INITIALIZED)
+    , writer_lock_fd(-1)
 {
     InitDB(config);
 }
 
-int DB::ValidateConfig(MBConfig &config)
+int DB::ValidateConfig(MBConfig& config)
 {
-    if(config.mbdir == NULL)
+    if (config.mbdir == NULL)
         return MBError::INVALID_ARG;
 
-    if(config.memcap_index == 0)
-        config.memcap_index = 2*config.block_size_index;
-    if(config.memcap_data == 0)
-        config.memcap_data = 2*config.block_size_data;
+    if (config.memcap_index == 0)
+        config.memcap_index = 2 * config.block_size_index;
+    if (config.memcap_data == 0)
+        config.memcap_data = 2 * config.block_size_data;
 
-    if(config.options & CONSTS::ACCESS_MODE_WRITER)
-    {
-        if(config.block_size_index == 0)
+    if (config.options & CONSTS::ACCESS_MODE_WRITER) {
+        if (config.block_size_index == 0)
             config.block_size_index = INDEX_BLOCK_SIZE_DEFAULT;
-        if(config.block_size_data == 0)
+        if (config.block_size_data == 0)
             config.block_size_data = DATA_BLOCK_SIZE_DEFAULT;
-        if(config.num_entry_per_bucket <= 0)
+        if (config.num_entry_per_bucket <= 0)
             config.num_entry_per_bucket = 500;
-        if(config.num_entry_per_bucket < 8)
-        {
+        if (config.num_entry_per_bucket < 8) {
             std::cerr << "count in eviction bucket must be greater than 7\n";
             return MBError::INVALID_ARG;
         }
     }
-    if(config.options & CONSTS::USE_SLIDING_WINDOW)
-    {
+    if (config.options & CONSTS::USE_SLIDING_WINDOW) {
         std::cout << "sliding window option is deprecated\n";
         config.options &= ~CONSTS::USE_SLIDING_WINDOW;
     }
 
-    if(config.block_size_index != 0 && (config.block_size_index % BLOCK_SIZE_ALIGN != 0))
-    {
+    if (config.block_size_index != 0 && (config.block_size_index % BLOCK_SIZE_ALIGN != 0)) {
         std::cerr << "block size must be multiple of " << BLOCK_SIZE_ALIGN << "\n";
         return MBError::INVALID_ARG;
     }
-    if(config.block_size_data != 0 && (config.block_size_data % BLOCK_SIZE_ALIGN != 0))
-    {
+    if (config.block_size_data != 0 && (config.block_size_data % BLOCK_SIZE_ALIGN != 0)) {
         std::cerr << "block size must be multiple of " << BLOCK_SIZE_ALIGN << "\n";
         return MBError::INVALID_ARG;
     }
 
-    if(config.max_num_index_block == 0)
+    if (config.max_num_index_block == 0)
         config.max_num_index_block = 1024;
-    if(config.max_num_data_block == 0)
+    if (config.max_num_data_block == 0)
         config.max_num_data_block = 1024;
-    if(config.queue_size > MB_MAX_NUM_SHM_QUEUE_NODE)
+    if (config.queue_size > MB_MAX_NUM_SHM_QUEUE_NODE)
         std::cerr << "async queue size exceeds maximum\n";
-    if(config.queue_size == 0 || config.queue_size > MB_MAX_NUM_SHM_QUEUE_NODE)
+    if (config.queue_size == 0 || config.queue_size > MB_MAX_NUM_SHM_QUEUE_NODE)
         config.queue_size = MB_MAX_NUM_SHM_QUEUE_NODE;
 #ifdef __APPLE__
-    if(config.queue_dir == nullptr)
+    if (config.queue_dir == nullptr)
         config.queue_dir = config.mbdir;
 #endif
 
     return MBError::SUCCESS;
 }
 
-void DB::PreCheckDB(const MBConfig &config, bool &init_header, bool &update_header)
+void DB::PreCheckDB(const MBConfig& config, bool& init_header, bool& update_header)
 {
-    if(config.options & CONSTS::ACCESS_MODE_WRITER)
-    {
+    if (config.options & CONSTS::ACCESS_MODE_WRITER) {
         std::string lock_file = mb_dir + "_lock";
         // internal check first
         int ret = ResourcePool::getInstance().AddResourceByPath(lock_file, NULL);
-        if(ret == MBError::SUCCESS)
-        {
-            if(!(config.options & CONSTS::MEMORY_ONLY_MODE))
-            {
+        if (ret == MBError::SUCCESS) {
+            if (!(config.options & CONSTS::MEMORY_ONLY_MODE)) {
                 // process check by file lock
                 writer_lock_fd = acquire_file_lock_wait_n(lock_file, 1);
-                if(writer_lock_fd < 0)
+                if (writer_lock_fd < 0)
                     status = MBError::WRITER_EXIST;
             }
-        }
-        else
-        {
+        } else {
             status = MBError::WRITER_EXIST;
         }
-        if(status == MBError::WRITER_EXIST)
-        {
+        if (status == MBError::WRITER_EXIST) {
             Logger::Log(LOG_LEVEL_ERROR, "failed to initialize db: %s",
-                        MBError::get_error_str(status));
+                MBError::get_error_str(status));
             return;
         }
     }
 
-    if(config.options & CONSTS::MEMORY_ONLY_MODE)
-    {
-        if(config.options & CONSTS::ACCESS_MODE_WRITER)
-        {
+    if (config.options & CONSTS::MEMORY_ONLY_MODE) {
+        if (config.options & CONSTS::ACCESS_MODE_WRITER) {
             init_header = true;
-        }
-        else
-        {
+        } else {
             init_header = false;
-            if(!ResourcePool::getInstance().CheckExistence(mb_dir + "_mabain_h"))
+            if (!ResourcePool::getInstance().CheckExistence(mb_dir + "_mabain_h"))
                 status = MBError::NO_DB;
         }
-    }
-    else
-    {
+    } else {
         // Check if the DB directory exist with proper permission
-        if(access(mb_dir.c_str(), F_OK))
-        {
-            std::cerr << "database directory check for " + mb_dir + " failed errno: " +
-                          std::to_string(errno) << std::endl;
+        if (access(mb_dir.c_str(), F_OK)) {
+            std::cerr << "database directory check for " + mb_dir + " failed errno: " + std::to_string(errno) << std::endl;
             status = MBError::NO_DB;
             return;
         }
         Logger::Log(LOG_LEVEL_INFO, "connector %u DB options: %d",
-                    config.connect_id, config.options);
+            config.connect_id, config.options);
         // Check if DB exist. This can be done by check existence of the first index file.
         // If this is the first time the DB is opened and it is in writer mode, then we
         // need to update the header for the first time. If only reader access mode is
         // required and the file does not exist, we should bail here and the DB open will
         // not be successful.
         std::string header_file = mb_dir + "_mabain_h";
-        if(access(header_file.c_str(), R_OK))
-        {
-            if(config.options & CONSTS::ACCESS_MODE_WRITER)
+        if (access(header_file.c_str(), R_OK)) {
+            if (config.options & CONSTS::ACCESS_MODE_WRITER)
                 init_header = true;
             else
                 status = MBError::NO_DB;
@@ -254,11 +230,10 @@ void DB::PreCheckDB(const MBConfig &config, bool &init_header, bool &update_head
     }
 
     // Check Header version
-    if(!init_header && !(config.options & CONSTS::MEMORY_ONLY_MODE))
-    {
+    if (!init_header && !(config.options & CONSTS::MEMORY_ONLY_MODE)) {
         try {
             DRMBase::ValidateHeaderFile(mb_dir + "_mabain_h", config.options,
-                                        config.queue_size, update_header);
+                config.queue_size, update_header);
         } catch (int error) {
             status = error;
             return;
@@ -266,28 +241,24 @@ void DB::PreCheckDB(const MBConfig &config, bool &init_header, bool &update_head
     }
 }
 
-void DB::PostDBUpdate(const MBConfig &config, bool init_header, bool update_header)
+void DB::PostDBUpdate(const MBConfig& config, bool init_header, bool update_header)
 {
-    if((config.options & CONSTS::ACCESS_MODE_WRITER) && (init_header || update_header))
-    {
-        if(init_header)
-        {
+    if ((config.options & CONSTS::ACCESS_MODE_WRITER) && (init_header || update_header)) {
+        if (init_header) {
             Logger::Log(LOG_LEVEL_INFO, "opened a new db %s", mb_dir.c_str());
-        }
-        else
-        {
+        } else {
             Logger::Log(LOG_LEVEL_INFO, "converted %s to version %d.%d.%d", mb_dir.c_str(),
-                        version[0], version[1], version[2]);
+                version[0], version[1], version[2]);
         }
-        IndexHeader *header = dict->GetHeaderPtr();
-        if(header != NULL) header->async_queue_size = config.queue_size;
+        IndexHeader* header = dict->GetHeaderPtr();
+        if (header != NULL)
+            header->async_queue_size = config.queue_size;
         dict->Init(identifier);
     }
 
-    if(dict->Status() != MBError::SUCCESS)
-    {
+    if (dict->Status() != MBError::SUCCESS) {
         Logger::Log(LOG_LEVEL_ERROR, "failed to iniitialize dict: %s ",
-                    MBError::get_error_str(dict->Status()));
+            MBError::get_error_str(dict->Status()));
         status = dict->Status();
         return;
     }
@@ -295,33 +266,28 @@ void DB::PostDBUpdate(const MBConfig &config, bool init_header, bool update_head
     lock.Init(dict->GetShmLockPtr());
     UpdateNumHandlers(config.options, 1);
 
-    if(config.options & CONSTS::ACCESS_MODE_WRITER)
-    {
-        if(config.options & CONSTS::ASYNC_WRITER_MODE)
+    if (config.options & CONSTS::ACCESS_MODE_WRITER) {
+        if (config.options & CONSTS::ASYNC_WRITER_MODE)
             async_writer = AsyncWriter::CreateInstance(this);
     }
 
-    if(!(init_header || update_header))
-    {
-        IndexHeader *header = dict->GetHeaderPtr();
-        if(header != NULL && header->async_queue_size != (int) config.queue_size)
-        {
+    if (!(init_header || update_header)) {
+        IndexHeader* header = dict->GetHeaderPtr();
+        if (header != NULL && header->async_queue_size != (int)config.queue_size) {
             Logger::Log(LOG_LEVEL_ERROR, "async queue size not matching with header: %d %d",
-                        header->async_queue_size, (int) config.queue_size);
+                header->async_queue_size, (int)config.queue_size);
             status = MBError::INVALID_SIZE;
             return;
         }
     }
 
     Logger::Log(LOG_LEVEL_INFO, "connector %u successfully opened DB %s for %s",
-                identifier, mb_dir.c_str(),
-                (config.options & CONSTS::ACCESS_MODE_WRITER) ? "writing":"reading");
+        identifier, mb_dir.c_str(),
+        (config.options & CONSTS::ACCESS_MODE_WRITER) ? "writing" : "reading");
     status = MBError::SUCCESS;
 
-    if(config.options & CONSTS::ACCESS_MODE_WRITER)
-    {
-        if(!(config.options & CONSTS::ASYNC_WRITER_MODE))
-        {
+    if (config.options & CONSTS::ACCESS_MODE_WRITER) {
+        if (!(config.options & CONSTS::ASYNC_WRITER_MODE)) {
             // Run rc exception recovery
             ResourceCollection rc(*this);
             rc.ExceptionRecovery();
@@ -329,7 +295,7 @@ void DB::PostDBUpdate(const MBConfig &config, bool init_header, bool update_head
     }
 }
 
-void DB::ReInit(MBConfig &config)
+void DB::ReInit(MBConfig& config)
 {
     std::cout << "failed to open db with error: " << MBError::get_error_str(status) << "\n";
     std::cout << "erase corrupted DB and retry\n";
@@ -340,7 +306,7 @@ void DB::ReInit(MBConfig &config)
     InitDBEx(config);
 }
 
-void DB::InitDB(MBConfig &config)
+void DB::InitDB(MBConfig& config)
 {
     if (config.mbdir == nullptr)
         return;
@@ -352,19 +318,18 @@ void DB::InitDB(MBConfig &config)
 
     int fd = acquire_file_lock_wait_n(lock_file, 5000);
     InitDBEx(config);
-    if ((config.options & CONSTS::ACCESS_MODE_WRITER) && !is_open() && status != MBError::WRITER_EXIST)
-    {
+    if ((config.options & CONSTS::ACCESS_MODE_WRITER) && !is_open() && status != MBError::WRITER_EXIST) {
         ReInit(config);
     }
     release_file_lock(fd);
 }
 
-void DB::InitDBEx(MBConfig &config)
+void DB::InitDBEx(MBConfig& config)
 {
     dict = NULL;
     async_writer = NULL;
 
-    if(ValidateConfig(config) != MBError::SUCCESS)
+    if (ValidateConfig(config) != MBError::SUCCESS)
         return;
 
     // save the configuration
@@ -372,8 +337,7 @@ void DB::InitDBEx(MBConfig &config)
     dbConfig.mbdir = NULL;
 
     // If id not given, use thread ID
-    if(config.connect_id == 0)
-    {
+    if (config.connect_id == 0) {
 #ifdef __APPLE__
         config.connect_id = reinterpret_cast<uint64_t>(pthread_self()) & 0x7FFFFFFF;
 #else
@@ -382,32 +346,31 @@ void DB::InitDBEx(MBConfig &config)
     }
     identifier = config.connect_id;
     mb_dir = std::string(config.mbdir);
-    if(mb_dir[mb_dir.length()-1] != '/')
+    if (mb_dir[mb_dir.length() - 1] != '/')
         mb_dir += "/";
     options = config.options;
 
     bool init_header = false;
     bool update_header = false; // true when header version is different from lib version
     PreCheckDB(config, init_header, update_header);
-    if(MBError::NOT_INITIALIZED != status)
-    {
+    if (MBError::NOT_INITIALIZED != status) {
         Logger::Log(LOG_LEVEL_ERROR, "database %s check failed: %s", mb_dir.c_str(),
-                    MBError::get_error_str(status));
+            MBError::get_error_str(status));
         return;
     }
 
     try {
         dict = new Dict(mb_dir, init_header, config.data_size, config.options,
-                    config.memcap_index, config.memcap_data,
-                    config.block_size_index, config.block_size_data,
-                    config.max_num_index_block, config.max_num_data_block,
-                    config.num_entry_per_bucket, config.queue_size,
-                    config.queue_dir);
+            config.memcap_index, config.memcap_data,
+            config.block_size_index, config.block_size_data,
+            config.max_num_index_block, config.max_num_data_block,
+            config.num_entry_per_bucket, config.queue_size,
+            config.queue_dir);
     } catch (int error) {
         status = error;
         Logger::Log(LOG_LEVEL_ERROR, "database %s check failed: %s", mb_dir.c_str(),
-                    MBError::get_error_str(status));
-        if(!(config.options & CONSTS::ACCESS_MODE_WRITER))
+            MBError::get_error_str(status));
+        if (!(config.options & CONSTS::ACCESS_MODE_WRITER))
             Logger::Log(LOG_LEVEL_WARN, "check if db writer is running.");
         return;
     }
@@ -420,8 +383,9 @@ int DB::Status() const
     return status;
 }
 
-DB::DB(const DB &db) : status(MBError::NOT_INITIALIZED),
-                       writer_lock_fd(-1)
+DB::DB(const DB& db)
+    : status(MBError::NOT_INITIALIZED)
+    , writer_lock_fd(-1)
 {
     MBConfig db_config = db.dbConfig;
     db_config.mbdir = db.mb_dir.c_str();
@@ -429,9 +393,9 @@ DB::DB(const DB &db) : status(MBError::NOT_INITIALIZED),
     InitDB(db_config);
 }
 
-const DB& DB::operator = (const DB &db)
+const DB& DB::operator=(const DB& db)
 {
-    if(this == &db)
+    if (this == &db)
         return *this; // no self-assignment
 
     this->Close();
@@ -456,37 +420,37 @@ const char* DB::StatusStr() const
 }
 
 // Find the exact key match
-int DB::Find(const char* key, int len, MBData &mdata) const
+int DB::Find(const char* key, int len, MBData& mdata) const
 {
-    if(key == NULL)
+    if (key == NULL)
         return MBError::INVALID_ARG;
-    if(status != MBError::SUCCESS)
+    if (status != MBError::SUCCESS)
         return MBError::NOT_INITIALIZED;
     // Writer in async mode cannot be used for lookup
-    if(options & CONSTS::ASYNC_WRITER_MODE)
+    if (options & CONSTS::ASYNC_WRITER_MODE)
         return MBError::NOT_ALLOWED;
 
     return dict->Find(reinterpret_cast<const uint8_t*>(key), len, mdata);
 }
 
-int DB::Find(const std::string &key, MBData &mdata) const
+int DB::Find(const std::string& key, MBData& mdata) const
 {
     return Find(key.data(), key.size(), mdata);
 }
 
-int DB::FindLowerBound(const std::string &key, MBData &data) const
+int DB::FindLowerBound(const std::string& key, MBData& data) const
 {
     return FindLowerBound(key.data(), key.size(), data);
 }
 
-int DB::FindLowerBound(const char* key, int len, MBData &data) const
+int DB::FindLowerBound(const char* key, int len, MBData& data) const
 {
-    if(key == NULL)
+    if (key == NULL)
         return MBError::INVALID_ARG;
-    if(status != MBError::SUCCESS)
+    if (status != MBError::SUCCESS)
         return MBError::NOT_INITIALIZED;
     // Writer in async mode cannot be used for lookup
-    if(options & CONSTS::ASYNC_WRITER_MODE)
+    if (options & CONSTS::ASYNC_WRITER_MODE)
         return MBError::NOT_ALLOWED;
 
     data.options = 0;
@@ -494,20 +458,19 @@ int DB::FindLowerBound(const char* key, int len, MBData &data) const
 }
 
 // Find all possible prefix matches.
-int DB::FindPrefix(const std::string &key, AllPrefixResults &results)
+int DB::FindPrefix(const std::string& key, AllPrefixResults& results)
 {
-    if(status != MBError::SUCCESS)
+    if (status != MBError::SUCCESS)
         return MBError::NOT_INITIALIZED;
     // Writer in async mode cannot be used for lookup
-    if(options & CONSTS::ASYNC_WRITER_MODE)
+    if (options & CONSTS::ASYNC_WRITER_MODE)
         return MBError::NOT_ALLOWED;
 
     MBData data;
     int rval;
     data.options |= CONSTS::OPTION_ALL_PREFIX;
     rval = dict->FindPrefix((const uint8_t*)key.data(), key.size(), data, &results);
-    if (rval == MBError::SUCCESS)
-    {
+    if (rval == MBError::SUCCESS) {
         results.results.push_back(PrefixResult(data.match_len, data.data_len, (char*)data.buff));
         data.buff = nullptr;
         data.buff_len = 0;
@@ -516,14 +479,14 @@ int DB::FindPrefix(const std::string &key, AllPrefixResults &results)
 }
 
 // Find the longest prefix match
-int DB::FindLongestPrefix(const char* key, int len, MBData &data) const
+int DB::FindLongestPrefix(const char* key, int len, MBData& data) const
 {
-    if(key == NULL)
+    if (key == NULL)
         return MBError::INVALID_ARG;
-    if(status != MBError::SUCCESS)
+    if (status != MBError::SUCCESS)
         return MBError::NOT_INITIALIZED;
     // Writer in async mode cannot be used for lookup
-    if(options & CONSTS::ASYNC_WRITER_MODE)
+    if (options & CONSTS::ASYNC_WRITER_MODE)
         return MBError::NOT_ALLOWED;
 
     data.match_len = 0;
@@ -531,30 +494,26 @@ int DB::FindLongestPrefix(const char* key, int len, MBData &data) const
     return dict->FindPrefix(reinterpret_cast<const uint8_t*>(key), len, data, nullptr);
 }
 
-int DB::FindLongestPrefix(const std::string &key, MBData &data) const
+int DB::FindLongestPrefix(const std::string& key, MBData& data) const
 {
     return FindLongestPrefix(key.data(), key.size(), data);
 }
 
 // Add a key-value pair
-int DB::Add(const char* key, int len, MBData &mbdata, bool overwrite)
+int DB::Add(const char* key, int len, MBData& mbdata, bool overwrite)
 {
     int rval = MBError::SUCCESS;
 
-    if(key == NULL)
+    if (key == NULL)
         return MBError::INVALID_ARG;
-    if(status != MBError::SUCCESS)
+    if (status != MBError::SUCCESS)
         return MBError::NOT_INITIALIZED;
 
-    if (async_writer == NULL && (options & CONSTS::ACCESS_MODE_WRITER))
-    {
+    if (async_writer == NULL && (options & CONSTS::ACCESS_MODE_WRITER)) {
         rval = dict->Add(reinterpret_cast<const uint8_t*>(key), len, mbdata, overwrite);
-    }
-    else
-    {
-        AsyncWriter *awr = AsyncWriter::GetInstance();
-        if (awr)
-        {
+    } else {
+        AsyncWriter* awr = AsyncWriter::GetInstance();
+        if (awr) {
             try {
                 rval = awr->AddWithLock(key, len, mbdata, overwrite);
                 if (!overwrite && rval == MBError::IN_DICT)
@@ -562,14 +521,12 @@ int DB::Add(const char* key, int len, MBData &mbdata, bool overwrite)
             } catch (int error) {
                 rval = error;
             }
-        }
-        else
+        } else
             rval = MBError::TRY_AGAIN;
 
-        if (rval == MBError::TRY_AGAIN)
-        {
+        if (rval == MBError::TRY_AGAIN) {
             rval = dict->SHMQ_Add(reinterpret_cast<const char*>(key), len,
-                         reinterpret_cast<const char*>(mbdata.buff), mbdata.data_len, overwrite);
+                reinterpret_cast<const char*>(mbdata.buff), mbdata.data_len, overwrite);
         }
     }
 
@@ -580,56 +537,50 @@ int DB::Add(const char* key, int len, const char* data, int data_len, bool overw
 {
     MBData mbdata;
     mbdata.data_len = data_len;
-    mbdata.buff = (uint8_t*) data;
+    mbdata.buff = (uint8_t*)data;
 
     int rval = Add(key, len, mbdata, overwrite);
     mbdata.buff = NULL;
     return rval;
 }
 
-int DB::Add(const std::string &key, const std::string &value, bool overwrite)
+int DB::Add(const std::string& key, const std::string& value, bool overwrite)
 {
     return Add(key.data(), key.size(), value.data(), value.size(), overwrite);
 }
 
-int DB::Remove(const char *key, int len)
+int DB::Remove(const char* key, int len)
 {
     int rval = MBError::SUCCESS;
 
-    if(key == NULL)
+    if (key == NULL)
         return MBError::INVALID_ARG;
-    if(status != MBError::SUCCESS)
+    if (status != MBError::SUCCESS)
         return MBError::NOT_INITIALIZED;
 
-    if (async_writer == NULL && (options & CONSTS::ACCESS_MODE_WRITER))
-    {
+    if (async_writer == NULL && (options & CONSTS::ACCESS_MODE_WRITER)) {
         rval = dict->Remove(reinterpret_cast<const uint8_t*>(key), len);
-    }
-    else
-    {
+    } else {
         rval = dict->SHMQ_Remove(reinterpret_cast<const char*>(key), len);
     }
 
     return rval;
 }
 
-int DB::Remove(const std::string &key)
+int DB::Remove(const std::string& key)
 {
     return Remove(key.data(), key.size());
 }
 
 int DB::RemoveAll()
 {
-    if(status != MBError::SUCCESS)
+    if (status != MBError::SUCCESS)
         return MBError::NOT_INITIALIZED;
 
     int rval;
-    if (async_writer == NULL && (options & CONSTS::ACCESS_MODE_WRITER))
-    {
+    if (async_writer == NULL && (options & CONSTS::ACCESS_MODE_WRITER)) {
         rval = dict->RemoveAll();
-    }
-    else
-    {
+    } else {
         rval = dict->SHMQ_RemoveAll();
     }
     return rval;
@@ -645,31 +596,28 @@ int DB::RemoveAllSync()
     return rval;
 }
 
-int DB::Backup(const char *bk_dir)
+int DB::Backup(const char* bk_dir)
 {
     int rval = MBError::SUCCESS;
 
-    if(options & CONSTS::MEMORY_ONLY_MODE)
+    if (options & CONSTS::MEMORY_ONLY_MODE)
         return MBError::NOT_ALLOWED;
 
-    if(bk_dir == NULL)
+    if (bk_dir == NULL)
         return MBError::INVALID_ARG;
-    if(status != MBError::SUCCESS)
+    if (status != MBError::SUCCESS)
         return MBError::NOT_INITIALIZED;
-    if(options & MMAP_ANONYMOUS_MODE)
+    if (options & MMAP_ANONYMOUS_MODE)
         return MBError::NOT_ALLOWED;
 
     try {
-        if (async_writer == NULL && (options & CONSTS::ASYNC_WRITER_MODE))
-        {
+        if (async_writer == NULL && (options & CONSTS::ASYNC_WRITER_MODE)) {
             DBBackup bk(*this);
             rval = bk.Backup(bk_dir);
-        }
-        else
-        {
+        } else {
             rval = dict->SHMQ_Backup(bk_dir);
         }
-    } catch  (int error) {
+    } catch (int error) {
         Logger::Log(LOG_LEVEL_WARN, "Backup failed :%s", MBError::get_error_str(error));
         rval = error;
     }
@@ -679,36 +627,32 @@ int DB::Backup(const char *bk_dir)
 
 void DB::Flush() const
 {
-    if(options & CONSTS::MEMORY_ONLY_MODE)
+    if (options & CONSTS::MEMORY_ONLY_MODE)
         return;
 
-    if(status != MBError::SUCCESS)
+    if (status != MBError::SUCCESS)
         return;
 
     dict->Flush();
 }
 
 int DB::CollectResource(int64_t min_index_rc_size, int64_t min_data_rc_size,
-                        int64_t max_dbsz, int64_t max_dbcnt)
+    int64_t max_dbsz, int64_t max_dbcnt)
 {
-    if(status != MBError::SUCCESS)
+    if (status != MBError::SUCCESS)
         return status;
 
     try {
-        if (async_writer == NULL && (options & CONSTS::ACCESS_MODE_WRITER))
-        {
+        if (async_writer == NULL && (options & CONSTS::ACCESS_MODE_WRITER)) {
             ResourceCollection rc(*this);
             rc.ReclaimResource(min_index_rc_size, min_data_rc_size, max_dbsz, max_dbcnt);
-        }
-        else
-        {
+        } else {
             dict->SHMQ_CollectResource(min_index_rc_size, min_data_rc_size, max_dbsz, max_dbcnt);
         }
     } catch (int error) {
-        if(error != MBError::RC_SKIPPED)
-        {
+        if (error != MBError::RC_SKIPPED) {
             Logger::Log(LOG_LEVEL_ERROR, "failed to run gc: %s",
-                        MBError::get_error_str(error));
+                MBError::get_error_str(error));
             return error;
         }
     }
@@ -718,23 +662,23 @@ int DB::CollectResource(int64_t min_index_rc_size, int64_t min_data_rc_size,
 
 int64_t DB::Count() const
 {
-    if(status != MBError::SUCCESS)
+    if (status != MBError::SUCCESS)
         return -1;
 
     return dict->Count();
 }
 
-void DB::PrintStats(std::ostream &out_stream) const
+void DB::PrintStats(std::ostream& out_stream) const
 {
-    if(status != MBError::SUCCESS)
+    if (status != MBError::SUCCESS)
         return;
 
     dict->PrintStats(out_stream);
 }
 
-void DB::PrintHeader(std::ostream &out_stream) const
+void DB::PrintHeader(std::ostream& out_stream) const
 {
-    if(dict != NULL)
+    if (dict != NULL)
         dict->PrintHeader(out_stream);
 }
 
@@ -751,7 +695,7 @@ int DB::UnLock()
 int DB::ClearLock() const
 {
     // No db handler should hold mutex when this is called.
-    if(status != MBError::SUCCESS)
+    if (status != MBError::SUCCESS)
         return status;
     return InitShmMutex(dict->GetShmLockPtr());
 }
@@ -768,7 +712,7 @@ void DB::LogDebug()
 
 Dict* DB::GetDictPtr() const
 {
-    if(options & CONSTS::ACCESS_MODE_WRITER)
+    if (options & CONSTS::ACCESS_MODE_WRITER)
         return dict;
     return NULL;
 }
@@ -783,7 +727,7 @@ const std::string& DB::GetDBDir() const
     return mb_dir;
 }
 
-void DB::GetDBConfig(MBConfig &config) const
+void DB::GetDBConfig(MBConfig& config) const
 {
     memcpy(&config, &dbConfig, sizeof(MBConfig));
     config.mbdir = NULL;
@@ -799,7 +743,7 @@ bool DB::AsyncWriterBusy() const
     return dict->SHMQ_Busy();
 }
 
-void DB::SetLogFile(const std::string &log_file)
+void DB::SetLogFile(const std::string& log_file)
 {
     Logger::InitLogFile(log_file);
 }
@@ -809,7 +753,7 @@ void DB::CloseLogFile()
     Logger::Close();
 }
 
-void DB::ClearResources(const std::string &path)
+void DB::ClearResources(const std::string& path)
 {
     ResourcePool::getInstance().RemoveResourceByDB(path);
 }

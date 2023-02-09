@@ -19,9 +19,9 @@
 #ifndef __LOCK_FREE_H__
 #define __LOCK_FREE_H__
 
+#include <atomic>
 #include <stdint.h>
 #include <string.h>
-#include <atomic>
 
 #include "mb_data.h"
 
@@ -30,43 +30,40 @@ namespace mabain {
 // C++11 std::atomic shared memory variable for lock-free
 // reader/writer concurrency.
 
-#define MAX_OFFSET_CACHE   4
+#define MAX_OFFSET_CACHE 4
 #define MEMORY_ORDER_WRITER std::memory_order_release
 #define MEMORY_ORDER_READER std::memory_order_consume
 
 struct _IndexHeader;
 typedef struct _IndexHeader IndexHeader;
 
-typedef struct _LockFreeData
-{
+typedef struct _LockFreeData {
     uint32_t counter;
-    size_t   offset;
+    size_t offset;
 } LockFreeData;
 
-typedef struct _LockFreeShmData
-{
+typedef struct _LockFreeShmData {
     std::atomic<uint32_t> counter;
-    std::atomic<size_t>   offset;
-    std::atomic<size_t>   offset_cache[MAX_OFFSET_CACHE];
+    std::atomic<size_t> offset;
+    std::atomic<size_t> offset_cache[MAX_OFFSET_CACHE];
 } LockFreeShmData;
 
-class LockFree
-{
+class LockFree {
 public:
     LockFree();
     ~LockFree();
 
-    void LockFreeInit(LockFreeShmData *lock_free_ptr, IndexHeader *hdr, int mode = 0);
+    void LockFreeInit(LockFreeShmData* lock_free_ptr, IndexHeader* hdr, int mode = 0);
     inline void WriterLockFreeStart(size_t offset);
     void WriterLockFreeStop();
-    inline void ReaderLockFreeStart(LockFreeData &snapshot);
+    inline void ReaderLockFreeStart(LockFreeData& snapshot);
     // If there was race condition, this function returns MBError::TRY_AGAIN.
-    int  ReaderLockFreeStop(const LockFreeData &snapshot, size_t reader_offset,
-             MBData &mbdata);
+    int ReaderLockFreeStop(const LockFreeData& snapshot, size_t reader_offset,
+        MBData& mbdata);
 
 private:
-    LockFreeShmData *shm_data_ptr;
-    const IndexHeader *header;
+    LockFreeShmData* shm_data_ptr;
+    const IndexHeader* header;
 };
 
 inline void LockFree::WriterLockFreeStart(size_t offset)
@@ -74,7 +71,7 @@ inline void LockFree::WriterLockFreeStart(size_t offset)
     shm_data_ptr->offset.store(offset, MEMORY_ORDER_WRITER);
 }
 
-inline void LockFree::ReaderLockFreeStart(LockFreeData &snapshot)
+inline void LockFree::ReaderLockFreeStart(LockFreeData& snapshot)
 {
     snapshot.counter = shm_data_ptr->counter.load(MEMORY_ORDER_READER);
 }

@@ -19,93 +19,91 @@
 #ifndef __DRM_BASE_H__
 #define __DRM_BASE_H__
 
-#include "rollable_file.h"
 #include "free_list.h"
+#include "rollable_file.h"
 
-#define DATA_BUFFER_ALIGNMENT      1
-#define DATA_SIZE_BYTE             2
-#define DATA_HDR_BYTE              4
-#define OFFSET_SIZE                6
-#define EDGE_SIZE                  13
-#define EDGE_LEN_POS               5
-#define EDGE_FLAG_POS              6
-#define EDGE_FLAG_DATA_OFF         0x01
-#define FLAG_NODE_MATCH            0x01
-#define FLAG_NODE_NONE             0x0
-#define BUFFER_ALIGNMENT           1
-#define LOCAL_EDGE_LEN             6
-#define LOCAL_EDGE_LEN_M1          5
-#define EDGE_NODE_LEADING_POS      7
-#define EXCEP_STATUS_NONE          0
-#define EXCEP_STATUS_ADD_EDGE      1
-#define EXCEP_STATUS_ADD_DATA_OFF  2
-#define EXCEP_STATUS_ADD_NODE      3
-#define EXCEP_STATUS_REMOVE_EDGE   4
-#define EXCEP_STATUS_CLEAR_EDGE    5
-#define EXCEP_STATUS_RC_NODE       6
-#define EXCEP_STATUS_RC_EDGE_STR   7
-#define EXCEP_STATUS_RC_DATA       8
-#define EXCEP_STATUS_RC_TREE       9
-#define MB_EXCEPTION_BUFF_SIZE     16
+#define DATA_BUFFER_ALIGNMENT 1
+#define DATA_SIZE_BYTE 2
+#define DATA_HDR_BYTE 4
+#define OFFSET_SIZE 6
+#define EDGE_SIZE 13
+#define EDGE_LEN_POS 5
+#define EDGE_FLAG_POS 6
+#define EDGE_FLAG_DATA_OFF 0x01
+#define FLAG_NODE_MATCH 0x01
+#define FLAG_NODE_NONE 0x0
+#define BUFFER_ALIGNMENT 1
+#define LOCAL_EDGE_LEN 6
+#define LOCAL_EDGE_LEN_M1 5
+#define EDGE_NODE_LEADING_POS 7
+#define EXCEP_STATUS_NONE 0
+#define EXCEP_STATUS_ADD_EDGE 1
+#define EXCEP_STATUS_ADD_DATA_OFF 2
+#define EXCEP_STATUS_ADD_NODE 3
+#define EXCEP_STATUS_REMOVE_EDGE 4
+#define EXCEP_STATUS_CLEAR_EDGE 5
+#define EXCEP_STATUS_RC_NODE 6
+#define EXCEP_STATUS_RC_EDGE_STR 7
+#define EXCEP_STATUS_RC_DATA 8
+#define EXCEP_STATUS_RC_TREE 9
+#define MB_EXCEPTION_BUFF_SIZE 16
 
 namespace mabain {
 
 // Mabain DB header
-typedef struct _IndexHeader
-{
+typedef struct _IndexHeader {
     uint16_t version[4];
-    int      data_size;
-    int64_t  count;
-    size_t   m_data_offset;
-    size_t   m_index_offset;
-    int64_t  pending_data_buff_size;
-    int64_t  pending_index_buff_size;
-    int64_t  n_states;
-    int64_t  n_edges;
-    int64_t  edge_str_size;
-    int      num_writer;
-    int      num_reader;
-    int64_t  shm_queue_id;
-    int64_t  dummy;
+    int data_size;
+    int64_t count;
+    size_t m_data_offset;
+    size_t m_index_offset;
+    int64_t pending_data_buff_size;
+    int64_t pending_index_buff_size;
+    int64_t n_states;
+    int64_t n_edges;
+    int64_t edge_str_size;
+    int num_writer;
+    int num_reader;
+    int64_t shm_queue_id;
+    int64_t dummy;
 
     // Lock-free data structure
     LockFreeShmData lock_free;
 
     // read/write lock
-    char padding[56];//pthread_rwlock_t mb_rw_lock;
+    char padding[56]; //pthread_rwlock_t mb_rw_lock;
 
     // block size
     uint32_t index_block_size;
     uint32_t data_block_size;
     // number of entry per bucket for eviction
-    int64_t  entry_per_bucket;
+    int64_t entry_per_bucket;
     // number of DB insertions and updates
     // used for assigning bucket
-    int64_t  num_update;
+    int64_t num_update;
     uint16_t eviction_bucket_index;
 
     // temp variables used for abnormal writer terminations
-    int     excep_updating_status;
+    int excep_updating_status;
     uint8_t excep_buff[MB_EXCEPTION_BUFF_SIZE];
-    size_t  excep_offset;
-    size_t  excep_lf_offset;
+    size_t excep_offset;
+    size_t excep_lf_offset;
 
     // index root offset for insertions during rc
-    size_t               rc_m_index_off_pre;
-    size_t               rc_m_data_off_pre;
-    std::atomic<size_t>  rc_root_offset;
-    int64_t              rc_count;
+    size_t rc_m_index_off_pre;
+    size_t rc_m_data_off_pre;
+    std::atomic<size_t> rc_root_offset;
+    int64_t rc_count;
 
     // multi-process async queue
-    int                   async_queue_size;
+    int async_queue_size;
     std::atomic<uint32_t> queue_index;
-    uint32_t              writer_index;
+    uint32_t writer_index;
     std::atomic<uint32_t> rc_flag;
 } IndexHeader;
 
 // An abstract interface class for Dict and DictMem
-class DRMBase
-{
+class DRMBase {
 public:
     DRMBase()
     {
@@ -118,46 +116,46 @@ public:
     {
     }
 
-    inline virtual void WriteData(const uint8_t *buff, unsigned len, size_t offset) const = 0;
-    inline int Reserve(size_t &offset, int size, uint8_t* &ptr);
+    inline virtual void WriteData(const uint8_t* buff, unsigned len, size_t offset) const = 0;
+    inline int Reserve(size_t& offset, int size, uint8_t*& ptr);
     inline uint8_t* GetShmPtr(size_t offset, int size) const;
     inline size_t CheckAlignment(size_t offset, int size) const;
-    inline int ReadData(uint8_t *buff, unsigned len, size_t offset) const;
+    inline int ReadData(uint8_t* buff, unsigned len, size_t offset) const;
     inline size_t GetResourceCollectionOffset() const;
     inline void RemoveUnused(size_t max_size, bool writer_mode = false);
 
-    FreeList *GetFreeList() const
+    FreeList* GetFreeList() const
     {
         return free_lists;
     }
 
-    IndexHeader *GetHeaderPtr() const
+    IndexHeader* GetHeaderPtr() const
     {
         return header;
     }
 
-    void PrintHeader(std::ostream &out_stream) const;
+    void PrintHeader(std::ostream& out_stream) const;
 
-    static void ValidateHeaderFile(const std::string &header_path, int mode, int queue_size,
-                                   bool &update_header);
+    static void ValidateHeaderFile(const std::string& header_path, int mode, int queue_size,
+        bool& update_header);
 
 protected:
-    static void ReadHeaderVersion(const std::string &header_path, uint16_t ver[4]);
-    static void ReadHeader(const std::string &header_path, uint8_t *buff, int buf_size);
-    static void WriteHeader(const std::string &header_path, uint8_t *buff);
+    static void ReadHeaderVersion(const std::string& header_path, uint16_t ver[4]);
+    static void ReadHeader(const std::string& header_path, uint8_t* buff, int buf_size);
+    static void WriteHeader(const std::string& header_path, uint8_t* buff);
 
-    IndexHeader *header;
-    RollableFile *kv_file;
-    FreeList *free_lists;
+    IndexHeader* header;
+    RollableFile* kv_file;
+    FreeList* free_lists;
 };
 
-inline void DRMBase::WriteData(const uint8_t *buff, unsigned len, size_t offset) const
+inline void DRMBase::WriteData(const uint8_t* buff, unsigned len, size_t offset) const
 {
-    if(kv_file->RandomWrite(buff, len, offset) != len)
-        throw (int) MBError::WRITE_ERROR;
+    if (kv_file->RandomWrite(buff, len, offset) != len)
+        throw(int) MBError::WRITE_ERROR;
 }
 
-inline int DRMBase::Reserve(size_t &offset, int size, uint8_t* &ptr)
+inline int DRMBase::Reserve(size_t& offset, int size, uint8_t*& ptr)
 {
     return kv_file->Reserve(offset, size, ptr);
 }
@@ -172,7 +170,7 @@ inline size_t DRMBase::CheckAlignment(size_t offset, int size) const
     return kv_file->CheckAlignment(offset, size);
 }
 
-inline int DRMBase::ReadData(uint8_t *buff, unsigned len, size_t offset) const
+inline int DRMBase::ReadData(uint8_t* buff, unsigned len, size_t offset) const
 {
     return kv_file->RandomRead(buff, len, offset);
 }

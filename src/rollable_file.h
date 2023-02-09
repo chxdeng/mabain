@@ -19,48 +19,48 @@
 #ifndef __ROLLABLE_FILE_H__
 #define __ROLLABLE_FILE_H__
 
-#include <string>
-#include <vector>
-#include <stdint.h>
-#include <sys/mman.h>
 #include <assert.h>
 #include <atomic>
 #include <memory>
+#include <stdint.h>
+#include <string>
+#include <sys/mman.h>
+#include <vector>
 
-#include "mmap_file.h"
 #include "logger.h"
+#include "mmap_file.h"
 
 namespace mabain {
 
 // Memory mapped file that can be rolled based on block size
 class RollableFile {
 public:
-    RollableFile(const std::string &fpath, size_t blocksize,
-                 size_t memcap, int access_mode, long max_block=0, int rc_offset_percentage=75);
+    RollableFile(const std::string& fpath, size_t blocksize,
+        size_t memcap, int access_mode, long max_block = 0, int rc_offset_percentage = 75);
     ~RollableFile();
 
-    size_t   RandomWrite(const void *data, size_t size, off_t offset);
-    size_t   RandomRead(void *buff, size_t size, off_t offset);
-    void     InitShmSlidingAddr(std::atomic<size_t> *shm_sliding_addr);
-    int      Reserve(size_t &offset, int size, uint8_t* &ptr, bool map_new_sliding=true);
+    size_t RandomWrite(const void* data, size_t size, off_t offset);
+    size_t RandomRead(void* buff, size_t size, off_t offset);
+    void InitShmSlidingAddr(std::atomic<size_t>* shm_sliding_addr);
+    int Reserve(size_t& offset, int size, uint8_t*& ptr, bool map_new_sliding = true);
     uint8_t* GetShmPtr(size_t offset, int size);
-    size_t   CheckAlignment(size_t offset, int size);
-    void     PrintStats(std::ostream &out_stream = std::cout) const;
-    void     Close();
-    void     ResetSlidingWindow();
+    size_t CheckAlignment(size_t offset, int size);
+    void PrintStats(std::ostream& out_stream = std::cout) const;
+    void Close();
+    void ResetSlidingWindow();
 
-    void     Flush();
-    size_t   GetResourceCollectionOffset() const;
-    void     RemoveUnused(size_t max_size, bool writer_mode);
+    void Flush();
+    size_t GetResourceCollectionOffset() const;
+    void RemoveUnused(size_t max_size, bool writer_mode);
 
     static const long page_size;
-    static int ShmSync(uint8_t *addr, int size);
+    static int ShmSync(uint8_t* addr, int size);
 
 private:
-    int      OpenAndMapBlockFile(size_t block_order, bool create_file);
-    int      CheckAndOpenFile(size_t block_order, bool create_file);
+    int OpenAndMapBlockFile(size_t block_order, bool create_file);
+    int CheckAndOpenFile(size_t block_order, bool create_file);
     uint8_t* NewSlidingMapAddr(size_t offset, int size);
-    void*    NewReaderSlidingMap(size_t order);
+    void* NewReaderSlidingMap(size_t order);
 
     std::string path;
     size_t block_size;
@@ -72,7 +72,7 @@ private:
     // Note writer does not flush sliding mmap during writing.
     // Readers have to mmap the same region so that they won't
     // read unflushed data from disk.
-    std::atomic<size_t> *shm_sliding_start_ptr;
+    std::atomic<size_t>* shm_sliding_start_ptr;
 
     size_t max_num_block;
 

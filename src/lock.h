@@ -25,8 +25,7 @@ namespace mabain {
 
 // multiple-thread/process lock
 
-class MBLock
-{
+class MBLock {
 public:
     MBLock();
     ~MBLock();
@@ -34,10 +33,10 @@ public:
     int Lock();
     int UnLock();
 
-    void Init(pthread_mutex_t *lock);
+    void Init(pthread_mutex_t* lock);
 
 private:
-    pthread_mutex_t *mb_lock_ptr;
+    pthread_mutex_t* mb_lock_ptr;
 };
 
 }

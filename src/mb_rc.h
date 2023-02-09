@@ -19,66 +19,64 @@
 #ifndef __MB_RC_H__
 #define __MB_RC_H__
 
+#include "async_writer.h"
 #include "db.h"
 #include "dict.h"
 #include "mbt_base.h"
-#include "async_writer.h"
 
-#define RESOURCE_COLLECTION_TYPE_INDEX            0x01
-#define RESOURCE_COLLECTION_TYPE_DATA             0x02
+#define RESOURCE_COLLECTION_TYPE_INDEX 0x01
+#define RESOURCE_COLLECTION_TYPE_DATA 0x02
 
-#define RESOURCE_COLLECTION_PHASE_REORDER         0x01
-#define RESOURCE_COLLECTION_PHASE_COLLECT         0x02
+#define RESOURCE_COLLECTION_PHASE_REORDER 0x01
+#define RESOURCE_COLLECTION_PHASE_COLLECT 0x02
 
 namespace mabain {
 
 // A garbage collector class
-class ResourceCollection : public DBTraverseBase
-{
+class ResourceCollection : public DBTraverseBase {
 public:
-    ResourceCollection(const DB &db,
-        int rct = RESOURCE_COLLECTION_TYPE_INDEX |
-                  RESOURCE_COLLECTION_TYPE_DATA);
+    ResourceCollection(const DB& db,
+        int rct = RESOURCE_COLLECTION_TYPE_INDEX | RESOURCE_COLLECTION_TYPE_DATA);
     virtual ~ResourceCollection();
 
     void ReclaimResource(int64_t min_index_size, int64_t min_data_size,
-                         int64_t max_dbsz, int64_t max_dbcnt,
-                         AsyncWriter *awr = NULL);
+        int64_t max_dbsz, int64_t max_dbcnt,
+        AsyncWriter* awr = NULL);
 
     // This function should be called when writer starts up.
-    int  ExceptionRecovery();
+    int ExceptionRecovery();
 
 private:
-    void DoTask(int phase, DBTraverseNode &dbt_node);
+    void DoTask(int phase, DBTraverseNode& dbt_node);
     void Prepare(int64_t min_index_size, int64_t min_data_size);
     void CollectBuffers();
     void ReorderBuffers();
     void Finish();
-    bool MoveIndexBuffer(int phase, size_t &offset_src, int size);
-    bool MoveDataBuffer(int phase, size_t &offset_src, int size);
-    int  LRUEviction(int64_t max_dbsz, int64_t max_dbcnt);
+    bool MoveIndexBuffer(int phase, size_t& offset_src, int size);
+    bool MoveDataBuffer(int phase, size_t& offset_src, int size);
+    int LRUEviction(int64_t max_dbsz, int64_t max_dbcnt);
     void ProcessRCTree();
 
-    int     rc_type;
-    int     index_rc_status;
-    int     data_rc_status;
-    int     index_reorder_status;
-    int     data_reorder_status;
+    int rc_type;
+    int index_rc_status;
+    int data_rc_status;
+    int index_reorder_status;
+    int data_reorder_status;
 
     // data for print gc stats only
     int64_t index_reorder_cnt;
     int64_t data_reorder_cnt;
 
     // Async writer pointer
-    AsyncWriter *async_writer_ptr;
+    AsyncWriter* async_writer_ptr;
 
     // resource collection offsets
-    size_t  rc_index_offset;
-    size_t  rc_data_offset;
+    size_t rc_index_offset;
+    size_t rc_data_offset;
     int64_t rc_loop_counter;
 
     int64_t db_cnt;
-    size_t  edge_str_size;
+    size_t edge_str_size;
     int64_t node_cnt;
 };
 

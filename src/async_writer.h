@@ -24,47 +24,48 @@
 
 #include "db.h"
 #include "dict.h"
-#include "mb_backup.h"
+#include "drm_base.h"
 #include "error.h"
+#include "mb_backup.h"
+#include "shm_queue_mgr.h"
 
 namespace mabain {
 
-class AsyncWriter
-{
+class AsyncWriter {
 public:
     ~AsyncWriter();
 
-    int  StopAsyncThread();
-    int  ProcessTask(int ntasks, bool rc_mode);
-    int  AddWithLock(const char *key, int len, MBData &mbdata, bool overwrite);
+    int StopAsyncThread();
+    int ProcessTask(int ntasks, bool rc_mode);
+    int AddWithLock(const char* key, int len, MBData& mbdata, bool overwrite);
 
-    static AsyncWriter* CreateInstance(DB *db_ptr);
+    static AsyncWriter* CreateInstance(DB* db_ptr);
     static AsyncWriter* GetInstance();
 
 private:
-    AsyncWriter(DB *db_ptr);
-    static void *async_thread_wrapper(void *context);
+    AsyncWriter(DB* db_ptr);
+    static void* async_thread_wrapper(void* context);
     AsyncNode* AcquireSlot();
-    int PrepareSlot(AsyncNode *node_ptr) const;
+    int PrepareSlot(AsyncNode* node_ptr) const;
     void* async_writer_thread();
     uint32_t NextShmSlot(uint32_t windex, uint32_t qindex);
 
     // db pointer
-    DB *db;
-    Dict *dict;
+    DB* db;
+    Dict* dict;
 
     // thread id
     pthread_t tid;
     bool stop_processing;
 
-    AsyncNode *queue;
-    IndexHeader *header;
+    AsyncNode* queue;
+    IndexHeader* header;
 
     bool is_rc_running;
-    char *rc_backup_dir;
+    char* rc_backup_dir;
 
     std::timed_mutex writer_lock;
-    static AsyncWriter *writer_instance;
+    static AsyncWriter* writer_instance;
 };
 
 }

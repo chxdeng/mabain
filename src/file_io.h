@@ -19,37 +19,36 @@
 #ifndef __FILE_IO_H__
 #define __FILE_IO_H__
 
-#include <string>
 #include <iostream>
+#include <string>
 
-#include <unistd.h>
-#include <sys/types.h>
-#include <sys/stat.h>
 #include <fcntl.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 namespace mabain {
 
 #define MMAP_ANONYMOUS_MODE 0x80000000 // This bit should not be used in fcntl.h.
 
 // This is the basic file io class
-class FileIO
-{
+class FileIO {
 public:
-    FileIO(const std::string &fpath, int oflags, int fmode, bool sync);
+    FileIO(const std::string& fpath, int oflags, int fmode, bool sync);
     virtual ~FileIO();
 
-    int  Open();
-    int  TruncateFile(off_t filesize);
+    int Open();
+    int TruncateFile(off_t filesize);
     bool IsOpen() const;
     void Close();
 
-    size_t Write(const void *data, size_t bytes);
-    size_t Read(void *buff, size_t bytes);
-    off_t  SetOffset(off_t offset);
+    size_t Write(const void* data, size_t bytes);
+    size_t Read(void* buff, size_t bytes);
+    off_t SetOffset(off_t offset);
 
-    virtual size_t RandomWrite(const void *data, size_t size, off_t offset);
-    virtual size_t RandomRead(void *buff, size_t size, off_t offset);
-    virtual void   Flush();
+    virtual size_t RandomWrite(const void* data, size_t size, off_t offset);
+    virtual size_t RandomRead(void* buff, size_t size, off_t offset);
+    virtual void Flush();
 
     const std::string& GetFilePath() const;
 

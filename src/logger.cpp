@@ -16,12 +16,12 @@
 
 // @author Changxue Deng <chadeng@cisco.com>
 
-#include <stdarg.h>
 #include <iostream>
+#include <stdarg.h>
 #include <unistd.h>
 
-#include "logger.h"
 #include "error.h"
+#include "logger.h"
 
 #define MAX_NUM_LOG 10
 
@@ -29,10 +29,9 @@ namespace mabain {
 
 std::string Logger::log_file = "";
 std::ofstream* Logger::log_stream = NULL;
-int Logger::log_level_       = LOG_LEVEL_INFO;
-int Logger::roll_size        = 50*1024*1024;
-const char* Logger::LOG_LEVEL[4] =
-{
+int Logger::log_level_ = LOG_LEVEL_INFO;
+int Logger::roll_size = 50 * 1024 * 1024;
+const char* Logger::LOG_LEVEL[4] = {
     " ERROR: ",
     " WARN: ",
     " INFO: ",
@@ -49,9 +48,8 @@ Logger::~Logger()
 
 void Logger::Close()
 {
-    if(log_stream != NULL)
-    {
-        if(log_stream->is_open())
+    if (log_stream != NULL) {
+        if (log_stream->is_open())
             log_stream->close();
 
         delete log_stream;
@@ -61,10 +59,9 @@ void Logger::Close()
 
 // Should only be called by writer for now.
 // Readers will send logs to stdout or stderr.
-void Logger::InitLogFile(const std::string &logfile)
+void Logger::InitLogFile(const std::string& logfile)
 {
-    if(!logfile.empty())
-    {
+    if (!logfile.empty()) {
         log_file = logfile;
         log_level_ = LOG_LEVEL_INFO;
         log_stream = new std::ofstream();
@@ -72,12 +69,12 @@ void Logger::InitLogFile(const std::string &logfile)
     }
 }
 
-void Logger::FillDateTime(char *buffer, int bufsize)
+void Logger::FillDateTime(char* buffer, int bufsize)
 {
     time_t rawtime;
     struct tm timeinfo;
-    time (&rawtime);
-    if(localtime_r(&rawtime, &timeinfo))
+    time(&rawtime);
+    if (localtime_r(&rawtime, &timeinfo))
         strftime(buffer, bufsize, "%Y-%m-%d.%X", &timeinfo);
     else
         snprintf(buffer, bufsize, "Time unknown");
@@ -85,67 +82,61 @@ void Logger::FillDateTime(char *buffer, int bufsize)
 
 void Logger::Rotate()
 {
-    if(log_stream == NULL)
+    if (log_stream == NULL)
         return;
-    if(log_stream->is_open())
+    if (log_stream->is_open())
         log_stream->close();
 
     std::string filepath_old;
     std::string filepath_new;
-    for(int i = MAX_NUM_LOG-2; i > 0; i--)
-    {
+    for (int i = MAX_NUM_LOG - 2; i > 0; i--) {
         filepath_old = log_file + "." + std::to_string(i);
-        if(access(filepath_old.c_str(), R_OK) == 0)
-        {
-            filepath_new = log_file + "." + std::to_string(i+1);
-            if(rename(filepath_old.c_str(), filepath_new.c_str()))
+        if (access(filepath_old.c_str(), R_OK) == 0) {
+            filepath_new = log_file + "." + std::to_string(i + 1);
+            if (rename(filepath_old.c_str(), filepath_new.c_str()))
                 std::cerr << "failed to move log file\n";
         }
     }
     filepath_new = log_file + ".1";
-    if(rename(log_file.c_str(), filepath_new.c_str()))
+    if (rename(log_file.c_str(), filepath_new.c_str()))
         std::cerr << "failed to move log file\n";
 
     log_stream->open(log_file.c_str(), std::ios::out | std::ios::app);
 }
 
-void Logger::Log(int level, const std::string &message)
+void Logger::Log(int level, const std::string& message)
 {
-    if(level > log_level_)
+    if (level > log_level_)
         return;
 
-    if(log_stream != NULL)
-    {
+    if (log_stream != NULL) {
         char buffer[80];
         FillDateTime(buffer, sizeof(buffer));
         *log_stream << buffer << LOG_LEVEL[level] << message << std::endl;
-        if(log_stream->tellp() > roll_size)
+        if (log_stream->tellp() > roll_size)
             Logger::Rotate();
-    }
-    else if(level < LOG_LEVEL_INFO)
+    } else if (level < LOG_LEVEL_INFO)
         std::cerr << message << std::endl;
     else
         std::cout << message << std::endl;
 }
 
-void Logger::Log(int level, const char *format, ... )
+void Logger::Log(int level, const char* format, ...)
 {
-    if(level > log_level_)
+    if (level > log_level_)
         return;
 
     char message[256];
     va_list args;
     va_start(args, format);
     vsprintf(message, format, args);
-    if(log_stream != NULL)
-    {
+    if (log_stream != NULL) {
         char buffer[64];
         FillDateTime(buffer, sizeof(buffer));
         *log_stream << buffer << LOG_LEVEL[level] << message << std::endl;
-        if(log_stream->tellp() > roll_size)
+        if (log_stream->tellp() > roll_size)
             Logger::Rotate();
-    }
-    else if(level < LOG_LEVEL_INFO)
+    } else if (level < LOG_LEVEL_INFO)
         std::cerr << message << std::endl;
     else
         std::cout << message << std::endl;
@@ -154,8 +145,7 @@ void Logger::Log(int level, const char *format, ... )
 
 int Logger::SetLogLevel(int level)
 {
-    if(level < 0 || level > LOG_LEVEL_DEBUG)
-    {
+    if (level < 0 || level > LOG_LEVEL_DEBUG) {
         Logger::Log(LOG_LEVEL_WARN, "invaid logging level %d", level);
         return MBError::INVALID_ARG;
     }

@@ -24,69 +24,67 @@
 
 namespace mabain {
 
-#define MAX_4B_OFFSET        0xFFFFFFFF
-#define MAX_5B_OFFSET      0xFFFFFFFFFF
-#define MAX_6B_OFFSET    0xFFFFFFFFFFFF
+#define MAX_4B_OFFSET 0xFFFFFFFF
+#define MAX_5B_OFFSET 0xFFFFFFFFFF
+#define MAX_6B_OFFSET 0xFFFFFFFFFFFF
 
 // write and read 5-byte 6-byte unsigned integer
 // Note this is based on engianness.
 
-inline void Write5BInteger(uint8_t *buffer, size_t offset)
+inline void Write5BInteger(uint8_t* buffer, size_t offset)
 {
 #ifdef __DEBUG__
-    if(offset > MAX_5B_OFFSET)
-    {
+    if (offset > MAX_5B_OFFSET) {
         std::cerr << "OFFSET " << offset << " TOO LARGE FOR 5 BYTES\n";
         abort();
     }
 #endif
 
-    uint8_t *src = reinterpret_cast<uint8_t*>(&offset);
+    uint8_t* src = reinterpret_cast<uint8_t*>(&offset);
 #ifndef __BIG__ENDIAN__
     memcpy(buffer, src, 5);
 #else
-    memcpy(buffer, src+3, 5);
+    memcpy(buffer, src + 3, 5);
 #endif
 }
 
-inline size_t Get5BInteger(const uint8_t *buffer)
+inline size_t Get5BInteger(const uint8_t* buffer)
 {
     size_t offset = 0;
-    uint8_t *target = reinterpret_cast<uint8_t*>(&offset);
+    uint8_t* target = reinterpret_cast<uint8_t*>(&offset);
 #ifndef __BIG__ENDIAN__
     memcpy(target, buffer, 5);
 #else
-    memcpy(target+3, buffer, 5);
+    memcpy(target + 3, buffer, 5);
 #endif
     return offset;
 }
 
-inline void Write6BInteger(uint8_t *buffer, size_t offset)
+inline void Write6BInteger(uint8_t* buffer, size_t offset)
 {
 #ifdef __DEBUG__
-    if(offset > MAX_6B_OFFSET)
-    {
+    if (offset > MAX_6B_OFFSET) {
         std::cerr << "OFFSET " << offset << "TOO LARGE FOR SIX BYTES\n";
         abort();
     }
 #endif
 
-    uint8_t *src = reinterpret_cast<uint8_t*>(&offset);
+    uint8_t* src = reinterpret_cast<uint8_t*>(&offset);
 #ifndef __BIG__ENDIAN__
     memcpy(buffer, src, 6);
 #else
-    memcpy(buffer, src+2, 6);
+    memcpy(buffer, src + 2, 6);
 #endif
 }
 
-inline size_t Get6BInteger(const uint8_t *buffer)
+inline size_t Get6BInteger(const uint8_t* buffer)
 {
     size_t offset = 0;
-    uint8_t *target = reinterpret_cast<uint8_t*>(&offset);
+    uint8_t* target = reinterpret_cast<uint8_t*>(&offset);
 #ifndef __BIG__ENDIAN__
     memcpy(target, buffer, 6);
 #else
-    memcpy(target+2, buffer, 6);
+    memcpy(target + 2, buffer, 6);
 #endif
     return offset;
 }
