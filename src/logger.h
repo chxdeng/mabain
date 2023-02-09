@@ -24,22 +24,21 @@
 
 namespace mabain {
 
-#define LOG_LEVEL_ERROR   0
-#define LOG_LEVEL_WARN    1
-#define LOG_LEVEL_INFO    2
-#define LOG_LEVEL_DEBUG   3
+#define LOG_LEVEL_ERROR 0
+#define LOG_LEVEL_WARN 1
+#define LOG_LEVEL_INFO 2
+#define LOG_LEVEL_DEBUG 3
 
-class Logger
-{
+class Logger {
 public:
     ~Logger();
 
     // Logs a message
-    static void Log(int level, const std::string &message);
+    static void Log(int level, const std::string& message);
     // Variable length log
-    static void Log(int level, const char *formt, ... );
-    static void FillDateTime(char *buffer, int bufsize);
-    static void InitLogFile(const std::string &logfile);
+    static void Log(int level, const char* formt, ...);
+    static void FillDateTime(char* buffer, int bufsize);
+    static void InitLogFile(const std::string& logfile);
     // Set log level. Default is logging everything except for debug.
     static int SetLogLevel(int level);
     static void Close();
@@ -51,7 +50,7 @@ private:
     static void Rotate();
 
     static std::string log_file;
-    static std::ofstream *log_stream;
+    static std::ofstream* log_stream;
     static const char* LOG_LEVEL[4];
     static int log_level_;
     static int roll_size;

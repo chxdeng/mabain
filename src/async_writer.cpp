@@ -16,23 +16,23 @@
 
 // @author Changxue Deng <chadeng@cisco.com>
 
-#include <unistd.h>
 #include <string.h>
 #include <sys/time.h>
+#include <unistd.h>
 
 #include "async_writer.h"
+#include "dict.h"
 #include "error.h"
+#include "integer_4b_5b.h"
 #include "logger.h"
 #include "mb_data.h"
 #include "mb_rc.h"
-#include "integer_4b_5b.h"
-#include "dict.h"
 
 namespace mabain {
 
 AsyncWriter* AsyncWriter::writer_instance = NULL;
 
-AsyncWriter* AsyncWriter::CreateInstance(DB *db_ptr)
+AsyncWriter* AsyncWriter::CreateInstance(DB* db_ptr)
 {
     writer_instance = new AsyncWriter(db_ptr);
     return writer_instance;
@@ -43,36 +43,35 @@ AsyncWriter* AsyncWriter::GetInstance()
     return writer_instance;
 }
 
-AsyncWriter::AsyncWriter(DB *db_ptr)
-                       : db(db_ptr),
-                         tid(0),
-                         stop_processing(false),
-                         queue(NULL),
-                         header(NULL)
+AsyncWriter::AsyncWriter(DB* db_ptr)
+    : db(db_ptr)
+    , tid(0)
+    , stop_processing(false)
+    , queue(NULL)
+    , header(NULL)
 {
     dict = NULL;
-    if(!(db_ptr->GetDBOptions() & CONSTS::ACCESS_MODE_WRITER))
-        throw (int) MBError::NOT_ALLOWED;
-    if(db == NULL)
-        throw (int) MBError::INVALID_ARG;
+    if (!(db_ptr->GetDBOptions() & CONSTS::ACCESS_MODE_WRITER))
+        throw(int) MBError::NOT_ALLOWED;
+    if (db == NULL)
+        throw(int) MBError::INVALID_ARG;
     dict = db->GetDictPtr();
-    if(dict == NULL)
-        throw (int) MBError::NOT_INITIALIZED;
+    if (dict == NULL)
+        throw(int) MBError::NOT_INITIALIZED;
 
     // initialize shared memory queue pointer
     header = dict->GetHeaderPtr();
-    if(header == NULL)
-        throw (int) MBError::NOT_INITIALIZED;
+    if (header == NULL)
+        throw(int) MBError::NOT_INITIALIZED;
     queue = dict->GetAsyncQueuePtr();
     header->rc_flag.store(0, std::memory_order_release);
 
     rc_backup_dir = NULL;
     // start the thread
-    if(pthread_create(&tid, NULL, async_thread_wrapper, this) != 0)
-    {
+    if (pthread_create(&tid, NULL, async_thread_wrapper, this) != 0) {
         Logger::Log(LOG_LEVEL_ERROR, "failed to create async thread");
         tid = 0;
-        throw (int) MBError::THREAD_FAILED;
+        throw(int) MBError::THREAD_FAILED;
     }
 }
 
@@ -85,8 +84,7 @@ int AsyncWriter::StopAsyncThread()
     stop_processing = true;
     dict->SHMQ_Signal();
 
-    if(tid != 0)
-    {
+    if (tid != 0) {
         Logger::Log(LOG_LEVEL_INFO, "joining async writer thread");
         pthread_join(tid, NULL);
     }
@@ -98,78 +96,72 @@ int AsyncWriter::StopAsyncThread()
 // This function should only be called by rc or pruner.
 int AsyncWriter::ProcessTask(int ntasks, bool rc_mode)
 {
-    AsyncNode *node_ptr;
+    AsyncNode* node_ptr;
     MBData mbd;
     int rval = MBError::SUCCESS;
     int count = 0;
 
-    while(count < ntasks)
-    {
+    while (count < ntasks) {
         node_ptr = &queue[header->writer_index % header->async_queue_size];
 
-        if(node_ptr->in_use.load(std::memory_order_consume))
-        {
-            switch(node_ptr->type)
-            {
-                case MABAIN_ASYNC_TYPE_ADD:
-                    if(rc_mode)
-                        mbd.options = CONSTS::OPTION_RC_MODE;
-                    mbd.buff = (uint8_t *) node_ptr->data;
-                    mbd.data_len = node_ptr->data_len;
+        if (node_ptr->in_use.load(std::memory_order_consume)) {
+            switch (node_ptr->type) {
+            case MABAIN_ASYNC_TYPE_ADD:
+                if (rc_mode)
+                    mbd.options = CONSTS::OPTION_RC_MODE;
+                mbd.buff = (uint8_t*)node_ptr->data;
+                mbd.data_len = node_ptr->data_len;
+                try {
+                    rval = dict->Add((uint8_t*)node_ptr->key, node_ptr->key_len, mbd, node_ptr->overwrite);
+                } catch (int err) {
+                    rval = err;
+                    Logger::Log(LOG_LEVEL_ERROR, "dict->Add throws error %s",
+                        MBError::get_error_str(err));
+                }
+                break;
+            case MABAIN_ASYNC_TYPE_REMOVE:
+                // FIXME
+                // Removing entries during rc is currently not supported.
+                // The index or data index could have been reset in fucntion ResourceColletion::Finish.
+                // However, the deletion may be run for some entry which still exist in the rc root tree.
+                // This requires modifying buffer in high end, where the offset for writing is greather than
+                // header->m_index_offset. This causes exception thrown from DictMem::WriteData.
+                // Note this is not a problem for Dict::Add since Add does not modify buffers in high end.
+                // This problem will be fixed when resolving issue: https://github.com/chxdeng/mabain/issues/21
+                rval = MBError::SUCCESS;
+                break;
+            case MABAIN_ASYNC_TYPE_REMOVE_ALL:
+                if (!rc_mode) {
                     try {
-                        rval = dict->Add((uint8_t *)node_ptr->key, node_ptr->key_len, mbd, node_ptr->overwrite);
+                        rval = dict->RemoveAll();
                     } catch (int err) {
-                        rval = err;
                         Logger::Log(LOG_LEVEL_ERROR, "dict->Add throws error %s",
-                                MBError::get_error_str(err));
+                            MBError::get_error_str(err));
+                        rval = err;
                     }
-                    break;
-                case MABAIN_ASYNC_TYPE_REMOVE:
-                    // FIXME
-                    // Removing entries during rc is currently not supported.
-                    // The index or data index could have been reset in fucntion ResourceColletion::Finish.
-                    // However, the deletion may be run for some entry which still exist in the rc root tree.
-                    // This requires modifying buffer in high end, where the offset for writing is greather than
-                    // header->m_index_offset. This causes exception thrown from DictMem::WriteData.
-                    // Note this is not a problem for Dict::Add since Add does not modify buffers in high end.
-                    // This problem will be fixed when resolving issue: https://github.com/chxdeng/mabain/issues/21
+                } else {
                     rval = MBError::SUCCESS;
-                    break;
-                case MABAIN_ASYNC_TYPE_REMOVE_ALL:
-                    if(!rc_mode)
-                    {
-                        try {
-                            rval = dict->RemoveAll();
-                        } catch (int err) {
-                            Logger::Log(LOG_LEVEL_ERROR, "dict->Add throws error %s",
-                                        MBError::get_error_str(err));
-                            rval = err;
-                        }
-                    }
-                    else
-                    {
-                        rval = MBError::SUCCESS;
-                    }
-                    break;
-                case MABAIN_ASYNC_TYPE_RC:
-                    // ignore rc task since it is running already.
-                    rval = MBError::RC_SKIPPED;
-                    break;
-                case MABAIN_ASYNC_TYPE_NONE:
-                    rval = MBError::SUCCESS;
-                    break;
-                case MABAIN_ASYNC_TYPE_BACKUP:
-                    // clean up existing backup dir varibale buffer.
-                    if (rc_backup_dir != NULL)
-                        free(rc_backup_dir);
-                    rc_backup_dir = (char *) malloc(node_ptr->data_len+1);
-                    memcpy(rc_backup_dir, node_ptr->data, node_ptr->data_len);
-                    rc_backup_dir[node_ptr->data_len] = '\0';
-                    rval = MBError::SUCCESS;
-                    break;
-                default:
-                    rval = MBError::INVALID_ARG;
-                    break;
+                }
+                break;
+            case MABAIN_ASYNC_TYPE_RC:
+                // ignore rc task since it is running already.
+                rval = MBError::RC_SKIPPED;
+                break;
+            case MABAIN_ASYNC_TYPE_NONE:
+                rval = MBError::SUCCESS;
+                break;
+            case MABAIN_ASYNC_TYPE_BACKUP:
+                // clean up existing backup dir varibale buffer.
+                if (rc_backup_dir != NULL)
+                    free(rc_backup_dir);
+                rc_backup_dir = (char*)malloc(node_ptr->data_len + 1);
+                memcpy(rc_backup_dir, node_ptr->data, node_ptr->data_len);
+                rc_backup_dir[node_ptr->data_len] = '\0';
+                rval = MBError::SUCCESS;
+                break;
+            default:
+                rval = MBError::INVALID_ARG;
+                break;
             }
 
             header->writer_index++;
@@ -178,21 +170,18 @@ int AsyncWriter::ProcessTask(int ntasks, bool rc_mode)
             node_ptr->in_use.store(false, std::memory_order_release);
             mbd.Clear();
             count++;
-        }
-        else
-        {
+        } else {
             // done processing
             count = ntasks;
         }
 
-        if(rval != MBError::SUCCESS)
-        {
+        if (rval != MBError::SUCCESS) {
             Logger::Log(LOG_LEVEL_DEBUG, "failed to run update %d: %s",
-                        (int)node_ptr->type, MBError::get_error_str(rval));
+                (int)node_ptr->type, MBError::get_error_str(rval));
         }
     }
 
-    if(stop_processing)
+    if (stop_processing)
         return MBError::RC_SKIPPED;
     return MBError::SUCCESS;
 }
@@ -200,12 +189,10 @@ int AsyncWriter::ProcessTask(int ntasks, bool rc_mode)
 uint32_t AsyncWriter::NextShmSlot(uint32_t windex, uint32_t qindex)
 {
     int cnt = 0;
-    while(windex != qindex)
-    {
-        if(queue[windex % header->async_queue_size].in_use.load(std::memory_order_consume))
+    while (windex != qindex) {
+        if (queue[windex % header->async_queue_size].in_use.load(std::memory_order_consume))
             break;
-        if(++cnt > header->async_queue_size)
-        {
+        if (++cnt > header->async_queue_size) {
             windex = qindex;
             break;
         }
@@ -218,7 +205,7 @@ uint32_t AsyncWriter::NextShmSlot(uint32_t windex, uint32_t qindex)
 
 void* AsyncWriter::async_writer_thread()
 {
-    AsyncNode *node_ptr;
+    AsyncNode* node_ptr;
     MBData mbd;
     int rval;
     int64_t min_index_size = 0;
@@ -234,15 +221,12 @@ void* AsyncWriter::async_writer_thread()
     rc.ExceptionRecovery();
     writer_lock.unlock();
 
-    while(!stop_processing)
-    {
+    while (!stop_processing) {
         node_ptr = &queue[header->writer_index % header->async_queue_size];
 
         skip = false;
-        while(!node_ptr->in_use.load(std::memory_order_consume))
-        {
-            if(stop_processing)
-            {
+        while (!node_ptr->in_use.load(std::memory_order_consume)) {
+            if (stop_processing) {
                 skip = true;
                 break;
             }
@@ -252,8 +236,7 @@ void* AsyncWriter::async_writer_thread()
 
             auto windex = header->writer_index;
             auto qindex = header->queue_index.load(std::memory_order_consume);
-            if(windex != qindex)
-            {
+            if (windex != qindex) {
                 // Reader process may have exited unexpectedly. Recover index.
                 skip = true;
                 header->writer_index = NextShmSlot(windex, qindex);
@@ -261,74 +244,74 @@ void* AsyncWriter::async_writer_thread()
             }
         }
 
-        if(skip) continue;
+        if (skip)
+            continue;
 
         // process the node
-        switch(node_ptr->type)
-        {
-            case MABAIN_ASYNC_TYPE_ADD:
-                mbd.buff = (uint8_t *) node_ptr->data;
-                mbd.data_len = node_ptr->data_len;
-                writer_lock.lock();
-                try {
-                    rval = dict->Add((uint8_t *)node_ptr->key, node_ptr->key_len, mbd,
-                                     node_ptr->overwrite);
-                } catch (int err) {
-                    Logger::Log(LOG_LEVEL_ERROR, "dict->Add throws error %s",
-                                MBError::get_error_str(err));
-                    rval = err;
-                }
-                writer_lock.unlock();
-                break;
-            case MABAIN_ASYNC_TYPE_REMOVE:
-                mbd.options |= CONSTS::OPTION_FIND_AND_STORE_PARENT;
-                writer_lock.lock();
-                try {
-                    rval = dict->Remove((uint8_t *)node_ptr->key, node_ptr->key_len, mbd);
-                } catch (int err) {
-                    Logger::Log(LOG_LEVEL_ERROR, "dict->Remmove throws error %s",
-                                MBError::get_error_str(err));
-                    rval = err;
-                }
-                writer_lock.unlock();
-                mbd.options &= ~CONSTS::OPTION_FIND_AND_STORE_PARENT;
-                break;
-            case MABAIN_ASYNC_TYPE_REMOVE_ALL:
-                writer_lock.lock();
-                try {
-                    rval = dict->RemoveAll();
-                } catch (int err) {
-                    Logger::Log(LOG_LEVEL_ERROR, "dict->RemoveAll throws error %s",
-                                MBError::get_error_str(err));
-                    rval = err;
-                }
-                writer_lock.unlock();
-                break;
-            case MABAIN_ASYNC_TYPE_RC:
-                rval = MBError::SUCCESS;
-                header->rc_flag.store(1, std::memory_order_release);
-                {
-                    int64_t *data_ptr = reinterpret_cast<int64_t *>(node_ptr->data);
-                    min_index_size = data_ptr[0];
-                    min_data_size  = data_ptr[1];
-                    max_dbsize = data_ptr[2];
-                    max_dbcount = data_ptr[3];
-                }
-                break;
-            case MABAIN_ASYNC_TYPE_NONE:
-                rval = MBError::SUCCESS;
-                break;
-            case MABAIN_ASYNC_TYPE_BACKUP:
-                try {
-                    DBBackup mbbk(*db);
-                    rval = mbbk.Backup((const char*) node_ptr->data);
-                } catch (int error) {
-                    rval = error;
-                }
-                break;
-            default:
-                rval = MBError::INVALID_ARG;
-                break;
+        switch (node_ptr->type) {
+        case MABAIN_ASYNC_TYPE_ADD:
+            mbd.buff = (uint8_t*)node_ptr->data;
+            mbd.data_len = node_ptr->data_len;
+            writer_lock.lock();
+            try {
+                rval = dict->Add((uint8_t*)node_ptr->key, node_ptr->key_len, mbd,
+                    node_ptr->overwrite);
+            } catch (int err) {
+                Logger::Log(LOG_LEVEL_ERROR, "dict->Add throws error %s",
+                    MBError::get_error_str(err));
+                rval = err;
+            }
+            writer_lock.unlock();
+            break;
+        case MABAIN_ASYNC_TYPE_REMOVE:
+            mbd.options |= CONSTS::OPTION_FIND_AND_STORE_PARENT;
+            writer_lock.lock();
+            try {
+                rval = dict->Remove((uint8_t*)node_ptr->key, node_ptr->key_len, mbd);
+            } catch (int err) {
+                Logger::Log(LOG_LEVEL_ERROR, "dict->Remmove throws error %s",
+                    MBError::get_error_str(err));
+                rval = err;
+            }
+            writer_lock.unlock();
+            mbd.options &= ~CONSTS::OPTION_FIND_AND_STORE_PARENT;
+            break;
+        case MABAIN_ASYNC_TYPE_REMOVE_ALL:
+            writer_lock.lock();
+            try {
+                rval = dict->RemoveAll();
+            } catch (int err) {
+                Logger::Log(LOG_LEVEL_ERROR, "dict->RemoveAll throws error %s",
+                    MBError::get_error_str(err));
+                rval = err;
+            }
+            writer_lock.unlock();
+            break;
+        case MABAIN_ASYNC_TYPE_RC:
+            rval = MBError::SUCCESS;
+            header->rc_flag.store(1, std::memory_order_release);
+            {
+                int64_t* data_ptr = reinterpret_cast<int64_t*>(node_ptr->data);
+                min_index_size = data_ptr[0];
+                min_data_size = data_ptr[1];
+                max_dbsize = data_ptr[2];
+                max_dbcount = data_ptr[3];
+            }
+            break;
+        case MABAIN_ASYNC_TYPE_NONE:
+            rval = MBError::SUCCESS;
+            break;
+        case MABAIN_ASYNC_TYPE_BACKUP:
+            try {
+                DBBackup mbbk(*db);
+                rval = mbbk.Backup((const char*)node_ptr->data);
+            } catch (int error) {
+                rval = error;
+            }
+            break;
+        default:
+            rval = MBError::INVALID_ARG;
+            break;
         }
 
         header->writer_index++;
@@ -336,24 +319,21 @@ void* AsyncWriter::async_writer_thread()
         node_ptr->type = MABAIN_ASYNC_TYPE_NONE;
         node_ptr->in_use.store(false, std::memory_order_release);
 
-        if(rval != MBError::SUCCESS)
-        {
+        if (rval != MBError::SUCCESS) {
             Logger::Log(LOG_LEVEL_DEBUG, "failed to run update %d: %s",
-                        (int)node_ptr->type, MBError::get_error_str(rval));
+                (int)node_ptr->type, MBError::get_error_str(rval));
         }
 
         mbd.Clear();
 
-        if (header->rc_flag.load(std::memory_order_consume) == 1)
-        {
+        if (header->rc_flag.load(std::memory_order_consume) == 1) {
             rval = MBError::SUCCESS;
             writer_lock.lock();
             try {
                 ResourceCollection rc = ResourceCollection(*db);
                 rc.ReclaimResource(min_index_size, min_data_size, max_dbsize, max_dbcount, this);
             } catch (int error) {
-                if(error != MBError::RC_SKIPPED)
-                {
+                if (error != MBError::RC_SKIPPED) {
                     Logger::Log(LOG_LEVEL_WARN, "rc failed :%s", MBError::get_error_str(error));
                     rval = error;
                 }
@@ -361,10 +341,8 @@ void* AsyncWriter::async_writer_thread()
             writer_lock.unlock();
 
             header->rc_flag.store(0, std::memory_order_release);
-            if(rc_backup_dir != NULL)
-            {
-                if(rval == MBError::SUCCESS)
-                {
+            if (rc_backup_dir != NULL) {
+                if (rval == MBError::SUCCESS) {
                     dict->SHMQ_Backup(rc_backup_dir);
                 }
                 free(rc_backup_dir);
@@ -378,13 +356,13 @@ void* AsyncWriter::async_writer_thread()
     return NULL;
 }
 
-void* AsyncWriter::async_thread_wrapper(void *context)
+void* AsyncWriter::async_thread_wrapper(void* context)
 {
-    AsyncWriter *instance_ptr = reinterpret_cast<AsyncWriter *>(context);
+    AsyncWriter* instance_ptr = reinterpret_cast<AsyncWriter*>(context);
     return instance_ptr->async_writer_thread();
 }
 
-int AsyncWriter::AddWithLock(const char *key, int len, MBData &mbdata, bool overwrite)
+int AsyncWriter::AddWithLock(const char* key, int len, MBData& mbdata, bool overwrite)
 {
     if (header->rc_flag.load(std::memory_order_relaxed))
         return MBError::TRY_AGAIN;

@@ -17,10 +17,10 @@
 // @author Changxue Deng <chadeng@cisco.com>
 
 #include <assert.h>
+#include <atomic>
+#include <pthread.h>
 #include <string.h>
 #include <unistd.h>
-#include <pthread.h>
-#include <atomic>
 
 #include <mabain/db.h>
 
@@ -33,18 +33,18 @@ static std::atomic<int> write_index;
 static bool stop_processing = false;
 static std::string mbdir = "/var/tmp/mabain_test/";
 
-static void* insert_thread(void *arg)
+static void* insert_thread(void* arg)
 {
     int curr_key;
     TestKey mkey(MABAIN_TEST_KEY_TYPE_INT);
     std::string kv;
-    DB *db_r = new DB(mbdir.c_str(), CONSTS::ReaderOptions(), 128LL*1024*1024, 128LL*1024*1024);
+    DB* db_r = new DB(mbdir.c_str(), CONSTS::ReaderOptions(), 128LL * 1024 * 1024, 128LL * 1024 * 1024);
     assert(db_r->is_open());
 
-    while(!stop_processing) {
+    while (!stop_processing) {
         curr_key = write_index.fetch_add(1, std::memory_order_release);
         kv = mkey.get_key(curr_key);
-        if(curr_key < max_key) {
+        if (curr_key < max_key) {
             assert(db_r->Add(kv, kv) == MBError::SUCCESS);
         } else {
             stop_processing = true;
@@ -60,12 +60,12 @@ static void* insert_thread(void *arg)
 static void SetTestStatus(bool success)
 {
     std::string cmd;
-    if(success) {
+    if (success) {
         cmd = std::string("touch ") + mbdir + "/_success";
     } else {
         cmd = std::string("rm ") + mbdir + "/_success >" + mbdir + "/out 2>" + mbdir + "/err";
     }
-    if(system(cmd.c_str()) != 0) {
+    if (system(cmd.c_str()) != 0) {
     }
 }
 
@@ -73,33 +73,33 @@ static void Lookup()
 {
     TestKey mkey(MABAIN_TEST_KEY_TYPE_INT);
     std::string kv;
-    DB *db_r = new DB(mbdir.c_str(), CONSTS::ReaderOptions(), 128LL*1024*1024, 128LL*1024*1024);
+    DB* db_r = new DB(mbdir.c_str(), CONSTS::ReaderOptions(), 128LL * 1024 * 1024, 128LL * 1024 * 1024);
     assert(db_r->is_open());
     MBData mbd;
 
-    for(int i = 0; i < max_key; i++) {
+    for (int i = 0; i < max_key; i++) {
         kv = mkey.get_key(i);
         assert(db_r->Find(kv, mbd) == MBError::SUCCESS);
-        assert(kv == std::string((const char *)mbd.buff, mbd.data_len));
+        assert(kv == std::string((const char*)mbd.buff, mbd.data_len));
     }
     db_r->Close();
     delete db_r;
 }
 
 // Multiple threads performing DB insertion/deletion/updating
-int main(int argc, char *argv[])
+int main(int argc, char* argv[])
 {
     pthread_t pid[256];
     int nthread = 4;
-    if(nthread > 256) {
+    if (nthread > 256) {
         abort();
     }
 
-    if(argc > 1) {
+    if (argc > 1) {
         mbdir = std::string(argv[1]);
         std::cout << "Mabain test db directory " << mbdir << "\n";
     }
-    if(argc > 2) {
+    if (argc > 2) {
         max_key = atoi(argv[2]);
         std::cout << "Setting number of keys to be " << max_key << "\n";
     }
@@ -110,22 +110,22 @@ int main(int argc, char *argv[])
     write_index.store(0, std::memory_order_release);
     // Writer needs to enable async writer mode.
     int options = CONSTS::WriterOptions() | CONSTS::ASYNC_WRITER_MODE;
-    DB *db = new DB(mbdir.c_str(), options, 128LL*1024*1024, 128LL*1024*1024);
+    DB* db = new DB(mbdir.c_str(), options, 128LL * 1024 * 1024, 128LL * 1024 * 1024);
     assert(db->is_open());
     db->RemoveAllSync();
 
-    for(int i = 0; i < nthread; i++) {
-        if(pthread_create(&pid[i], NULL, insert_thread, db) != 0) {
+    for (int i = 0; i < nthread; i++) {
+        if (pthread_create(&pid[i], NULL, insert_thread, db) != 0) {
             std::cout << "failed to create thread\n";
             abort();
         }
     }
 
-    while(!stop_processing) {
+    while (!stop_processing) {
         usleep(5);
     }
 
-    for(int i = 0; i < nthread; i++) {
+    for (int i = 0; i < nthread; i++) {
         pthread_join(pid[i], NULL);
     }
 

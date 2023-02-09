@@ -20,15 +20,15 @@
 
 using namespace mabain;
 
-const char *db_name = "my-memory-only-test";
+const char* db_name = "my-memory-only-test";
 
 // memory-only mode test
 // No db directory is required. Need an unique name instead.
 // Note MEMORY_ONLY_MODE does not support multi-process accessing the DB.
-int main(int argc, char *argv[])
+int main(int argc, char* argv[])
 {
     DB db(db_name, CONSTS::WriterOptions() | CONSTS::MEMORY_ONLY_MODE);
-    if(!db.is_open()) {
+    if (!db.is_open()) {
         std::cerr << "failed to open mabain db: " << db.StatusStr() << "\n";
         exit(1);
     }
@@ -43,18 +43,18 @@ int main(int argc, char *argv[])
     key[2] = "Grape";
     value[2] = "Purple";
 
-    for(int i = 0; i < 3; i++) {
+    for (int i = 0; i < 3; i++) {
         rval = db.Add(key[i], value[i]);
-        if(rval == MBError::SUCCESS) {
+        if (rval == MBError::SUCCESS) {
             std::cout << "Add " << key[i] << ": " << value[i] << std::endl;
         }
     }
 
     MBData mbd;
-    for(int i = 0; i < 3; i++) {
+    for (int i = 0; i < 3; i++) {
         rval = db.Find(key[i], mbd);
-        if(rval == MBError::SUCCESS) {
-            std::cout << "Lookup " << key[i] << ": " << std::string((char *)mbd.buff, mbd.data_len) << std::endl;
+        if (rval == MBError::SUCCESS) {
+            std::cout << "Lookup " << key[i] << ": " << std::string((char*)mbd.buff, mbd.data_len) << std::endl;
         }
     }
 

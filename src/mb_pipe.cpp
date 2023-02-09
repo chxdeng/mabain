@@ -16,43 +16,42 @@
 
 // @author Changxue Deng <chadeng@cisco.com>
 
-#include <unistd.h>
 #include <fcntl.h>
-#include <sys/stat.h>
 #include <poll.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
-#include "mb_pipe.h"
-#include "mabain_consts.h"
-#include "logger.h"
 #include "error.h"
+#include "logger.h"
+#include "mabain_consts.h"
+#include "mb_pipe.h"
 
 namespace mabain {
 
-MBPipe::MBPipe() : fifo_path(""), fd(-1)
+MBPipe::MBPipe()
+    : fifo_path("")
+    , fd(-1)
 {
 }
 
-MBPipe::MBPipe(const std::string &mbdir, int mode)
-             : fifo_path(mbdir + "_mpipe"), fd(-1)
+MBPipe::MBPipe(const std::string& mbdir, int mode)
+    : fifo_path(mbdir + "_mpipe")
+    , fd(-1)
 {
-    if (mode & CONSTS::ACCESS_MODE_WRITER)
-    {
+    if (mode & CONSTS::ACCESS_MODE_WRITER) {
         unlink(fifo_path.c_str());
         Logger::Log(LOG_LEVEL_INFO, "creating pipe %s", fifo_path.c_str());
-        if (mkfifo(fifo_path.c_str(), S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP |
-                                      S_IROTH | S_IWOTH) < 0)
-        {
+        if (mkfifo(fifo_path.c_str(), S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH) < 0) {
             Logger::Log(LOG_LEVEL_ERROR, "failed to create fifo %s %s",
-                        fifo_path.c_str(), strerror(errno));
+                fifo_path.c_str(), strerror(errno));
             return;
         }
 
         fd = open(fifo_path.c_str(), O_RDONLY | O_NONBLOCK);
-        if (fd < 0)
-        {
+        if (fd < 0) {
             Logger::Log(LOG_LEVEL_DEBUG, "failed to open fifo %s %s",
-                        fifo_path.c_str(), strerror(errno));
+                fifo_path.c_str(), strerror(errno));
         }
     }
 }
@@ -71,13 +70,11 @@ void MBPipe::Close()
 
 void MBPipe::Wait(int timeout)
 {
-    if (fd < 0)
-    {
+    if (fd < 0) {
         fd = open(fifo_path.c_str(), O_RDONLY | O_NONBLOCK);
-        if (fd < 0)
-        {
+        if (fd < 0) {
             Logger::Log(LOG_LEVEL_DEBUG, "failed to open fifo %s %d",
-                        fifo_path.c_str(), strerror(errno));
+                fifo_path.c_str(), strerror(errno));
             usleep(timeout * 1000);
             return;
         }
@@ -92,10 +89,9 @@ void MBPipe::Wait(int timeout)
 
     if (pollret == 0)
         return;
-    if (pollret < 0)
-    {
+    if (pollret < 0) {
         Logger::Log(LOG_LEVEL_DEBUG, "poll on pipe read failed errno: %s",
-                    strerror(errno));
+            strerror(errno));
         usleep(timeout * 1000);
         return;
     }
@@ -116,20 +112,16 @@ void MBPipe::Wait(int timeout)
     int nread;
     do {
         nread = read(fd, buf, __MB_ASYNC_READ_BUFFER_SIZE);
-        if (nread < 0)
-        {
+        if (nread < 0) {
             if (errno == EINTR)
                 continue;
-            if (!(errno == EAGAIN || errno == EWOULDBLOCK))
-            {
+            if (!(errno == EAGAIN || errno == EWOULDBLOCK)) {
                 Logger::Log(LOG_LEVEL_DEBUG, "pipe read failed %s",
-                        strerror(errno));
+                    strerror(errno));
                 Close();
             }
             break;
-        }
-        else if (nread == 0)
-        {
+        } else if (nread == 0) {
             Logger::Log(LOG_LEVEL_DEBUG, "pipe writer disconnected");
             Close();
         }
@@ -138,13 +130,11 @@ void MBPipe::Wait(int timeout)
 
 int MBPipe::Signal()
 {
-    if (fd < 0)
-    {
+    if (fd < 0) {
         fd = open(fifo_path.c_str(), O_WRONLY | O_NONBLOCK);
-        if (fd < 0)
-        {
+        if (fd < 0) {
             Logger::Log(LOG_LEVEL_DEBUG, "failed to open fifo %s %s",
-                        fifo_path.c_str(), strerror(errno));
+                fifo_path.c_str(), strerror(errno));
             return MBError::OPEN_FAILURE;
         }
     }
@@ -157,10 +147,9 @@ int MBPipe::Signal()
     pollret = poll(&pfd, 1, 1);
     if (pollret == 0)
         return MBError::NO_RESOURCE;
-    if (pollret < 0)
-    {
+    if (pollret < 0) {
         Logger::Log(LOG_LEVEL_DEBUG, "poll on pipe write failed errno: %s",
-                    strerror(errno));
+            strerror(errno));
         return MBError::INVALID_ARG;
     }
 #ifdef __APPLE__
@@ -174,12 +163,10 @@ int MBPipe::Signal()
         return MBError::NO_RESOURCE;
     }
 
-    if (write(fd, "", 1) < 0)
-    {
-        if (!(errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR))
-        {
+    if (write(fd, "", 1) < 0) {
+        if (!(errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) {
             Logger::Log(LOG_LEVEL_DEBUG, "failed to signal async writer errno: %s",
-                        strerror(errno));
+                strerror(errno));
             Close();
         }
         return MBError::TRY_AGAIN;

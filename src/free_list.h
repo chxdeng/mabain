@@ -22,36 +22,34 @@
 #include <cstdlib>
 #include <string>
 
-#include "mb_lsq.h"
 #include "error.h"
 #include "lock_free.h"
+#include "mb_lsq.h"
 
-#define MAX_BUFFER_PER_LIST    256
+#define MAX_BUFFER_PER_LIST 256
 
 // Manage resource allocation/free using linked list
 namespace mabain {
 
-typedef struct _BufferCache
-{
+typedef struct _BufferCache {
     size_t buf_index;
     size_t buf_offset;
 } BufferCache;
 
-class FreeList
-{
+class FreeList {
 public:
-    FreeList(const std::string &file_path, size_t buff_alignment, size_t max_n_buff,
-             size_t max_buff_per_list = MAX_BUFFER_PER_LIST);
+    FreeList(const std::string& file_path, size_t buff_alignment, size_t max_n_buff,
+        size_t max_buff_per_list = MAX_BUFFER_PER_LIST);
     ~FreeList();
 
     // Free a buffer by adding it to the free list
     int AddBuffer(size_t offset, size_t size);
     // Reserve a buffer by removing it from the free list
-    int RemoveBuffer(size_t &offset, size_t size);
+    int RemoveBuffer(size_t& offset, size_t size);
     // Release alignment buffer
     void ReleaseAlignmentBuffer(size_t old_offset, size_t alignment_offset);
 
-    bool GetBufferByIndex(size_t buf_index, size_t &offset);
+    bool GetBufferByIndex(size_t buf_index, size_t& offset);
 
     void Empty();
 
@@ -64,13 +62,13 @@ public:
     // Get total freed buffer size in the list
     size_t GetTotSize() const;
 
-    inline int      AddBufferByIndex(size_t buf_index, size_t offset);
-    inline size_t   RemoveBufferByIndex(size_t buf_index);
-    inline size_t   GetAlignmentSize(size_t size) const;
-    inline size_t   GetBufferIndex(size_t size) const;
+    inline int AddBufferByIndex(size_t buf_index, size_t offset);
+    inline size_t RemoveBufferByIndex(size_t buf_index);
+    inline size_t GetAlignmentSize(size_t size) const;
+    inline size_t GetBufferIndex(size_t size) const;
     inline uint64_t GetBufferCountByIndex(size_t buf_index) const;
-    inline size_t   GetBufferSizeByIndex(size_t buf_index) const;
-    inline int      ReleaseBuffer(size_t offset, size_t size);
+    inline size_t GetBufferSizeByIndex(size_t buf_index) const;
+    inline int ReleaseBuffer(size_t offset, size_t size);
 
 private:
     int ReuseBuffer(size_t buf_index, size_t offset);
@@ -85,7 +83,7 @@ private:
     // This restriction is to limit memory usage.
     size_t max_buffer_per_list;
     // number of separated buffers
-    MBlsq **buffer_free_list;
+    MBlsq** buffer_free_list;
     // total count of freed buffers
     int64_t count;
     // totol size allocted for all the buffers
@@ -95,10 +93,10 @@ private:
 inline size_t FreeList::GetAlignmentSize(size_t size) const
 {
 #ifdef __DEBUG__
-    assert(size > 0 && size < max_num_buffer*alignment);
+    assert(size > 0 && size < max_num_buffer * alignment);
 #endif
     size_t alignment_mod = size % alignment;
-    if(alignment_mod == 0)
+    if (alignment_mod == 0)
         return size;
     return (size + alignment - alignment_mod);
 }
@@ -106,7 +104,7 @@ inline size_t FreeList::GetAlignmentSize(size_t size) const
 inline size_t FreeList::GetBufferIndex(size_t size) const
 {
 #ifdef __DEBUG__
-    assert(size > 0 && size < max_num_buffer*alignment);
+    assert(size > 0 && size < max_num_buffer * alignment);
 #endif
     return ((size - 1) / alignment);
 }
@@ -133,8 +131,7 @@ inline int FreeList::AddBufferByIndex(size_t buf_index, size_t offset)
     assert(buf_index < max_num_buffer);
 #endif
 
-    if(buffer_free_list[buf_index]->Count() > (unsigned)max_buffer_per_list)
-    {
+    if (buffer_free_list[buf_index]->Count() > (unsigned)max_buffer_per_list) {
         ReuseBuffer(buf_index, offset);
         return MBError::SUCCESS;
     }
@@ -157,7 +154,7 @@ inline size_t FreeList::RemoveBufferByIndex(size_t buf_index)
 inline int FreeList::ReleaseBuffer(size_t offset, size_t size)
 {
 #ifdef __DEBUG__
-    assert(size > 0 && size < max_num_buffer*alignment);
+    assert(size > 0 && size < max_num_buffer * alignment);
 #endif
     size_t buf_index = GetBufferIndex(size);
     return AddBufferByIndex(buf_index, offset);

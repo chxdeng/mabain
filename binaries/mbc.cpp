@@ -18,24 +18,24 @@
 
 // A mabain command-line client
 
+#include <assert.h>
+#include <fstream>
+#include <iostream>
+#include <readline/history.h>
+#include <readline/readline.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <string.h>
-#include <iostream>
-#include <fstream>
-#include <string> 
-#include <assert.h>
-#include <signal.h>
-#include <readline/readline.h>
-#include <readline/history.h>
+#include <string>
 
 #include "db.h"
-#include "mb_data.h"
 #include "dict.h"
 #include "error.h"
+#include "mb_data.h"
 #include "version.h"
 
-#include "hexbin.h"
 #include "expr_parser.h"
+#include "hexbin.h"
 
 using namespace mabain;
 
@@ -65,35 +65,34 @@ enum mbc_command {
 volatile bool quit_mbc = false;
 static void HandleSignal(int sig)
 {
-    switch(sig)
-    {
-        case SIGSEGV:
-            std::cerr << "process segfault\n";
-            abort();
-        case SIGTERM:
-        case SIGINT:
-        case SIGQUIT:
-        case SIGHUP:
-        case SIGPIPE:
-            quit_mbc = true;
-        case SIGUSR1:
-        case SIGUSR2:
-            break;
+    switch (sig) {
+    case SIGSEGV:
+        std::cerr << "process segfault\n";
+        abort();
+    case SIGTERM:
+    case SIGINT:
+    case SIGQUIT:
+    case SIGHUP:
+    case SIGPIPE:
+        quit_mbc = true;
+    case SIGUSR1:
+    case SIGUSR2:
+        break;
     }
 }
 
-static void usage(const char *prog)
+static void usage(const char* prog)
 {
     std::cout << "Usage: " << prog << " -d mabain-directory [-im index-memcap] [-dm data-memcap] [-w] [-e query] [-s script-file]\n";
-    std::cout <<"\t-d mabain databse directory\n";
-    std::cout <<"\t-im index memcap\n";
-    std::cout <<"\t-dm data memcap\n";
-    std::cout <<"\t-r read-only mode\n";
-    std::cout <<"\t-w running in writer mode\n";
-    std::cout <<"\t-e run query on command line\n";
-    std::cout <<"\t-s run queries in a file\n";
-    std::cout <<"\t--lru-bucket-size bucket size for pruning\n";
-    std::cout <<"\t--async enable async writer mode\n";
+    std::cout << "\t-d mabain databse directory\n";
+    std::cout << "\t-im index memcap\n";
+    std::cout << "\t-dm data memcap\n";
+    std::cout << "\t-r read-only mode\n";
+    std::cout << "\t-w running in writer mode\n";
+    std::cout << "\t-e run query on command line\n";
+    std::cout << "\t-s run queries in a file\n";
+    std::cout << "\t--lru-bucket-size bucket size for pruning\n";
+    std::cout << "\t--async enable async writer mode\n";
     exit(1);
 }
 
@@ -116,21 +115,17 @@ static void show_help()
     std::cout << "\treclaimResources(max index gc size, max data gc size)\n\t\t\t\tReclaim deleted resources\n";
 }
 
-static void trim_spaces(const char *cmd, std::string &cmd_trim)
+static void trim_spaces(const char* cmd, std::string& cmd_trim)
 {
     cmd_trim.clear();
 
     int quotation = 0;
-    const char *p = cmd;
-    while(*p != '\0')
-    {
-        if(*p == '\'' || *p == '\"')
-        {
+    const char* p = cmd;
+    while (*p != '\0') {
+        if (*p == '\'' || *p == '\"') {
             cmd_trim.append(1, '\'');
-            quotation ^= 1; 
-        }
-        else if(!isspace(*p) || quotation) 
-        {
+            quotation ^= 1;
+        } else if (!isspace(*p) || quotation) {
             cmd_trim.append(1, *p);
         }
 
@@ -138,13 +133,12 @@ static void trim_spaces(const char *cmd, std::string &cmd_trim)
     }
 }
 
-static bool check_hex_output(std::string &cmd)
+static bool check_hex_output(std::string& cmd)
 {
     size_t pos = cmd.rfind(".hex()");
-    if(pos == std::string::npos)
+    if (pos == std::string::npos)
         return false;
-    if(pos == cmd.length()-6)
-    {
+    if (pos == cmd.length() - 6) {
         cmd.erase(pos);
         return true;
     }
@@ -152,76 +146,71 @@ static bool check_hex_output(std::string &cmd)
     return false;
 }
 
-static int parse_key_value_pair(const std::string &kv_str,
-                                std::string &key,
-                                std::string &value)
+static int parse_key_value_pair(const std::string& kv_str,
+    std::string& key,
+    std::string& value)
 {
     // search for ':' that separates key and value pair
     // currently this utility does not support quotation in
     // quotation, e.g, "abc\"def" as key or value.
     size_t pos = 0;
     int quotation_cnt = 0;
-    for(size_t i = 0; i < kv_str.length(); i++)
-    {
-        if(kv_str[i] == '\'')
-        {
+    for (size_t i = 0; i < kv_str.length(); i++) {
+        if (kv_str[i] == '\'') {
             quotation_cnt++;
-        }
-        else if(kv_str[i] == ':')
-        {
+        } else if (kv_str[i] == ':') {
             // do not count the ':' in the key or value string.
-            if(quotation_cnt % 2 == 0)
-            {
+            if (quotation_cnt % 2 == 0) {
                 pos = i;
                 break;
             }
         }
     }
 
-    if(pos == 0)
+    if (pos == 0)
         return -1;
 
     ExprParser expr_key(kv_str.substr(0, pos));
-    if(expr_key.Evaluate(key) < 0)
+    if (expr_key.Evaluate(key) < 0)
         return -1;
 
-    ExprParser expr_value(kv_str.substr(pos+1));
-    if(expr_value.Evaluate(value) < 0)
+    ExprParser expr_value(kv_str.substr(pos + 1));
+    if (expr_value.Evaluate(value) < 0)
         return -1;
 
     return 0;
 }
 
-static int parse_args(const std::string &arg_str,
-                      std::vector<std::string> &arg_list)
+static int parse_args(const std::string& arg_str,
+    std::vector<std::string>& arg_list)
 {
     size_t start = 0;
     std::string arg;
 
-    while(true)
-    {
+    while (true) {
         size_t found = arg_str.find(',', start);
-        if(found == std::string::npos)
+        if (found == std::string::npos)
             break;
-        arg = arg_str.substr(start, found-start);
-        if(arg.length() == 0) return -1;
+        arg = arg_str.substr(start, found - start);
+        if (arg.length() == 0)
+            return -1;
 
-        arg_list.push_back(arg_str.substr(start, found-start));
+        arg_list.push_back(arg_str.substr(start, found - start));
         start = found + 1;
     }
 
     arg = arg_str.substr(start);
-    if(arg.length() == 0)
+    if (arg.length() == 0)
         return -1;
     arg_list.push_back(arg);
 
     return 0;
 }
 
-static int parse_command(std::string &cmd,
-                         std::string &key,
-                         std::string &value,
-                         std::vector<std::string> &arg_list)
+static int parse_command(std::string& cmd,
+    std::string& key,
+    std::string& value,
+    std::vector<std::string>& arg_list)
 {
     std::string yes;
     bool hex_output = false;
@@ -229,267 +218,242 @@ static int parse_command(std::string &cmd,
     key = "";
     value = "";
     arg_list.clear();
-    switch(cmd[0])
-    {
-        case 'q':
-            if(cmd.compare("quit") == 0)
-                return COMMAND_QUIT;
-            break;
-        case 's':
-            if(cmd.compare("show") == 0)
-                return COMMAND_STATS;
-            break;
-        case 'f':
-            hex_output = check_hex_output(cmd);
-            if(cmd.compare(0, 5, "find(") == 0)
-            {
-                if(cmd[cmd.length()-1] != ')')
-                    return COMMAND_UNKNOWN;
-                ExprParser expr(cmd.substr(5, cmd.length()-6));
-                if(expr.Evaluate(key) < 0)
-                    return COMMAND_PARSING_ERROR;
-                if(hex_output)
-                    return COMMAND_FIND_HEX;
-                return COMMAND_FIND;
-            }
-            else if(cmd.compare(0, 11, "findPrefix(") == 0)
-            {
-                if(cmd[cmd.length()-1] != ')')
-                    return COMMAND_UNKNOWN;
-                ExprParser expr(cmd.substr(11, cmd.length()-12));
-                if(expr.Evaluate(key) < 0)
-                    return COMMAND_PARSING_ERROR;
-                if(hex_output)
-                    return COMMAND_FIND_LPREFIX_HEX;
-                return COMMAND_FIND_LPREFIX;
-            }
-            else if(cmd.compare(0, 10, "findLower(") == 0)
-            {
-                if(cmd[cmd.length()-1] != ')') return COMMAND_PARSING_ERROR;
-                ExprParser expr(cmd.substr(10, cmd.length()-11));
-                if(expr.Evaluate(key) < 0) return COMMAND_PARSING_ERROR;
-                return COMMAND_FIND_LOWER_BOUND;
-            }
-            else if(cmd.compare("findAll") == 0)
-                return COMMAND_FIND_ALL;
-            break;
-        case 'd':
-            if(cmd.compare(0, 7, "delete(") == 0)
-            {
-                if(cmd[cmd.length()-1] != ')')
-                    return COMMAND_UNKNOWN;
-                ExprParser expr(cmd.substr(7, cmd.length()-8));
-                if(expr.Evaluate(key) < 0)
-                    return COMMAND_PARSING_ERROR; 
-                return COMMAND_DELETE;
-            }
-            else if(cmd.compare("deleteAll") == 0)
-            {
-                return COMMAND_DELETE_ALL;
-            }
-            else if(cmd.compare("decReaderCount") == 0)
-            {
-                std::cout << "Do you want to decrement number of reader? Press \'y\' to continue: ";
-                std::getline(std::cin, yes);   
-                if(yes.length() > 0 && yes[0] == 'y')
-                    return COMMAND_RESET_N_READER;
-                return COMMAND_NONE;
-            }
-            else if(cmd.compare("decWriterCount") == 0)
-            {
-                std::cout << "Do you want to decrement number of writer? Press \'y\' to continue: ";
-                std::getline(std::cin, yes);   
-                if(yes.length() > 0 && yes[0] == 'y')
-                    return COMMAND_RESET_N_WRITER;
-                return COMMAND_NONE;
-            }
-            break;
-        case 'i':
-            if(cmd.compare(0, 7, "insert(") == 0)
-            {
-                if(cmd[cmd.length()-1] != ')')
-                    return COMMAND_PARSING_ERROR;
-                if(parse_key_value_pair(cmd.substr(7, cmd.length()-8), key, value) < 0)
-                    return COMMAND_PARSING_ERROR;
-                return COMMAND_INSERT;
-            }
-            break;
-        case 'r':
-            if(cmd.compare(0, 8, "replace(") == 0)
-            {
-                if(cmd[cmd.length()-1] != ')')
-                    return COMMAND_PARSING_ERROR;
-                if(parse_key_value_pair(cmd.substr(8, cmd.length()-9), key, value) < 0)
-                    return COMMAND_PARSING_ERROR;
-                return COMMAND_REPLACE;
-            }
-            else if(cmd.compare(0, 17, "reclaimResources(") == 0)
-            {
-                if(cmd[cmd.length()-1] != ')')
-                    return COMMAND_PARSING_ERROR;
-                if(parse_args(cmd.substr(17, cmd.length()-18), arg_list) < 0)
-                    return COMMAND_PARSING_ERROR;
-                return COMMAND_RECLAIM_RESOURCES;
-            }
-            else
+    switch (cmd[0]) {
+    case 'q':
+        if (cmd.compare("quit") == 0)
+            return COMMAND_QUIT;
+        break;
+    case 's':
+        if (cmd.compare("show") == 0)
+            return COMMAND_STATS;
+        break;
+    case 'f':
+        hex_output = check_hex_output(cmd);
+        if (cmd.compare(0, 5, "find(") == 0) {
+            if (cmd[cmd.length() - 1] != ')')
                 return COMMAND_UNKNOWN;
-            break;
-        case 'h':
-            if(cmd.compare("help") == 0)
-                return COMMAND_HELP;
-            break;
-        case 'p':
-            if(cmd.compare("printHeader") == 0)
-                return COMMAND_PRINT_HEADER;
-            break;
-        default:
-            break;
+            ExprParser expr(cmd.substr(5, cmd.length() - 6));
+            if (expr.Evaluate(key) < 0)
+                return COMMAND_PARSING_ERROR;
+            if (hex_output)
+                return COMMAND_FIND_HEX;
+            return COMMAND_FIND;
+        } else if (cmd.compare(0, 11, "findPrefix(") == 0) {
+            if (cmd[cmd.length() - 1] != ')')
+                return COMMAND_UNKNOWN;
+            ExprParser expr(cmd.substr(11, cmd.length() - 12));
+            if (expr.Evaluate(key) < 0)
+                return COMMAND_PARSING_ERROR;
+            if (hex_output)
+                return COMMAND_FIND_LPREFIX_HEX;
+            return COMMAND_FIND_LPREFIX;
+        } else if (cmd.compare(0, 10, "findLower(") == 0) {
+            if (cmd[cmd.length() - 1] != ')')
+                return COMMAND_PARSING_ERROR;
+            ExprParser expr(cmd.substr(10, cmd.length() - 11));
+            if (expr.Evaluate(key) < 0)
+                return COMMAND_PARSING_ERROR;
+            return COMMAND_FIND_LOWER_BOUND;
+        } else if (cmd.compare("findAll") == 0)
+            return COMMAND_FIND_ALL;
+        break;
+    case 'd':
+        if (cmd.compare(0, 7, "delete(") == 0) {
+            if (cmd[cmd.length() - 1] != ')')
+                return COMMAND_UNKNOWN;
+            ExprParser expr(cmd.substr(7, cmd.length() - 8));
+            if (expr.Evaluate(key) < 0)
+                return COMMAND_PARSING_ERROR;
+            return COMMAND_DELETE;
+        } else if (cmd.compare("deleteAll") == 0) {
+            return COMMAND_DELETE_ALL;
+        } else if (cmd.compare("decReaderCount") == 0) {
+            std::cout << "Do you want to decrement number of reader? Press \'y\' to continue: ";
+            std::getline(std::cin, yes);
+            if (yes.length() > 0 && yes[0] == 'y')
+                return COMMAND_RESET_N_READER;
+            return COMMAND_NONE;
+        } else if (cmd.compare("decWriterCount") == 0) {
+            std::cout << "Do you want to decrement number of writer? Press \'y\' to continue: ";
+            std::getline(std::cin, yes);
+            if (yes.length() > 0 && yes[0] == 'y')
+                return COMMAND_RESET_N_WRITER;
+            return COMMAND_NONE;
+        }
+        break;
+    case 'i':
+        if (cmd.compare(0, 7, "insert(") == 0) {
+            if (cmd[cmd.length() - 1] != ')')
+                return COMMAND_PARSING_ERROR;
+            if (parse_key_value_pair(cmd.substr(7, cmd.length() - 8), key, value) < 0)
+                return COMMAND_PARSING_ERROR;
+            return COMMAND_INSERT;
+        }
+        break;
+    case 'r':
+        if (cmd.compare(0, 8, "replace(") == 0) {
+            if (cmd[cmd.length() - 1] != ')')
+                return COMMAND_PARSING_ERROR;
+            if (parse_key_value_pair(cmd.substr(8, cmd.length() - 9), key, value) < 0)
+                return COMMAND_PARSING_ERROR;
+            return COMMAND_REPLACE;
+        } else if (cmd.compare(0, 17, "reclaimResources(") == 0) {
+            if (cmd[cmd.length() - 1] != ')')
+                return COMMAND_PARSING_ERROR;
+            if (parse_args(cmd.substr(17, cmd.length() - 18), arg_list) < 0)
+                return COMMAND_PARSING_ERROR;
+            return COMMAND_RECLAIM_RESOURCES;
+        } else
+            return COMMAND_UNKNOWN;
+        break;
+    case 'h':
+        if (cmd.compare("help") == 0)
+            return COMMAND_HELP;
+        break;
+    case 'p':
+        if (cmd.compare("printHeader") == 0)
+            return COMMAND_PRINT_HEADER;
+        break;
+    default:
+        break;
     }
 
     return COMMAND_UNKNOWN;
 }
 
 #define ENTRY_PER_PAGE 20
-static void display_all_kvs(DB *db)
+static void display_all_kvs(DB* db)
 {
-    if(db == NULL)
+    if (db == NULL)
         return;
 
     int count = 0;
-    for(DB::iterator iter = db->begin(); iter != db->end(); ++iter)
-    {
+    for (DB::iterator iter = db->begin(); iter != db->end(); ++iter) {
         count++;
-        std::cout << iter.key << ": " <<
-                     std::string((char *)iter.value.buff, iter.value.data_len) << "\n";
-        if(count % ENTRY_PER_PAGE == 0)
-        {
+        std::cout << iter.key << ": " << std::string((char*)iter.value.buff, iter.value.data_len) << "\n";
+        if (count % ENTRY_PER_PAGE == 0) {
             std::string show_more;
             std::cout << "Press \'y\' for displaying more: ";
             std::getline(std::cin, show_more);
-            if(show_more.length() == 0 || show_more[0] != 'y')
+            if (show_more.length() == 0 || show_more[0] != 'y')
                 break;
         }
     }
 }
 
-static void display_output(const MBData &mbd, bool hex_output, bool prefix)
+static void display_output(const MBData& mbd, bool hex_output, bool prefix)
 {
-    if(prefix)
+    if (prefix)
         std::cout << "key length matched: " << mbd.match_len << "\n";
-    if(hex_output)
-    {
+    if (hex_output) {
         char hex_buff[256];
         int len = mbd.data_len;
-        if(256 < 2*len + 1)
-        {
+        if (256 < 2 * len + 1) {
             std::cout << "display the first 127 bytes\n";
             len = 127;
         }
-        if(bin_2_hex((const uint8_t *)mbd.buff, len, hex_buff, 256) < 0)
+        if (bin_2_hex((const uint8_t*)mbd.buff, len, hex_buff, 256) < 0)
             std::cout << "failed to convert binary to hex\n";
-        else 
+        else
             std::cout << hex_buff << "\n";
-    }
-    else
-    {
-        std::cout << std::string((char *)mbd.buff, mbd.data_len) << "\n";
+    } else {
+        std::cout << std::string((char*)mbd.buff, mbd.data_len) << "\n";
     }
 }
 
-static int RunCommand(int mode, DB *db, int cmd_id, const std::string &key,
-                      const std::string &value, std::vector<std::string> &arg_list)
+static int RunCommand(int mode, DB* db, int cmd_id, const std::string& key,
+    const std::string& value, std::vector<std::string>& arg_list)
 {
     int rval = MBError::SUCCESS;
     bool overwrite = false;
     bool hex_output = false;
     MBData mbd;
 
-    switch(cmd_id)
-    {
-        case COMMAND_NONE:
-            // no opertation needed
-            break;
-        case COMMAND_QUIT:
-            std::cout << "bye\n";
-            quit_mbc = true;
-            break;
-        case COMMAND_FIND_HEX:
-            hex_output = true;
-        case COMMAND_FIND:
-            rval = db->Find(key, mbd);
-            if(rval == MBError::SUCCESS)
-                display_output(mbd, hex_output, false);
-            else
-                std::cout << MBError::get_error_str(rval) << "\n";
-            break;
-        case COMMAND_FIND_LPREFIX_HEX:
-            hex_output = true;
-        case COMMAND_FIND_LPREFIX:
-            rval = db->FindLongestPrefix(key, mbd);
-            if(rval == MBError::SUCCESS)
-                display_output(mbd, hex_output, true);
-            else
-                std::cout << MBError::get_error_str(rval) << "\n";
-            break;
-        case COMMAND_FIND_LOWER_BOUND:
-            rval = db->FindLowerBound(key, mbd);
-            if(rval == MBError::SUCCESS)
-                display_output(mbd, false, false);
-            else
-                std::cout << MBError::get_error_str(rval) << "\n";
-            break;
-        case COMMAND_DELETE:
-            rval = db->Remove(key);
+    switch (cmd_id) {
+    case COMMAND_NONE:
+        // no opertation needed
+        break;
+    case COMMAND_QUIT:
+        std::cout << "bye\n";
+        quit_mbc = true;
+        break;
+    case COMMAND_FIND_HEX:
+        hex_output = true;
+    case COMMAND_FIND:
+        rval = db->Find(key, mbd);
+        if (rval == MBError::SUCCESS)
+            display_output(mbd, hex_output, false);
+        else
             std::cout << MBError::get_error_str(rval) << "\n";
-            break;
-        case COMMAND_REPLACE:
-            overwrite = true;
-        case COMMAND_INSERT:
-            rval = db->Add(key, value, overwrite);
+        break;
+    case COMMAND_FIND_LPREFIX_HEX:
+        hex_output = true;
+    case COMMAND_FIND_LPREFIX:
+        rval = db->FindLongestPrefix(key, mbd);
+        if (rval == MBError::SUCCESS)
+            display_output(mbd, hex_output, true);
+        else
             std::cout << MBError::get_error_str(rval) << "\n";
-            break;
-        case COMMAND_STATS:
-            db->PrintStats();
-            break;
-        case COMMAND_HELP:
-            show_help();
-            break;
-        case COMMAND_DELETE_ALL:
-            rval = db->RemoveAll();
+        break;
+    case COMMAND_FIND_LOWER_BOUND:
+        rval = db->FindLowerBound(key, mbd);
+        if (rval == MBError::SUCCESS)
+            display_output(mbd, false, false);
+        else
             std::cout << MBError::get_error_str(rval) << "\n";
-            break;
-        case COMMAND_FIND_ALL:
-            display_all_kvs(db);
-            break;
-        case COMMAND_RESET_N_WRITER:
-            if(mode & CONSTS::ACCESS_MODE_WRITER)
-                std::cout << "writer is running, cannot reset writer counter\n";
-            else
-                db->UpdateNumHandlers(CONSTS::ACCESS_MODE_WRITER, -1);
-            break;
-        case COMMAND_RESET_N_READER:
-            db->UpdateNumHandlers(CONSTS::ACCESS_MODE_READER, -1);
-            break;
-        case COMMAND_PRINT_HEADER:
-            db->PrintHeader();
-            break;
-        case COMMAND_RECLAIM_RESOURCES:
-            db->CollectResource(arg_list.size()>=1 ? stol(arg_list[0]) : 1,
-                                arg_list.size()>=2 ? stol(arg_list[1]) : 1);
-            break;
-        case COMMAND_PARSING_ERROR:
-            std::cout << "invalid query\n";
-            break;
-        case COMMAND_UNKNOWN:
-        default:
-            std::cout << "unknown query\n";
-            break;
+        break;
+    case COMMAND_DELETE:
+        rval = db->Remove(key);
+        std::cout << MBError::get_error_str(rval) << "\n";
+        break;
+    case COMMAND_REPLACE:
+        overwrite = true;
+    case COMMAND_INSERT:
+        rval = db->Add(key, value, overwrite);
+        std::cout << MBError::get_error_str(rval) << "\n";
+        break;
+    case COMMAND_STATS:
+        db->PrintStats();
+        break;
+    case COMMAND_HELP:
+        show_help();
+        break;
+    case COMMAND_DELETE_ALL:
+        rval = db->RemoveAll();
+        std::cout << MBError::get_error_str(rval) << "\n";
+        break;
+    case COMMAND_FIND_ALL:
+        display_all_kvs(db);
+        break;
+    case COMMAND_RESET_N_WRITER:
+        if (mode & CONSTS::ACCESS_MODE_WRITER)
+            std::cout << "writer is running, cannot reset writer counter\n";
+        else
+            db->UpdateNumHandlers(CONSTS::ACCESS_MODE_WRITER, -1);
+        break;
+    case COMMAND_RESET_N_READER:
+        db->UpdateNumHandlers(CONSTS::ACCESS_MODE_READER, -1);
+        break;
+    case COMMAND_PRINT_HEADER:
+        db->PrintHeader();
+        break;
+    case COMMAND_RECLAIM_RESOURCES:
+        db->CollectResource(arg_list.size() >= 1 ? stol(arg_list[0]) : 1,
+            arg_list.size() >= 2 ? stol(arg_list[1]) : 1);
+        break;
+    case COMMAND_PARSING_ERROR:
+        std::cout << "invalid query\n";
+        break;
+    case COMMAND_UNKNOWN:
+    default:
+        std::cout << "unknown query\n";
+        break;
     }
 
     return rval;
 }
 
-static void mbclient(DB *db, int mode)
+static void mbclient(DB* db, int mode)
 {
     rl_bind_key('\t', rl_complete);
 
@@ -502,12 +466,11 @@ static void mbclient(DB *db, int mode)
     std::string cmd;
     std::vector<std::string> arg_list;
 
-    while(true)
-    {
+    while (true) {
         char* line = readline(">> ");
-        if(line == NULL) break;
-        if(line[0] == '\0')
-        {
+        if (line == NULL)
+            break;
+        if (line[0] == '\0') {
             free(line);
             continue;
         }
@@ -519,11 +482,12 @@ static void mbclient(DB *db, int mode)
 
         RunCommand(mode, db, cmd_id, key, value, arg_list);
 
-        if(quit_mbc) break;
+        if (quit_mbc)
+            break;
     }
 }
 
-static void run_query_command(DB *db, int mode, const std::string &command_str)
+static void run_query_command(DB* db, int mode, const std::string& command_str)
 {
     std::string cmd;
     int cmd_id;
@@ -532,8 +496,7 @@ static void run_query_command(DB *db, int mode, const std::string &command_str)
     std::vector<std::string> arg_list;
 
     trim_spaces(command_str.c_str(), cmd);
-    if(cmd.length() == 0)
-    {
+    if (cmd.length() == 0) {
         std::cerr << command_str << " not a valid command\n";
         return;
     }
@@ -542,10 +505,10 @@ static void run_query_command(DB *db, int mode, const std::string &command_str)
     RunCommand(mode, db, cmd_id, key, value, arg_list);
 }
 
-static void run_script(DB *db, int mode, const std::string &script_file)
+static void run_script(DB* db, int mode, const std::string& script_file)
 {
     std::ifstream script_in(script_file);
-    if(!script_in.is_open()) {
+    if (!script_in.is_open()) {
         std::cerr << "cannot open file " << script_file << "\n";
         return;
     }
@@ -556,12 +519,10 @@ static void run_script(DB *db, int mode, const std::string &script_file)
     std::string value;
     std::string cmd;
     std::vector<std::string> arg_list;
-    
-    while(getline(script_in, line))
-    {
+
+    while (getline(script_in, line)) {
         trim_spaces(line.c_str(), cmd);
-        if(cmd.length() == 0)
-        {
+        if (cmd.length() == 0) {
             std::cerr << line << " not a valid query\n";
             continue;
         }
@@ -570,12 +531,13 @@ static void run_script(DB *db, int mode, const std::string &script_file)
         std::cout << cmd << ": ";
         RunCommand(mode, db, cmd_id, key, value, arg_list);
 
-        if(quit_mbc) break;
+        if (quit_mbc)
+            break;
     }
     script_in.close();
 }
 
-int main(int argc, char *argv[])
+int main(int argc, char* argv[])
 {
     sigset_t mask;
 
@@ -602,91 +564,67 @@ int main(int argc, char *argv[])
     sigemptyset(&mask);
     pthread_sigmask(SIG_SETMASK, &mask, NULL);
 
-    int64_t memcap_i = 1024*1024LL;
-    int64_t memcap_d = 1024*1024LL;
-    const char *db_dir = NULL;
+    int64_t memcap_i = 1024 * 1024LL;
+    int64_t memcap_d = 1024 * 1024LL;
+    const char* db_dir = NULL;
     int mode = 0;
     std::string query_cmd = "";
     std::string script_file = "";
-    int64_t index_blk_size = 64LL*1024*1024;
-    int64_t data_blk_size = 64LL*1024*1024;
+    int64_t index_blk_size = 64LL * 1024 * 1024;
+    int64_t data_blk_size = 64LL * 1024 * 1024;
     int64_t lru_bucket_size = 500;
 
-    for(int i = 1; i < argc; i++)
-    {
-        if(strcmp(argv[i], "-d") == 0)
-        {
-            if(++i >= argc)
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-d") == 0) {
+            if (++i >= argc)
                 usage(argv[0]);
             db_dir = argv[i];
-        }
-        else if(strcmp(argv[i], "-im") == 0)
-        {
-            if(++i >= argc)
+        } else if (strcmp(argv[i], "-im") == 0) {
+            if (++i >= argc)
                 usage(argv[0]);
             memcap_i = atoi(argv[i]);
-        }
-        else if(strcmp(argv[i], "-dm") == 0)
-        {
-            if(++i >= argc)
+        } else if (strcmp(argv[i], "-dm") == 0) {
+            if (++i >= argc)
                 usage(argv[0]);
             memcap_d = atoi(argv[i]);
-        }
-        else if(strcmp(argv[i], "-w") == 0)
-        {
+        } else if (strcmp(argv[i], "-w") == 0) {
             mode |= CONSTS::ACCESS_MODE_WRITER;
-            if(mode & CONSTS::READ_ONLY_DB)
+            if (mode & CONSTS::READ_ONLY_DB)
                 usage(argv[0]);
-        }
-        else if(strcmp(argv[i], "-r") == 0)
-        {
+        } else if (strcmp(argv[i], "-r") == 0) {
             mode |= CONSTS::READ_ONLY_DB;
-            if(mode & CONSTS::ACCESS_MODE_WRITER)
+            if (mode & CONSTS::ACCESS_MODE_WRITER)
                 usage(argv[0]);
-        }
-        else if(strcmp(argv[i], "-e") == 0)
-        {
-            if(++i >= argc)
+        } else if (strcmp(argv[i], "-e") == 0) {
+            if (++i >= argc)
                 usage(argv[0]);
             query_cmd = argv[i];
-        }
-        else if(strcmp(argv[i], "-s") == 0)
-        {
-            if(++i >= argc)
+        } else if (strcmp(argv[i], "-s") == 0) {
+            if (++i >= argc)
                 usage(argv[0]);
             script_file = argv[i];
-        }
-        else if(strcmp(argv[i], "--lru-bucket-size") == 0)
-        {
-            if(++i >= argc)
+        } else if (strcmp(argv[i], "--lru-bucket-size") == 0) {
+            if (++i >= argc)
                 usage(argv[0]);
             lru_bucket_size = atoi(argv[i]);
-        }
-        else if(strcmp(argv[i], "--index-block-size") == 0)
-        {
-            if(++i >= argc)
+        } else if (strcmp(argv[i], "--index-block-size") == 0) {
+            if (++i >= argc)
                 usage(argv[0]);
             index_blk_size = atoi(argv[i]);
-        }
-        else if(strcmp(argv[i], "--data-block-size") == 0)
-        {
-            if(++i >= argc)
+        } else if (strcmp(argv[i], "--data-block-size") == 0) {
+            if (++i >= argc)
                 usage(argv[0]);
             data_blk_size = atoi(argv[i]);
-        }
-        else if(strcmp(argv[i], "--async") == 0)
-        {
+        } else if (strcmp(argv[i], "--async") == 0) {
             mode |= CONSTS::ASYNC_WRITER_MODE;
-        }
-        else
+        } else
             usage(argv[0]);
     }
 
-    if(db_dir == NULL)
+    if (db_dir == NULL)
         usage(argv[0]);
 
-    if((mode & CONSTS::ASYNC_WRITER_MODE) && !(mode & CONSTS::ACCESS_MODE_WRITER))
-    {
+    if ((mode & CONSTS::ASYNC_WRITER_MODE) && !(mode & CONSTS::ACCESS_MODE_WRITER)) {
         std::cerr << "writer mode must be enabled when using --async option!\n";
         exit(0);
     }
@@ -700,9 +638,8 @@ int main(int argc, char *argv[])
     mbconf.block_size_index = index_blk_size;
     mbconf.block_size_data = data_blk_size;
     mbconf.num_entry_per_bucket = lru_bucket_size;
-    DB *db = new DB(mbconf);
-    if(!db->is_open())
-    {
+    DB* db = new DB(mbconf);
+    if (!db->is_open()) {
         std::cout << db->StatusStr() << "\n";
         exit(1);
     }
@@ -710,16 +647,11 @@ int main(int argc, char *argv[])
     // DB::SetLogFile("/var/tmp/mabain.log");
     // DB::LogDebug();
 
-    if(query_cmd.length() != 0)
-    {
+    if (query_cmd.length() != 0) {
         run_query_command(db, mode, query_cmd);
-    }
-    else if(script_file.length() != 0)
-    {
+    } else if (script_file.length() != 0) {
         run_script(db, mode, script_file);
-    }
-    else
-    {
+    } else {
         mbclient(db, mode);
     }
 

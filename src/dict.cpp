@@ -16,73 +16,67 @@
 
 // @author Changxue Deng <chadeng@cisco.com>
 
-#include <stdlib.h>
-#include <iostream>
 #include <errno.h>
+#include <iostream>
+#include <stdlib.h>
 
-#include "mabain_consts.h"
+#include "async_writer.h"
 #include "db.h"
 #include "dict.h"
 #include "dict_mem.h"
 #include "error.h"
 #include "integer_4b_5b.h"
-#include "async_writer.h"
+#include "mabain_consts.h"
 
-#define MAX_DATA_BUFFER_RESERVE_SIZE    0xFFFF
-#define NUM_DATA_BUFFER_RESERVE         MAX_DATA_BUFFER_RESERVE_SIZE/DATA_BUFFER_ALIGNMENT
-#define DATA_HEADER_SIZE                32
+#define MAX_DATA_BUFFER_RESERVE_SIZE 0xFFFF
+#define NUM_DATA_BUFFER_RESERVE MAX_DATA_BUFFER_RESERVE_SIZE / DATA_BUFFER_ALIGNMENT
+#define DATA_HEADER_SIZE 32
 
-#define READER_LOCK_FREE_START               \
-    LockFreeData snapshot;                   \
-    int lf_ret;                              \
+#define READER_LOCK_FREE_START \
+    LockFreeData snapshot;     \
+    int lf_ret;                \
     lfree.ReaderLockFreeStart(snapshot);
 #define READER_LOCK_FREE_STOP(edgeoff, data)                        \
     lf_ret = lfree.ReaderLockFreeStop(snapshot, (edgeoff), (data)); \
-    if(lf_ret != MBError::SUCCESS)                                  \
-        return lf_ret;                                              \
+    if (lf_ret != MBError::SUCCESS)                                 \
+        return lf_ret;
 
 namespace mabain {
 
-Dict::Dict(const std::string &mbdir, bool init_header, int datasize,
-           int db_options, size_t memsize_index, size_t memsize_data,
-           uint32_t block_sz_idx, uint32_t block_sz_data,
-           int max_num_index_blk, int max_num_data_blk,
-           int64_t entry_per_bucket, uint32_t queue_size,
-           const char *queue_dir)
-         : options(db_options),
-           mm(mbdir, init_header, memsize_index, db_options, block_sz_idx, max_num_index_blk, queue_size),
-           queue(NULL)
+Dict::Dict(const std::string& mbdir, bool init_header, int datasize,
+    int db_options, size_t memsize_index, size_t memsize_data,
+    uint32_t block_sz_idx, uint32_t block_sz_data,
+    int max_num_index_blk, int max_num_data_blk,
+    int64_t entry_per_bucket, uint32_t queue_size,
+    const char* queue_dir)
+    : options(db_options)
+    , mm(mbdir, init_header, memsize_index, db_options, block_sz_idx, max_num_index_blk, queue_size)
+    , queue(NULL)
 {
     status = MBError::NOT_INITIALIZED;
     reader_rc_off = 0;
     slaq = NULL;
 
     header = mm.GetHeaderPtr();
-    if(header == NULL)
-    {
+    if (header == NULL) {
         Logger::Log(LOG_LEVEL_ERROR, "header not mapped");
-        throw (int) MBError::MMAP_FAILED;
+        throw(int) MBError::MMAP_FAILED;
     }
 
     // confirm block size is the same
-    if(!init_header)
-    {
-        if(block_sz_data != 0 && header->data_block_size != block_sz_data)
-        {
+    if (!init_header) {
+        if (block_sz_data != 0 && header->data_block_size != block_sz_data) {
             std::cerr << "mabain data block size not match " << block_sz_data << ": "
                       << header->data_block_size << std::endl;
             PrintHeader(std::cout);
             Destroy();
-            throw (int) MBError::INVALID_SIZE;
+            throw(int) MBError::INVALID_SIZE;
         }
-    }
-    else
-    {
+    } else {
         header->data_block_size = block_sz_data;
     }
 
-    if (!(db_options & CONSTS::READ_ONLY_DB))
-    {
+    if (!(db_options & CONSTS::READ_ONLY_DB)) {
         // initialize shared memory queue
         ShmQueueMgr qmgr;
         slaq = qmgr.CreateFile(header->shm_queue_id, queue_size, queue_dir, db_options);
@@ -94,13 +88,12 @@ Dict::Dict(const std::string &mbdir, bool init_header, int datasize,
 
     // Open data file
     kv_file = new RollableFile(mbdir + "_mabain_d",
-                               static_cast<size_t>(header->data_block_size),
-                               memsize_data, db_options, max_num_data_blk);
+        static_cast<size_t>(header->data_block_size),
+        memsize_data, db_options, max_num_data_blk);
 
     // If init_header is false, we can set the dict status to SUCCESS.
     // Otherwise, the status will be set in the Init.
-    if(init_header)
-    {
+    if (init_header) {
         // Initialize header
         header->entry_per_bucket = entry_per_bucket;
         header->index_block_size = block_sz_idx;
@@ -109,34 +102,26 @@ Dict::Dict(const std::string &mbdir, bool init_header, int datasize,
         header->count = 0;
         header->m_data_offset = GetStartDataOffset(); // start from a non-zero offset
         // We known that only writers will set init_header to true.
-        free_lists = new FreeList(mbdir+"_dbfl", DATA_BUFFER_ALIGNMENT,
-                                  NUM_DATA_BUFFER_RESERVE);
-    }
-    else
-    {
-        if(options & CONSTS::ACCESS_MODE_WRITER)
-        {
-            if(header->entry_per_bucket != entry_per_bucket)
-            {
+        free_lists = new FreeList(mbdir + "_dbfl", DATA_BUFFER_ALIGNMENT,
+            NUM_DATA_BUFFER_RESERVE);
+    } else {
+        if (options & CONSTS::ACCESS_MODE_WRITER) {
+            if (header->entry_per_bucket != entry_per_bucket) {
                 std::cerr << "mabain count per bucket not match\n";
             }
 
-            free_lists = new FreeList(mbdir+"_dbfl", DATA_BUFFER_ALIGNMENT,
-                                      NUM_DATA_BUFFER_RESERVE);
-            if(mm.IsValid())
-            {
+            free_lists = new FreeList(mbdir + "_dbfl", DATA_BUFFER_ALIGNMENT,
+                NUM_DATA_BUFFER_RESERVE);
+            if (mm.IsValid()) {
                 int rval = ExceptionRecovery();
-                if(rval == MBError::SUCCESS)
-                {
+                if (rval == MBError::SUCCESS) {
                     header->excep_lf_offset = 0;
                     header->excep_offset = 0;
                     status = MBError::SUCCESS;
                 }
             }
-        }
-        else
-        {
-            if(mm.IsValid())
+        } else {
+            if (mm.IsValid())
                 status = MBError::SUCCESS;
         }
     }
@@ -149,21 +134,18 @@ Dict::~Dict()
 // This function only needs to be called by writer.
 int Dict::Init(uint32_t id)
 {
-    if(!(options & CONSTS::ACCESS_MODE_WRITER))
-    {
+    if (!(options & CONSTS::ACCESS_MODE_WRITER)) {
         Logger::Log(LOG_LEVEL_ERROR, "dict initialization not allowed for non-writer");
         return MBError::NOT_ALLOWED;
     }
 
-    if(status != MBError::NOT_INITIALIZED)
-    {
+    if (status != MBError::NOT_INITIALIZED) {
         // status can be NOT_INITIALIZED or SUCCESS.
         Logger::Log(LOG_LEVEL_WARN, "connector %u dict already initialized", id);
         return MBError::SUCCESS;
     }
 
-    if(header == NULL)
-    {
+    if (header == NULL) {
         Logger::Log(LOG_LEVEL_ERROR, "connector %u header not mapped", id);
         return MBError::ALLOCATION_ERROR;
     }
@@ -171,13 +153,12 @@ int Dict::Init(uint32_t id)
     Logger::Log(LOG_LEVEL_INFO, "connector %u initializing DictMem", id);
     mm.InitRootNode();
 
-    if(header->data_size > CONSTS::MAX_DATA_SIZE)
-    {
+    if (header->data_size > CONSTS::MAX_DATA_SIZE) {
         Logger::Log(LOG_LEVEL_ERROR, "data size %d is too large", header->data_size);
         return MBError::INVALID_SIZE;
     }
 
-    if(mm.IsValid())
+    if (mm.IsValid())
         status = MBError::SUCCESS;
 
     return status;
@@ -187,10 +168,10 @@ void Dict::Destroy()
 {
     mm.Destroy();
 
-    if(free_lists != NULL)
+    if (free_lists != NULL)
         delete free_lists;
 
-    if(kv_file != NULL)
+    if (kv_file != NULL)
         delete kv_file;
 }
 
@@ -202,14 +183,12 @@ int Dict::Status() const
 // Add a key-value pair
 // if overwrite is true and an entry with input key already exists, the old data will
 // be overwritten. Otherwise, IN_DICT will be returned.
-int Dict::Add(const uint8_t *key, int len, MBData &data, bool overwrite)
+int Dict::Add(const uint8_t* key, int len, MBData& data, bool overwrite)
 {
-    if(!(options & CONSTS::ACCESS_MODE_WRITER))
-    {
+    if (!(options & CONSTS::ACCESS_MODE_WRITER)) {
         return MBError::NOT_ALLOWED;
     }
-    if(len > CONSTS::MAX_KEY_LENGHTH || data.data_len > CONSTS::MAX_DATA_SIZE ||
-       len <= 0 || data.data_len <= 0)
+    if (len > CONSTS::MAX_KEY_LENGHTH || data.data_len > CONSTS::MAX_DATA_SIZE || len <= 0 || data.data_len <= 0)
         return MBError::OUT_OF_BOUND;
 
     EdgePtrs edge_ptrs;
@@ -217,20 +196,16 @@ int Dict::Add(const uint8_t *key, int len, MBData &data, bool overwrite)
     int rval;
 
     rval = mm.GetRootEdge_Writer(data.options & CONSTS::OPTION_RC_MODE, key[0], edge_ptrs);
-    if(rval != MBError::SUCCESS)
+    if (rval != MBError::SUCCESS)
         return rval;
 
-    if(edge_ptrs.len_ptr[0] == 0)
-    {
+    if (edge_ptrs.len_ptr[0] == 0) {
         ReserveData(data.buff, data.data_len, data_offset);
         // Add the first edge along this edge
         mm.AddRootEdge(edge_ptrs, key, len, data_offset);
-        if(data.options & CONSTS::OPTION_RC_MODE)
-        {
+        if (data.options & CONSTS::OPTION_RC_MODE) {
             header->rc_count++;
-        }
-        else
-        {
+        } else {
             header->count++;
             header->num_update++;
         }
@@ -240,146 +215,113 @@ int Dict::Add(const uint8_t *key, int len, MBData &data, bool overwrite)
 
     bool inc_count = true;
     int i;
-    const uint8_t *key_buff;
+    const uint8_t* key_buff;
     uint8_t tmp_key_buff[NUM_ALPHABET];
-    const uint8_t *p = key;
+    const uint8_t* p = key;
     int edge_len = edge_ptrs.len_ptr[0];
-    if(edge_len > LOCAL_EDGE_LEN)
-    {
-        if(mm.ReadData(tmp_key_buff, edge_len-1, Get5BInteger(edge_ptrs.ptr)) != edge_len-1)
+    if (edge_len > LOCAL_EDGE_LEN) {
+        if (mm.ReadData(tmp_key_buff, edge_len - 1, Get5BInteger(edge_ptrs.ptr)) != edge_len - 1)
             return MBError::READ_ERROR;
         key_buff = tmp_key_buff;
-    }
-    else
-    {
+    } else {
         key_buff = edge_ptrs.ptr;
     }
-    if(edge_len < len)
-    {
-        for(i = 1; i < edge_len; i++)
-        {
-            if(key_buff[i-1] != key[i])
+    if (edge_len < len) {
+        for (i = 1; i < edge_len; i++) {
+            if (key_buff[i - 1] != key[i])
                 break;
         }
-        if(i >= edge_len)
-        {
+        if (i >= edge_len) {
             int match_len;
             bool next;
             p += edge_len;
             len -= edge_len;
-            while((next = mm.FindNext(p, len, match_len, edge_ptrs, tmp_key_buff)))
-            {
-                if(match_len < edge_ptrs.len_ptr[0])
+            while ((next = mm.FindNext(p, len, match_len, edge_ptrs, tmp_key_buff))) {
+                if (match_len < edge_ptrs.len_ptr[0])
                     break;
 
                 p += match_len;
                 len -= match_len;
-                if(len <= 0)
+                if (len <= 0)
                     break;
             }
-            if(!next)
-            {
+            if (!next) {
                 ReserveData(data.buff, data.data_len, data_offset);
                 rval = mm.UpdateNode(edge_ptrs, p, len, data_offset);
-            }
-            else if(match_len < static_cast<int>(edge_ptrs.len_ptr[0]))
-            {
-                if(len > match_len)
-                {
+            } else if (match_len < static_cast<int>(edge_ptrs.len_ptr[0])) {
+                if (len > match_len) {
                     ReserveData(data.buff, data.data_len, data_offset);
-                    rval = mm.AddLink(edge_ptrs, match_len, p+match_len, len-match_len,
-                                      data_offset, data);
-                }
-                else if(len == match_len)
-                {
+                    rval = mm.AddLink(edge_ptrs, match_len, p + match_len, len - match_len,
+                        data_offset, data);
+                } else if (len == match_len) {
                     ReserveData(data.buff, data.data_len, data_offset);
                     rval = mm.InsertNode(edge_ptrs, match_len, data_offset, data);
                 }
-            }
-            else if(len == 0)
-            {
+            } else if (len == 0) {
                 rval = UpdateDataBuffer(edge_ptrs, overwrite, data.buff, data.data_len, inc_count);
             }
-        }
-        else
-        {
+        } else {
             ReserveData(data.buff, data.data_len, data_offset);
-            rval = mm.AddLink(edge_ptrs, i, p+i, len-i, data_offset, data);
+            rval = mm.AddLink(edge_ptrs, i, p + i, len - i, data_offset, data);
         }
-    }
-    else
-    {
-        for(i = 1; i < len; i++)
-        {
-            if(key_buff[i-1] != key[i])
+    } else {
+        for (i = 1; i < len; i++) {
+            if (key_buff[i - 1] != key[i])
                 break;
         }
-        if(i < len)
-        {
+        if (i < len) {
             ReserveData(data.buff, data.data_len, data_offset);
-            rval = mm.AddLink(edge_ptrs, i, p+i, len-i, data_offset, data);
-        }
-        else
-        {
-            if(edge_ptrs.len_ptr[0] > len)
-            {
+            rval = mm.AddLink(edge_ptrs, i, p + i, len - i, data_offset, data);
+        } else {
+            if (edge_ptrs.len_ptr[0] > len) {
                 ReserveData(data.buff, data.data_len, data_offset);
                 rval = mm.InsertNode(edge_ptrs, i, data_offset, data);
-            }
-            else
-            {
+            } else {
                 rval = UpdateDataBuffer(edge_ptrs, overwrite, data.buff, data.data_len, inc_count);
             }
         }
     }
 
-    if(data.options & CONSTS::OPTION_RC_MODE)
-    {
-        if(rval == MBError::SUCCESS)
+    if (data.options & CONSTS::OPTION_RC_MODE) {
+        if (rval == MBError::SUCCESS)
             header->rc_count++;
-    }
-    else
-    {
-        if(rval == MBError::SUCCESS)
+    } else {
+        if (rval == MBError::SUCCESS)
             header->num_update++;
-        if(inc_count)
+        if (inc_count)
             header->count++;
     }
     return rval;
 }
 
-int Dict::ReadDataFromEdge(MBData &data, const EdgePtrs &edge_ptrs) const
+int Dict::ReadDataFromEdge(MBData& data, const EdgePtrs& edge_ptrs) const
 {
     size_t data_off;
-    if(edge_ptrs.flag_ptr[0] & EDGE_FLAG_DATA_OFF)
-    {
+    if (edge_ptrs.flag_ptr[0] & EDGE_FLAG_DATA_OFF) {
         data_off = Get6BInteger(edge_ptrs.offset_ptr);
-    }
-    else
-    {
+    } else {
         uint8_t node_buff[NODE_EDGE_KEY_FIRST];
-        if(mm.ReadData(node_buff, NODE_EDGE_KEY_FIRST, Get6BInteger(edge_ptrs.offset_ptr))
-                      != NODE_EDGE_KEY_FIRST)
+        if (mm.ReadData(node_buff, NODE_EDGE_KEY_FIRST, Get6BInteger(edge_ptrs.offset_ptr))
+            != NODE_EDGE_KEY_FIRST)
             return MBError::READ_ERROR;
-        if(!(node_buff[0] & FLAG_NODE_MATCH))
+        if (!(node_buff[0] & FLAG_NODE_MATCH))
             return MBError::NOT_EXIST;
-        data_off = Get6BInteger(node_buff+2);
+        data_off = Get6BInteger(node_buff + 2);
     }
     data.data_offset = data_off;
 
     uint16_t data_len[2];
     // Read data length first
-    if(ReadData(reinterpret_cast<uint8_t*>(&data_len[0]), DATA_HDR_BYTE, data_off)
-               != DATA_HDR_BYTE)
+    if (ReadData(reinterpret_cast<uint8_t*>(&data_len[0]), DATA_HDR_BYTE, data_off)
+        != DATA_HDR_BYTE)
         return MBError::READ_ERROR;
     data_off += DATA_HDR_BYTE;
-    if(data.buff_len < data_len[0] + 1)
-    {
-        if(data.Resize(data_len[0]) != MBError::SUCCESS)
+    if (data.buff_len < data_len[0] + 1) {
+        if (data.Resize(data_len[0]) != MBError::SUCCESS)
             return MBError::NO_MEMORY;
     }
 
-    if(ReadData(data.buff, data_len[0], data_off) != data_len[0])
+    if (ReadData(data.buff, data_len[0], data_off) != data_len[0])
         return MBError::READ_ERROR;
 
     data.data_len = data_len[0];
@@ -390,7 +332,7 @@ int Dict::ReadDataFromEdge(MBData &data, const EdgePtrs &edge_ptrs) const
 // Delete operations:
 //   If this is a leaf node, need to remove the edge. Otherwise, unset the match flag.
 //   Also need to set the delete flag in the data block so that it can be reclaimed later.
-int Dict::DeleteDataFromEdge(MBData &data, EdgePtrs &edge_ptrs)
+int Dict::DeleteDataFromEdge(MBData& data, EdgePtrs& edge_ptrs)
 {
     int rval = MBError::SUCCESS;
     size_t data_off;
@@ -398,11 +340,10 @@ int Dict::DeleteDataFromEdge(MBData &data, EdgePtrs &edge_ptrs)
     int rel_size;
 
     // Check if this is a leaf node first by using the EDGE_FLAG_DATA_OFF bit
-    if(edge_ptrs.flag_ptr[0] & EDGE_FLAG_DATA_OFF)
-    {
+    if (edge_ptrs.flag_ptr[0] & EDGE_FLAG_DATA_OFF) {
         data_off = Get6BInteger(edge_ptrs.offset_ptr);
-        if(ReadData(reinterpret_cast<uint8_t*>(&data_len), DATA_SIZE_BYTE, data_off)
-                   != DATA_SIZE_BYTE)
+        if (ReadData(reinterpret_cast<uint8_t*>(&data_len), DATA_SIZE_BYTE, data_off)
+            != DATA_SIZE_BYTE)
             return MBError::READ_ERROR;
 
         rel_size = free_lists->GetAlignmentSize(data_len + DATA_HDR_BYTE);
@@ -410,9 +351,7 @@ int Dict::DeleteDataFromEdge(MBData &data, EdgePtrs &edge_ptrs)
         free_lists->ReleaseBuffer(data_off, rel_size);
 
         rval = mm.RemoveEdgeByIndex(edge_ptrs, data);
-    }
-    else
-    {
+    } else {
         // No exception handling in this case
         header->excep_lf_offset = 0;
         header->excep_offset = 0;
@@ -421,27 +360,24 @@ int Dict::DeleteDataFromEdge(MBData &data, EdgePtrs &edge_ptrs)
         size_t node_off = Get6BInteger(edge_ptrs.offset_ptr);
 
         // Read node header
-        if(mm.ReadData(node_buff, NODE_EDGE_KEY_FIRST, node_off) != NODE_EDGE_KEY_FIRST)
+        if (mm.ReadData(node_buff, NODE_EDGE_KEY_FIRST, node_off) != NODE_EDGE_KEY_FIRST)
             return MBError::READ_ERROR;
 
-        if(node_buff[0] & FLAG_NODE_MATCH)
-        {
+        if (node_buff[0] & FLAG_NODE_MATCH) {
             // Unset the match flag
             node_buff[0] &= ~FLAG_NODE_MATCH;
             mm.WriteData(&node_buff[0], 1, node_off);
 
             // Release data buffer
-            data_off = Get6BInteger(node_buff+2);
-            if(ReadData(reinterpret_cast<uint8_t*>(&data_len), DATA_SIZE_BYTE, data_off)
-                       != DATA_SIZE_BYTE)
+            data_off = Get6BInteger(node_buff + 2);
+            if (ReadData(reinterpret_cast<uint8_t*>(&data_len), DATA_SIZE_BYTE, data_off)
+                != DATA_SIZE_BYTE)
                 return MBError::READ_ERROR;
 
             rel_size = free_lists->GetAlignmentSize(data_len + DATA_HDR_BYTE);
             header->pending_data_buff_size += rel_size;
             free_lists->ReleaseBuffer(data_off, rel_size);
-        }
-        else
-        {
+        } else {
             rval = MBError::NOT_EXIST;
         }
     }
@@ -449,27 +385,26 @@ int Dict::DeleteDataFromEdge(MBData &data, EdgePtrs &edge_ptrs)
     return rval;
 }
 
-int Dict::ReadDataFromNode(MBData &data, const uint8_t *node_ptr) const
+int Dict::ReadDataFromNode(MBData& data, const uint8_t* node_ptr) const
 {
-    size_t data_off = Get6BInteger(node_ptr+2);
-    if(data_off == 0)
+    size_t data_off = Get6BInteger(node_ptr + 2);
+    if (data_off == 0)
         return MBError::NOT_EXIST;
 
     data.data_offset = data_off;
 
     // Read data length first
     uint16_t data_len[2];
-    if(ReadData(reinterpret_cast<uint8_t *>(&data_len[0]), DATA_HDR_BYTE, data_off)
-               != DATA_HDR_BYTE)
+    if (ReadData(reinterpret_cast<uint8_t*>(&data_len[0]), DATA_HDR_BYTE, data_off)
+        != DATA_HDR_BYTE)
         return MBError::READ_ERROR;
     data_off += DATA_HDR_BYTE;
 
-    if(data.buff_len < data_len[0] + 1)
-    {
-        if(data.Resize(data_len[0]) != MBError::SUCCESS)
+    if (data.buff_len < data_len[0] + 1) {
+        if (data.Resize(data_len[0]) != MBError::SUCCESS)
             return MBError::NO_MEMORY;
     }
-    if(ReadData(data.buff, data_len[0], data_off) != data_len[0])
+    if (ReadData(data.buff, data_len[0], data_off) != data_len[0])
         return MBError::READ_ERROR;
 
     data.data_len = data_len[0];
@@ -477,31 +412,26 @@ int Dict::ReadDataFromNode(MBData &data, const uint8_t *node_ptr) const
     return MBError::SUCCESS;
 }
 
-int Dict::FindPrefix(const uint8_t *key, int len, MBData &data, AllPrefixResults *presults)
+int Dict::FindPrefix(const uint8_t* key, int len, MBData& data, AllPrefixResults* presults)
 {
     int rval;
     MBData data_rc;
     size_t rc_root_offset = header->rc_root_offset.load(MEMORY_ORDER_READER);
-    if(rc_root_offset != 0)
-    {
+    if (rc_root_offset != 0) {
         reader_rc_off = rc_root_offset;
         rval = FindPrefix_Internal(rc_root_offset, key, len, data_rc, presults);
 #ifdef __LOCK_FREE__
-        while(rval == MBError::TRY_AGAIN)
-        {
-            nanosleep((const struct timespec[]){{0, 10L}}, NULL);
+        while (rval == MBError::TRY_AGAIN) {
+            nanosleep((const struct timespec[]) { { 0, 10L } }, NULL);
             data_rc.Clear();
             rval = FindPrefix_Internal(rc_root_offset, key, len, data_rc, presults);
         }
 #endif
-        if(rval != MBError::NOT_EXIST && rval != MBError::SUCCESS)
+        if (rval != MBError::NOT_EXIST && rval != MBError::SUCCESS)
             return rval;
         data.options &= ~(CONSTS::OPTION_RC_MODE | CONSTS::OPTION_READ_SAVED_EDGE);
-    }
-    else
-    {
-        if(reader_rc_off != 0)
-        {
+    } else {
+        if (reader_rc_off != 0) {
             reader_rc_off = 0;
             RemoveUnused(0);
             mm.RemoveUnused(0);
@@ -510,39 +440,35 @@ int Dict::FindPrefix(const uint8_t *key, int len, MBData &data, AllPrefixResults
 
     rval = FindPrefix_Internal(0, key, len, data, presults);
 #ifdef __LOCK_FREE__
-    while(rval == MBError::TRY_AGAIN)
-    {
-        nanosleep((const struct timespec[]){{0, 10L}}, NULL);
+    while (rval == MBError::TRY_AGAIN) {
+        nanosleep((const struct timespec[]) { { 0, 10L } }, NULL);
         data.Clear();
         rval = FindPrefix_Internal(0, key, len, data, presults);
     }
 #endif
 
     // The longer match wins.
-    if(data_rc.match_len > data.match_len)
-    {
+    if (data_rc.match_len > data.match_len) {
         data_rc.TransferValueTo(data.buff, data.data_len);
         rval = MBError::SUCCESS;
     }
     return rval;
-
 }
 
-int Dict::FindPrefix_Internal(size_t root_off, const uint8_t *key, int len, MBData &data,
-                              AllPrefixResults *presults)
+int Dict::FindPrefix_Internal(size_t root_off, const uint8_t* key, int len, MBData& data,
+    AllPrefixResults* presults)
 {
     int rval;
-    EdgePtrs &edge_ptrs = data.edge_ptrs;
+    EdgePtrs& edge_ptrs = data.edge_ptrs;
 #ifdef __LOCK_FREE__
     READER_LOCK_FREE_START
 #endif
 
     rval = mm.GetRootEdge(data.options & CONSTS::OPTION_RC_MODE, key[0], edge_ptrs);
-    if(rval != MBError::SUCCESS)
+    if (rval != MBError::SUCCESS)
         return MBError::READ_ERROR;
 
-    if(edge_ptrs.len_ptr[0] == 0)
-    {
+    if (edge_ptrs.len_ptr[0] == 0) {
 #ifdef __LOCK_FREE__
         READER_LOCK_FREE_STOP(edge_ptrs.offset, data)
 #endif
@@ -550,33 +476,27 @@ int Dict::FindPrefix_Internal(size_t root_off, const uint8_t *key, int len, MBDa
     }
 
     // Compare edge string
-    const uint8_t *key_buff;
-    uint8_t *node_buff = data.node_buff;
-    const uint8_t *p = key;
+    const uint8_t* key_buff;
+    uint8_t* node_buff = data.node_buff;
+    const uint8_t* p = key;
     int edge_len = edge_ptrs.len_ptr[0];
     int edge_len_m1 = edge_len - 1;
-    if(edge_len > LOCAL_EDGE_LEN)
-    {
-        if(mm.ReadData(node_buff, edge_len_m1, Get5BInteger(edge_ptrs.ptr))
-                      != edge_len_m1)
-        {
+    if (edge_len > LOCAL_EDGE_LEN) {
+        if (mm.ReadData(node_buff, edge_len_m1, Get5BInteger(edge_ptrs.ptr))
+            != edge_len_m1) {
 #ifdef __LOCK_FREE__
             READER_LOCK_FREE_STOP(edge_ptrs.offset, data)
 #endif
             return MBError::READ_ERROR;
         }
         key_buff = node_buff;
-    }
-    else
-    {
+    } else {
         key_buff = edge_ptrs.ptr;
     }
 
     rval = MBError::NOT_EXIST;
-    if(edge_len < len)
-    {
-        if(edge_len > 1 && memcmp(key_buff, key+1, edge_len_m1) != 0)
-        {
+    if (edge_len < len) {
+        if (edge_len > 1 && memcmp(key_buff, key + 1, edge_len_m1) != 0) {
 #ifdef __LOCK_FREE__
             READER_LOCK_FREE_STOP(edge_ptrs.offset, data)
 #endif
@@ -586,8 +506,7 @@ int Dict::FindPrefix_Internal(size_t root_off, const uint8_t *key, int len, MBDa
         len -= edge_len;
         p += edge_len;
 
-        if(edge_ptrs.flag_ptr[0] & EDGE_FLAG_DATA_OFF)
-        {
+        if (edge_ptrs.flag_ptr[0] & EDGE_FLAG_DATA_OFF) {
             // prefix match for leaf node
 #ifdef __LOCK_FREE__
             READER_LOCK_FREE_STOP(edge_ptrs.offset, data)
@@ -601,35 +520,27 @@ int Dict::FindPrefix_Internal(size_t root_off, const uint8_t *key, int len, MBDa
         size_t edge_offset_prev = edge_ptrs.offset;
 #endif
         int last_prefix_rval = MBError::NOT_EXIST;
-        while(true)
-        {
+        while (true) {
             rval = mm.NextEdge(p, edge_ptrs, node_buff, data);
-            if(rval != MBError::READ_ERROR)
-            {
-                if(node_buff[0] & FLAG_NODE_MATCH)
-                {
+            if (rval != MBError::READ_ERROR) {
+                if (node_buff[0] & FLAG_NODE_MATCH) {
                     data.match_len = p - key;
-                    if(data.options & CONSTS::OPTION_ALL_PREFIX)
-                    {
+                    if (data.options & CONSTS::OPTION_ALL_PREFIX) {
                         int rc = ReadDataFromNode(data, node_buff);
-                        if (rc == MBError::SUCCESS)
-                        {
+                        if (rc == MBError::SUCCESS) {
                             presults->results.push_back(PrefixResult(data.match_len, data.data_len, (char*)data.buff));
                             data.buff = nullptr;
                             data.buff_len = 0;
-                        }
-                        else
+                        } else
                             rval = rc;
-                    }
-                    else
-                    {
+                    } else {
                         memcpy(last_node_buffer, node_buff, NODE_EDGE_KEY_FIRST);
                     }
                     last_prefix_rval = MBError::SUCCESS;
                 }
             }
 
-            if(rval != MBError::SUCCESS)
+            if (rval != MBError::SUCCESS)
                 break;
 
 #ifdef __LOCK_FREE__
@@ -638,31 +549,25 @@ int Dict::FindPrefix_Internal(size_t root_off, const uint8_t *key, int len, MBDa
             edge_len = edge_ptrs.len_ptr[0];
             edge_len_m1 = edge_len - 1;
             // match edge string
-            if(edge_len > LOCAL_EDGE_LEN)
-            {
-                if(mm.ReadData(node_buff, edge_len_m1, Get5BInteger(edge_ptrs.ptr))
-                              != edge_len_m1)
-                {
+            if (edge_len > LOCAL_EDGE_LEN) {
+                if (mm.ReadData(node_buff, edge_len_m1, Get5BInteger(edge_ptrs.ptr))
+                    != edge_len_m1) {
                     rval = MBError::READ_ERROR;
                     break;
                 }
                 key_buff = node_buff;
-            }
-            else
-            {
+            } else {
                 key_buff = edge_ptrs.ptr;
             }
 
-            if((edge_len > 1 && memcmp(key_buff, p+1, edge_len_m1) != 0) || edge_len == 0)
-            {
+            if ((edge_len > 1 && memcmp(key_buff, p + 1, edge_len_m1) != 0) || edge_len == 0) {
                 rval = MBError::NOT_EXIST;
                 break;
             }
 
             len -= edge_len;
             p += edge_len;
-            if(len <= 0 || (edge_ptrs.flag_ptr[0] & EDGE_FLAG_DATA_OFF))
-            {
+            if (len <= 0 || (edge_ptrs.flag_ptr[0] & EDGE_FLAG_DATA_OFF)) {
                 data.match_len = p - key;
                 rval = ReadDataFromEdge(data, edge_ptrs);
                 break;
@@ -672,13 +577,10 @@ int Dict::FindPrefix_Internal(size_t root_off, const uint8_t *key, int len, MBDa
 #endif
         }
 
-        if(rval == MBError::NOT_EXIST && last_prefix_rval != rval)
+        if (rval == MBError::NOT_EXIST && last_prefix_rval != rval)
             rval = ReadDataFromNode(data, last_node_buffer);
-    }
-    else if(edge_len == len)
-    {
-        if(edge_len_m1 == 0 || memcmp(key_buff, key+1, edge_len_m1) == 0)
-        {
+    } else if (edge_len == len) {
+        if (edge_len_m1 == 0 || memcmp(key_buff, key + 1, edge_len_m1) == 0) {
             data.match_len = len;
             rval = ReadDataFromEdge(data, edge_ptrs);
         }
@@ -690,35 +592,28 @@ int Dict::FindPrefix_Internal(size_t root_off, const uint8_t *key, int len, MBDa
     return rval;
 }
 
-int Dict::Find(const uint8_t *key, int len, MBData &data)
+int Dict::Find(const uint8_t* key, int len, MBData& data)
 {
     int rval;
     size_t rc_root_offset = header->rc_root_offset.load(MEMORY_ORDER_READER);
 
-    if(rc_root_offset != 0)
-    {
+    if (rc_root_offset != 0) {
         reader_rc_off = rc_root_offset;
         rval = Find_Internal(rc_root_offset, key, len, data);
 #ifdef __LOCK_FREE__
-        while(rval == MBError::TRY_AGAIN)
-        {
-            nanosleep((const struct timespec[]){{0, 10L}}, NULL);
+        while (rval == MBError::TRY_AGAIN) {
+            nanosleep((const struct timespec[]) { { 0, 10L } }, NULL);
             rval = Find_Internal(rc_root_offset, key, len, data);
         }
 #endif
-        if(rval == MBError::SUCCESS)
-        {
+        if (rval == MBError::SUCCESS) {
             data.match_len = len;
             return rval;
-        }
-        else if(rval != MBError::NOT_EXIST)
+        } else if (rval != MBError::NOT_EXIST)
             return rval;
         data.options &= ~(CONSTS::OPTION_RC_MODE | CONSTS::OPTION_READ_SAVED_EDGE);
-    }
-    else
-    {
-        if(reader_rc_off != 0)
-        {
+    } else {
+        if (reader_rc_off != 0) {
             reader_rc_off = 0;
             RemoveUnused(0);
             mm.RemoveUnused(0);
@@ -727,31 +622,29 @@ int Dict::Find(const uint8_t *key, int len, MBData &data)
 
     rval = Find_Internal(0, key, len, data);
 #ifdef __LOCK_FREE__
-    while(rval == MBError::TRY_AGAIN)
-    {
-        nanosleep((const struct timespec[]){{0, 10L}}, NULL);
+    while (rval == MBError::TRY_AGAIN) {
+        nanosleep((const struct timespec[]) { { 0, 10L } }, NULL);
         rval = Find_Internal(0, key, len, data);
     }
 #endif
-    if(rval == MBError::SUCCESS)
+    if (rval == MBError::SUCCESS)
         data.match_len = len;
 
     return rval;
 }
 
-int Dict::Find_Internal(size_t root_off, const uint8_t *key, int len, MBData &data)
+int Dict::Find_Internal(size_t root_off, const uint8_t* key, int len, MBData& data)
 {
-    EdgePtrs &edge_ptrs = data.edge_ptrs;
+    EdgePtrs& edge_ptrs = data.edge_ptrs;
 #ifdef __LOCK_FREE__
     READER_LOCK_FREE_START
 #endif
     int rval;
     rval = mm.GetRootEdge(root_off, key[0], edge_ptrs);
 
-    if(rval != MBError::SUCCESS)
+    if (rval != MBError::SUCCESS)
         return MBError::READ_ERROR;
-    if(edge_ptrs.len_ptr[0] == 0)
-    {
+    if (edge_ptrs.len_ptr[0] == 0) {
 #ifdef __LOCK_FREE__
         READER_LOCK_FREE_STOP(edge_ptrs.offset, data)
 #endif
@@ -759,35 +652,28 @@ int Dict::Find_Internal(size_t root_off, const uint8_t *key, int len, MBData &da
     }
 
     // Compare edge string
-    const uint8_t *key_buff;
-    uint8_t *node_buff = data.node_buff;
-    const uint8_t *p = key;
+    const uint8_t* key_buff;
+    uint8_t* node_buff = data.node_buff;
+    const uint8_t* p = key;
     int edge_len = edge_ptrs.len_ptr[0];
     int edge_len_m1 = edge_len - 1;
 
     rval = MBError::NOT_EXIST;
-    if(edge_len > LOCAL_EDGE_LEN)
-    {
+    if (edge_len > LOCAL_EDGE_LEN) {
         size_t edge_str_off_lf = Get5BInteger(edge_ptrs.ptr);
-        if(mm.ReadData(node_buff, edge_len_m1, edge_str_off_lf) != edge_len_m1)
-        {
+        if (mm.ReadData(node_buff, edge_len_m1, edge_str_off_lf) != edge_len_m1) {
 #ifdef __LOCK_FREE__
             READER_LOCK_FREE_STOP(edge_ptrs.offset, data)
 #endif
             return MBError::READ_ERROR;
         }
         key_buff = node_buff;
-    }
-    else
-    {
+    } else {
         key_buff = edge_ptrs.ptr;
     }
 
-    if(edge_len < len)
-    {
-        if((edge_len > 1 && memcmp(key_buff, key+1, edge_len_m1) != 0) ||
-           (edge_ptrs.flag_ptr[0] & EDGE_FLAG_DATA_OFF))
-        {
+    if (edge_len < len) {
+        if ((edge_len > 1 && memcmp(key_buff, key + 1, edge_len_m1) != 0) || (edge_ptrs.flag_ptr[0] & EDGE_FLAG_DATA_OFF)) {
 #ifdef __LOCK_FREE__
             READER_LOCK_FREE_STOP(edge_ptrs.offset, data)
 #endif
@@ -800,10 +686,9 @@ int Dict::Find_Internal(size_t root_off, const uint8_t *key, int len, MBData &da
 #ifdef __LOCK_FREE__
         size_t edge_offset_prev = edge_ptrs.offset;
 #endif
-        while(true)
-        {
+        while (true) {
             rval = mm.NextEdge(p, edge_ptrs, node_buff, data);
-            if(rval != MBError::SUCCESS)
+            if (rval != MBError::SUCCESS)
                 break;
 
 #ifdef __LOCK_FREE__
@@ -812,41 +697,32 @@ int Dict::Find_Internal(size_t root_off, const uint8_t *key, int len, MBData &da
             edge_len = edge_ptrs.len_ptr[0];
             edge_len_m1 = edge_len - 1;
             // match edge string
-            if(edge_len > LOCAL_EDGE_LEN)
-            {
+            if (edge_len > LOCAL_EDGE_LEN) {
                 size_t edge_str_off_lf = Get5BInteger(edge_ptrs.ptr);
-                if(mm.ReadData(node_buff, edge_len_m1, edge_str_off_lf) != edge_len_m1)
-                {
+                if (mm.ReadData(node_buff, edge_len_m1, edge_str_off_lf) != edge_len_m1) {
                     rval = MBError::READ_ERROR;
                     break;
                 }
                 key_buff = node_buff;
-            }
-            else
-            {
+            } else {
                 key_buff = edge_ptrs.ptr;
             }
 
-            if((edge_len_m1 > 0 && memcmp(key_buff, p+1, edge_len_m1) != 0) || edge_len_m1 < 0)
-            {
+            if ((edge_len_m1 > 0 && memcmp(key_buff, p + 1, edge_len_m1) != 0) || edge_len_m1 < 0) {
                 rval = MBError::NOT_EXIST;
                 break;
             }
 
             len -= edge_len;
-            if(len <= 0)
-            {
+            if (len <= 0) {
                 // If this is for remove operation, return IN_DICT to caller.
-                if(data.options & CONSTS::OPTION_FIND_AND_STORE_PARENT)
+                if (data.options & CONSTS::OPTION_FIND_AND_STORE_PARENT)
                     rval = MBError::IN_DICT;
                 else
                     rval = ReadDataFromEdge(data, edge_ptrs);
                 break;
-            }
-            else
-            {
-                if(edge_ptrs.flag_ptr[0] & EDGE_FLAG_DATA_OFF)
-                {
+            } else {
+                if (edge_ptrs.flag_ptr[0] & EDGE_FLAG_DATA_OFF) {
                     // Reach a leaf node and no match found
                     rval = MBError::NOT_EXIST;
                     break;
@@ -857,26 +733,18 @@ int Dict::Find_Internal(size_t root_off, const uint8_t *key, int len, MBData &da
             edge_offset_prev = edge_ptrs.offset;
 #endif
         }
-    }
-    else if(edge_len == len)
-    {
-        if(len > 1 && memcmp(key_buff, key+1, len-1) != 0)
-        {
+    } else if (edge_len == len) {
+        if (len > 1 && memcmp(key_buff, key + 1, len - 1) != 0) {
             rval = MBError::NOT_EXIST;
-        }
-        else
-        {
+        } else {
             // If this is for remove operation, return IN_DICT to caller.
-            if(data.options & CONSTS::OPTION_FIND_AND_STORE_PARENT)
-            {
+            if (data.options & CONSTS::OPTION_FIND_AND_STORE_PARENT) {
                 data.edge_ptrs.curr_node_offset = mm.GetRootOffset();
                 data.edge_ptrs.curr_nt = 1;
                 data.edge_ptrs.curr_edge_index = 0;
                 data.edge_ptrs.parent_offset = data.edge_ptrs.offset;
                 rval = MBError::IN_DICT;
-            }
-            else
-            {
+            } else {
                 rval = ReadDataFromEdge(data, edge_ptrs);
             }
         }
@@ -888,28 +756,28 @@ int Dict::Find_Internal(size_t root_off, const uint8_t *key, int len, MBData &da
     return rval;
 }
 
-void Dict::PrintStats(std::ostream *out_stream) const
+void Dict::PrintStats(std::ostream* out_stream) const
 {
-    if(out_stream != NULL)
+    if (out_stream != NULL)
         return PrintStats(*out_stream);
     return PrintStats(std::cout);
 }
 
-void Dict::PrintStats(std::ostream &out_stream) const
+void Dict::PrintStats(std::ostream& out_stream) const
 {
-    if(status != MBError::SUCCESS)
+    if (status != MBError::SUCCESS)
         return;
 
     out_stream << "DB stats:\n";
     out_stream << "\tNumber of DB writer: " << header->num_writer << std::endl;
     out_stream << "\tNumber of DB reader: " << header->num_reader << std::endl;
-    out_stream << "\tEntry count in DB: "  << header->count << std::endl;
-    out_stream << "\tEntry count per bucket: "  << header->entry_per_bucket << std::endl;
-    out_stream << "\tEviction bucket index: "  << header->eviction_bucket_index << std::endl;
+    out_stream << "\tEntry count in DB: " << header->count << std::endl;
+    out_stream << "\tEntry count per bucket: " << header->entry_per_bucket << std::endl;
+    out_stream << "\tEviction bucket index: " << header->eviction_bucket_index << std::endl;
     out_stream << "\tData block size: " << header->data_block_size << std::endl;
     out_stream << "\tData size: " << header->m_data_offset << std::endl;
     out_stream << "\tPending Buffer Size: " << header->pending_data_buff_size << std::endl;
-    if(free_lists)
+    if (free_lists)
         out_stream << "\tTrackable Buffer Size: " << free_lists->GetTotSize() << std::endl;
     mm.PrintStats(out_stream);
 
@@ -918,10 +786,9 @@ void Dict::PrintStats(std::ostream &out_stream) const
 
 int64_t Dict::Count() const
 {
-    if(header == NULL)
-    {
+    if (header == NULL) {
         Logger::Log(LOG_LEVEL_WARN, "db was not initialized successfully: %s",
-                    MBError::get_error_str(status));
+            MBError::get_error_str(status));
         return 0;
     }
 
@@ -929,14 +796,14 @@ int64_t Dict::Count() const
 }
 
 // For DB iterator
-int Dict::ReadNextEdge(const uint8_t *node_buff, EdgePtrs &edge_ptrs,
-                       int &match, MBData &data, std::string &match_str,
-                       size_t &node_off, bool rd_kv) const
+int Dict::ReadNextEdge(const uint8_t* node_buff, EdgePtrs& edge_ptrs,
+    int& match, MBData& data, std::string& match_str,
+    size_t& node_off, bool rd_kv) const
 {
-    if(edge_ptrs.curr_nt > static_cast<int>(node_buff[1]))
+    if (edge_ptrs.curr_nt > static_cast<int>(node_buff[1]))
         return MBError::OUT_OF_BOUND;
 
-    if(mm.ReadData(edge_ptrs.edge_buff, EDGE_SIZE, edge_ptrs.offset) != EDGE_SIZE)
+    if (mm.ReadData(edge_ptrs.edge_buff, EDGE_SIZE, edge_ptrs.offset) != EDGE_SIZE)
         return MBError::READ_ERROR;
 
     node_off = 0;
@@ -944,40 +811,31 @@ int Dict::ReadNextEdge(const uint8_t *node_buff, EdgePtrs &edge_ptrs,
 
     int rval = MBError::SUCCESS;
     InitTempEdgePtrs(edge_ptrs);
-    if(edge_ptrs.flag_ptr[0] & EDGE_FLAG_DATA_OFF)
-    {
+    if (edge_ptrs.flag_ptr[0] & EDGE_FLAG_DATA_OFF) {
         // match of leaf node
         match = MATCH_EDGE;
-        if(rd_kv)
-        {
+        if (rd_kv) {
             rval = ReadDataFromEdge(data, edge_ptrs);
-            if(rval != MBError::SUCCESS)
+            if (rval != MBError::SUCCESS)
                 return rval;
         }
-    }
-    else
-    {
+    } else {
         match = MATCH_NONE;
-        if(edge_ptrs.len_ptr[0] > 0)
-        {
+        if (edge_ptrs.len_ptr[0] > 0) {
             node_off = Get6BInteger(edge_ptrs.offset_ptr);
-            if(rd_kv)
+            if (rd_kv)
                 rval = ReadNodeMatch(node_off, match, data);
         }
     }
 
-    if(edge_ptrs.len_ptr[0] > 0 && rd_kv)
-    {
+    if (edge_ptrs.len_ptr[0] > 0 && rd_kv) {
         int edge_len_m1 = edge_ptrs.len_ptr[0] - 1;
-        match_str = std::string(1, (const char)node_buff[NODE_EDGE_KEY_FIRST+edge_ptrs.curr_nt]);
-        if(edge_len_m1 > LOCAL_EDGE_LEN_M1)
-        {
-            if(mm.ReadData(data.node_buff, edge_len_m1, Get5BInteger(edge_ptrs.ptr)) != edge_len_m1)
+        match_str = std::string(1, (const char)node_buff[NODE_EDGE_KEY_FIRST + edge_ptrs.curr_nt]);
+        if (edge_len_m1 > LOCAL_EDGE_LEN_M1) {
+            if (mm.ReadData(data.node_buff, edge_len_m1, Get5BInteger(edge_ptrs.ptr)) != edge_len_m1)
                 return MBError::READ_ERROR;
             match_str += std::string(reinterpret_cast<char*>(data.node_buff), edge_len_m1);
-        }
-        else if(edge_len_m1 > 0)
-        {
+        } else if (edge_len_m1 > 0) {
             match_str += std::string(reinterpret_cast<char*>(edge_ptrs.ptr), edge_len_m1);
         }
     }
@@ -988,29 +846,26 @@ int Dict::ReadNextEdge(const uint8_t *node_buff, EdgePtrs &edge_ptrs,
 }
 
 // For DB iterator
-int Dict::ReadNode(size_t node_off, uint8_t *node_buff, EdgePtrs &edge_ptrs,
-                    int &match, MBData &data, bool rd_kv) const
+int Dict::ReadNode(size_t node_off, uint8_t* node_buff, EdgePtrs& edge_ptrs,
+    int& match, MBData& data, bool rd_kv) const
 {
-    if(mm.ReadData(node_buff, NODE_EDGE_KEY_FIRST, node_off) != NODE_EDGE_KEY_FIRST)
+    if (mm.ReadData(node_buff, NODE_EDGE_KEY_FIRST, node_off) != NODE_EDGE_KEY_FIRST)
         return MBError::READ_ERROR;
 
     edge_ptrs.curr_nt = 0;
     int nt = node_buff[1] + 1;
     node_off += NODE_EDGE_KEY_FIRST;
-    if(mm.ReadData(node_buff + NODE_EDGE_KEY_FIRST, nt, node_off) != nt)
+    if (mm.ReadData(node_buff + NODE_EDGE_KEY_FIRST, nt, node_off) != nt)
         return MBError::READ_ERROR;
 
     int rval = MBError::SUCCESS;
     edge_ptrs.offset = node_off + nt;
-    if(node_buff[0] & FLAG_NODE_MATCH)
-    {
+    if (node_buff[0] & FLAG_NODE_MATCH) {
         // match of non-leaf node
         match = MATCH_NODE;
-        if(rd_kv)
+        if (rd_kv)
             rval = ReadDataFromNode(data, node_buff);
-    }
-    else
-    {
+    } else {
         // no match at the non-leaf node
         match = MATCH_NONE;
     }
@@ -1018,34 +873,32 @@ int Dict::ReadNode(size_t node_off, uint8_t *node_buff, EdgePtrs &edge_ptrs,
     return rval;
 }
 
-void Dict::ReadNodeHeader(size_t node_off, int &node_size, int &match,
-                          size_t &data_offset, size_t &data_link_offset)
+void Dict::ReadNodeHeader(size_t node_off, int& node_size, int& match,
+    size_t& data_offset, size_t& data_link_offset)
 {
     uint8_t node_buff[NODE_EDGE_KEY_FIRST];
-    if(mm.ReadData(node_buff, NODE_EDGE_KEY_FIRST, node_off) != NODE_EDGE_KEY_FIRST)
-        throw (int) MBError::READ_ERROR;
+    if (mm.ReadData(node_buff, NODE_EDGE_KEY_FIRST, node_off) != NODE_EDGE_KEY_FIRST)
+        throw(int) MBError::READ_ERROR;
 
-    node_size = mm.GetNodeSizePtr()[ node_buff[1] ];
-    if(node_buff[0] & FLAG_NODE_MATCH)
-    {
+    node_size = mm.GetNodeSizePtr()[node_buff[1]];
+    if (node_buff[0] & FLAG_NODE_MATCH) {
         match = MATCH_NODE;
         data_offset = Get6BInteger(node_buff + 2);
         data_link_offset = node_off + 2;
     }
 }
 
-int Dict::ReadNodeMatch(size_t node_off, int &match, MBData &data) const
+int Dict::ReadNodeMatch(size_t node_off, int& match, MBData& data) const
 {
     uint8_t node_buff[NODE_EDGE_KEY_FIRST];
-    if(mm.ReadData(node_buff, NODE_EDGE_KEY_FIRST, node_off) != NODE_EDGE_KEY_FIRST)
+    if (mm.ReadData(node_buff, NODE_EDGE_KEY_FIRST, node_off) != NODE_EDGE_KEY_FIRST)
         return MBError::READ_ERROR;
 
     int rval = MBError::SUCCESS;
-    if(node_buff[0] & FLAG_NODE_MATCH)
-    {
+    if (node_buff[0] & FLAG_NODE_MATCH) {
         match = MATCH_NODE;
         rval = ReadDataFromNode(data, node_buff);
-        if(rval != MBError::SUCCESS)
+        if (rval != MBError::SUCCESS)
             return rval;
     }
 
@@ -1058,64 +911,57 @@ size_t Dict::GetRootOffset() const
 }
 
 // For DB iterator
-int Dict::ReadRootNode(uint8_t *node_buff, EdgePtrs &edge_ptrs, int &match,
-                       MBData &data) const
+int Dict::ReadRootNode(uint8_t* node_buff, EdgePtrs& edge_ptrs, int& match,
+    MBData& data) const
 {
     size_t root_off;
-    if(data.options & CONSTS::OPTION_RC_MODE)
+    if (data.options & CONSTS::OPTION_RC_MODE)
         root_off = header->rc_root_offset;
     else
         root_off = mm.GetRootOffset();
     return ReadNode(root_off, node_buff, edge_ptrs, match, data);
 }
 
-int Dict::Remove(const uint8_t *key, int len)
+int Dict::Remove(const uint8_t* key, int len)
 {
     MBData data(0, CONSTS::OPTION_FIND_AND_STORE_PARENT);
     return Remove(key, len, data);
 }
 
-int Dict::Remove(const uint8_t *key, int len, MBData &data)
+int Dict::Remove(const uint8_t* key, int len, MBData& data)
 {
-    if(!(options & CONSTS::ACCESS_MODE_WRITER))
-    {
+    if (!(options & CONSTS::ACCESS_MODE_WRITER)) {
         return MBError::NOT_ALLOWED;
     }
-    if(data.options & CONSTS::OPTION_RC_MODE)
-    {
+    if (data.options & CONSTS::OPTION_RC_MODE) {
         // FIXME Remove in RC mode not implemented yet!!!
         return MBError::INVALID_ARG;
     }
 
     // The DELETE flag must be set
-    if(!(data.options & CONSTS::OPTION_FIND_AND_STORE_PARENT))
+    if (!(data.options & CONSTS::OPTION_FIND_AND_STORE_PARENT))
         return MBError::INVALID_ARG;
 
     int rval;
     rval = Find(key, len, data);
-    if(rval == MBError::IN_DICT)
-    {
+    if (rval == MBError::IN_DICT) {
         rval = DeleteDataFromEdge(data, data.edge_ptrs);
-        while(rval == MBError::TRY_AGAIN)
-        {
+        while (rval == MBError::TRY_AGAIN) {
             data.Clear();
             len -= data.edge_ptrs.len_ptr[0];
 #ifdef __DEBUG__
             assert(len > 0);
 #endif
             rval = Find(key, len, data);
-            if(MBError::IN_DICT == rval)
-            {
+            if (MBError::IN_DICT == rval) {
                 rval = mm.RemoveEdgeByIndex(data.edge_ptrs, data);
             }
         }
     }
 
-    if(rval == MBError::SUCCESS)
-    {
+    if (rval == MBError::SUCCESS) {
         header->count--;
-        if(header->count == 0)
-        {
+        if (header->count == 0) {
             RemoveAll();
         }
     }
@@ -1125,11 +971,11 @@ int Dict::Remove(const uint8_t *key, int len, MBData &data)
 
 int Dict::RemoveAll()
 {
-    int rval = MBError::SUCCESS;;
-    for(int c = 0; c < NUM_ALPHABET; c++)
-    {
+    int rval = MBError::SUCCESS;
+    ;
+    for (int c = 0; c < NUM_ALPHABET; c++) {
         rval = mm.ClearRootEdge(c);
-        if(rval != MBError::SUCCESS)
+        if (rval != MBError::SUCCESS)
             break;
     }
 
@@ -1156,58 +1002,49 @@ AsyncNode* Dict::GetAsyncQueuePtr() const
 }
 
 // Reserve buffer and write to it
-void Dict::ReserveData(const uint8_t* buff, int size, size_t &offset)
+void Dict::ReserveData(const uint8_t* buff, int size, size_t& offset)
 {
 #ifdef __DEBUG__
     assert(size <= CONSTS::MAX_DATA_SIZE);
 #endif
 
-    int buf_size  = free_lists->GetAlignmentSize(size + DATA_HDR_BYTE);
+    int buf_size = free_lists->GetAlignmentSize(size + DATA_HDR_BYTE);
     int buf_index = free_lists->GetBufferIndex(buf_size);
     uint16_t dsize[2];
     dsize[0] = static_cast<uint16_t>(size);
     // store bucket index for LRU eviction
     dsize[1] = (header->num_update / header->entry_per_bucket) % 0xFFFF;
-    if(dsize[1] == header->eviction_bucket_index &&
-       header->num_update > header->entry_per_bucket)
-    {
+    if (dsize[1] == header->eviction_bucket_index && header->num_update > header->entry_per_bucket) {
         header->eviction_bucket_index++;
     }
 
-    if(free_lists->GetBufferCountByIndex(buf_index) > 0)
-    {
+    if (free_lists->GetBufferCountByIndex(buf_index) > 0) {
         offset = free_lists->RemoveBufferByIndex(buf_index);
         WriteData(reinterpret_cast<const uint8_t*>(&dsize[0]), DATA_HDR_BYTE, offset);
-        WriteData(buff, size, offset+DATA_HDR_BYTE);
+        WriteData(buff, size, offset + DATA_HDR_BYTE);
         header->pending_data_buff_size -= buf_size;
-    }
-    else
-    {
+    } else {
         size_t old_off = header->m_data_offset;
-        uint8_t *ptr;
+        uint8_t* ptr;
 
         int rval = kv_file->Reserve(header->m_data_offset, buf_size, ptr);
-        if(rval != MBError::SUCCESS)
+        if (rval != MBError::SUCCESS)
             throw rval;
 
         //Checking missing buffer due to alignment
-        if(old_off < header->m_data_offset)
-        {
+        if (old_off < header->m_data_offset) {
             free_lists->ReleaseAlignmentBuffer(old_off, header->m_data_offset);
             header->pending_data_buff_size += header->m_data_offset - old_off;
         }
 
         offset = header->m_data_offset;
         header->m_data_offset += buf_size;
-        if(ptr != NULL)
-        {
+        if (ptr != NULL) {
             memcpy(ptr, &dsize[0], DATA_HDR_BYTE);
-            memcpy(ptr+DATA_HDR_BYTE, buff, size);
-        }
-        else
-        {
+            memcpy(ptr + DATA_HDR_BYTE, buff, size);
+        } else {
             WriteData(reinterpret_cast<const uint8_t*>(&dsize[0]), DATA_HDR_BYTE, offset);
-            WriteData(buff, size, offset+DATA_HDR_BYTE);
+            WriteData(buff, size, offset + DATA_HDR_BYTE);
         }
     }
 }
@@ -1216,8 +1053,8 @@ int Dict::ReleaseBuffer(size_t offset)
 {
     uint16_t data_size;
 
-    if(ReadData(reinterpret_cast<uint8_t*>(&data_size), DATA_SIZE_BYTE, offset)
-               != DATA_SIZE_BYTE)
+    if (ReadData(reinterpret_cast<uint8_t*>(&data_size), DATA_SIZE_BYTE, offset)
+        != DATA_SIZE_BYTE)
         return MBError::READ_ERROR;
 
     int rel_size = free_lists->GetAlignmentSize(data_size + DATA_HDR_BYTE);
@@ -1225,20 +1062,19 @@ int Dict::ReleaseBuffer(size_t offset)
     return free_lists->ReleaseBuffer(offset, rel_size);
 }
 
-int Dict::UpdateDataBuffer(EdgePtrs &edge_ptrs, bool overwrite, const uint8_t *buff,
-                           int len, bool &inc_count)
+int Dict::UpdateDataBuffer(EdgePtrs& edge_ptrs, bool overwrite, const uint8_t* buff,
+    int len, bool& inc_count)
 {
     size_t data_off;
 
-    if(edge_ptrs.flag_ptr[0] & EDGE_FLAG_DATA_OFF)
-    {
+    if (edge_ptrs.flag_ptr[0] & EDGE_FLAG_DATA_OFF) {
         inc_count = false;
         // leaf node
-        if(!overwrite)
+        if (!overwrite)
             return MBError::IN_DICT;
 
         data_off = Get6BInteger(edge_ptrs.offset_ptr);
-        if(ReleaseBuffer(data_off) != MBError::SUCCESS)
+        if (ReleaseBuffer(data_off) != MBError::SUCCESS)
             Logger::Log(LOG_LEVEL_WARN, "failed to release data buffer: %llu", data_off);
         ReserveData(buff, len, data_off);
         Write6BInteger(edge_ptrs.offset_ptr, data_off);
@@ -1249,34 +1085,29 @@ int Dict::UpdateDataBuffer(EdgePtrs &edge_ptrs, bool overwrite, const uint8_t *b
         lfree.WriterLockFreeStart(edge_ptrs.offset);
 #endif
         header->excep_updating_status = EXCEP_STATUS_ADD_DATA_OFF;
-        mm.WriteData(edge_ptrs.offset_ptr, OFFSET_SIZE, edge_ptrs.offset+EDGE_NODE_LEADING_POS);
+        mm.WriteData(edge_ptrs.offset_ptr, OFFSET_SIZE, edge_ptrs.offset + EDGE_NODE_LEADING_POS);
 #ifdef __LOCK_FREE__
         lfree.WriterLockFreeStop();
 #endif
         header->excep_updating_status = EXCEP_STATUS_NONE;
-    }
-    else
-    {
-        uint8_t *node_buff = header->excep_buff;
+    } else {
+        uint8_t* node_buff = header->excep_buff;
         size_t node_off = Get6BInteger(edge_ptrs.offset_ptr);
 
-        if(mm.ReadData(node_buff, NODE_EDGE_KEY_FIRST, node_off) != NODE_EDGE_KEY_FIRST)
+        if (mm.ReadData(node_buff, NODE_EDGE_KEY_FIRST, node_off) != NODE_EDGE_KEY_FIRST)
             return MBError::READ_ERROR;
 
-        if(node_buff[0] & FLAG_NODE_MATCH)
-        {
+        if (node_buff[0] & FLAG_NODE_MATCH) {
             inc_count = false;
-            if(!overwrite)
+            if (!overwrite)
                 return MBError::IN_DICT;
 
-            data_off = Get6BInteger(node_buff+2);
-            if(ReleaseBuffer(data_off) != MBError::SUCCESS)
+            data_off = Get6BInteger(node_buff + 2);
+            if (ReleaseBuffer(data_off) != MBError::SUCCESS)
                 Logger::Log(LOG_LEVEL_WARN, "failed to release data buffer %llu", data_off);
 
             node_buff[NODE_EDGE_KEY_FIRST] = 0;
-        }
-        else
-        {
+        } else {
             // set the match flag
             node_buff[0] |= FLAG_NODE_MATCH;
 
@@ -1284,7 +1115,7 @@ int Dict::UpdateDataBuffer(EdgePtrs &edge_ptrs, bool overwrite, const uint8_t *b
         }
 
         ReserveData(buff, len, data_off);
-        Write6BInteger(node_buff+2, data_off);
+        Write6BInteger(node_buff + 2, data_off);
 
         header->excep_offset = node_off;
 #ifdef __LOCK_FREE__
@@ -1306,21 +1137,19 @@ int Dict::UpdateDataBuffer(EdgePtrs &edge_ptrs, bool overwrite, const uint8_t *b
 void Dict::UpdateNumReader(int delta) const
 {
     header->num_reader += delta;
-    if(header->num_reader < 0)
+    if (header->num_reader < 0)
         header->num_reader = 0;
 
     Logger::Log(LOG_LEVEL_DEBUG, "number of reader is set to: %d",
-                header->num_reader);
+        header->num_reader);
 }
 
 // delta should be either +1 or -1.
 int Dict::UpdateNumWriter(int delta) const
 {
-    if(delta > 0)
-    {
+    if (delta > 0) {
         // Only one writer allowed
-        if(header->num_writer > 0)
-        {
+        if (header->num_writer > 0) {
             Logger::Log(LOG_LEVEL_WARN, "writer was not shutdown cleanly previously");
             header->num_writer = 1;
             // Reset number of reader too.
@@ -1329,9 +1158,7 @@ int Dict::UpdateNumWriter(int delta) const
         }
 
         header->num_writer = 1;
-    }
-    else if(delta < 0)
-    {
+    } else if (delta < 0) {
         header->num_writer = 0;
         header->lock_free.offset = MAX_6B_OFFSET;
     }
@@ -1342,7 +1169,7 @@ int Dict::UpdateNumWriter(int delta) const
 
 DictMem* Dict::GetMM() const
 {
-    return (DictMem*) &mm;
+    return (DictMem*)&mm;
 }
 
 size_t Dict::GetStartDataOffset() const
@@ -1357,10 +1184,10 @@ LockFree* Dict::GetLockFreePtr()
 
 void Dict::Flush() const
 {
-    if(!(options & CONSTS::ACCESS_MODE_WRITER))
+    if (!(options & CONSTS::ACCESS_MODE_WRITER))
         return;
 
-    if(kv_file != NULL)
+    if (kv_file != NULL)
         kv_file->Flush();
     mm.Flush();
 }
@@ -1369,114 +1196,106 @@ void Dict::Flush() const
 // during DB updates (insertion, replacing and deletion).
 int Dict::ExceptionRecovery()
 {
-    if(header == NULL)
+    if (header == NULL)
         return MBError::NOT_INITIALIZED;
 
     int rval = MBError::SUCCESS;
-    if(header->excep_updating_status == EXCEP_STATUS_NONE)
-    {
+    if (header->excep_updating_status == EXCEP_STATUS_NONE) {
         Logger::Log(LOG_LEVEL_INFO, "writer was shutdown successfully previously");
         return rval;
     }
 
     Logger::Log(LOG_LEVEL_INFO, "writer was not shutdown gracefully with exception status %d",
-                header->excep_updating_status);
+        header->excep_updating_status);
     // Dumper header before running recover
-    std::ofstream *logstream = Logger::GetLogStream();
-    if(logstream != NULL)
-    {
+    std::ofstream* logstream = Logger::GetLogStream();
+    if (logstream != NULL) {
         PrintHeader(*logstream);
-    }
-    else
-    {
+    } else {
         PrintHeader(std::cout);
     }
 
-    switch(header->excep_updating_status)
-    {
-        case EXCEP_STATUS_ADD_EDGE:
+    switch (header->excep_updating_status) {
+    case EXCEP_STATUS_ADD_EDGE:
 #ifdef __LOCK_FREE__
-            lfree.WriterLockFreeStart(header->excep_lf_offset);
+        lfree.WriterLockFreeStart(header->excep_lf_offset);
 #endif
-            mm.WriteData(header->excep_buff, EDGE_SIZE, header->excep_lf_offset);
+        mm.WriteData(header->excep_buff, EDGE_SIZE, header->excep_lf_offset);
+        header->count++;
+        break;
+    case EXCEP_STATUS_ADD_DATA_OFF:
+#ifdef __LOCK_FREE__
+        lfree.WriterLockFreeStart(header->excep_lf_offset);
+#endif
+        mm.WriteData(header->excep_buff, OFFSET_SIZE,
+            header->excep_lf_offset + EDGE_NODE_LEADING_POS);
+        break;
+    case EXCEP_STATUS_ADD_NODE:
+#ifdef __LOCK_FREE__
+        lfree.WriterLockFreeStart(header->excep_lf_offset);
+#endif
+        mm.WriteData(header->excep_buff, NODE_EDGE_KEY_FIRST,
+            header->excep_offset);
+        if (header->excep_buff[NODE_EDGE_KEY_FIRST])
             header->count++;
-	    break;
-        case EXCEP_STATUS_ADD_DATA_OFF:
+        break;
+    case EXCEP_STATUS_REMOVE_EDGE:
 #ifdef __LOCK_FREE__
-            lfree.WriterLockFreeStart(header->excep_lf_offset);
+        lfree.WriterLockFreeStart(header->excep_lf_offset);
 #endif
-            mm.WriteData(header->excep_buff, OFFSET_SIZE,
-                         header->excep_lf_offset+EDGE_NODE_LEADING_POS);
-            break;
-        case EXCEP_STATUS_ADD_NODE:
+        Write6BInteger(header->excep_buff, header->excep_offset);
+        mm.WriteData(header->excep_buff, OFFSET_SIZE,
+            header->excep_lf_offset + EDGE_NODE_LEADING_POS);
+        break;
+    case EXCEP_STATUS_CLEAR_EDGE:
 #ifdef __LOCK_FREE__
-            lfree.WriterLockFreeStart(header->excep_lf_offset);
+        lfree.WriterLockFreeStart(header->excep_lf_offset);
 #endif
-            mm.WriteData(header->excep_buff, NODE_EDGE_KEY_FIRST,
-                         header->excep_offset);
-            if(header->excep_buff[NODE_EDGE_KEY_FIRST]) header->count++;
-            break;
-        case EXCEP_STATUS_REMOVE_EDGE:
+        mm.WriteData(DictMem::empty_edge, EDGE_SIZE, header->excep_lf_offset);
+        header->count--;
+        break;
+    case EXCEP_STATUS_RC_NODE:
+    case EXCEP_STATUS_RC_DATA:
 #ifdef __LOCK_FREE__
-            lfree.WriterLockFreeStart(header->excep_lf_offset);
+        lfree.WriterLockFreeStart(header->excep_lf_offset);
 #endif
-            Write6BInteger(header->excep_buff, header->excep_offset);
-            mm.WriteData(header->excep_buff, OFFSET_SIZE,
-                         header->excep_lf_offset+EDGE_NODE_LEADING_POS);
-            break;
-        case EXCEP_STATUS_CLEAR_EDGE:
+        mm.WriteData(header->excep_buff, OFFSET_SIZE, header->excep_offset);
+        break;
+    case EXCEP_STATUS_RC_EDGE_STR:
 #ifdef __LOCK_FREE__
-            lfree.WriterLockFreeStart(header->excep_lf_offset);
+        lfree.WriterLockFreeStart(header->excep_lf_offset);
 #endif
-            mm.WriteData(DictMem::empty_edge, EDGE_SIZE, header->excep_lf_offset);
-            header->count--;
-            break;
-        case EXCEP_STATUS_RC_NODE:
-        case EXCEP_STATUS_RC_DATA:
-#ifdef __LOCK_FREE__
-            lfree.WriterLockFreeStart(header->excep_lf_offset);
-#endif
-            mm.WriteData(header->excep_buff, OFFSET_SIZE, header->excep_offset);
-            break;
-        case EXCEP_STATUS_RC_EDGE_STR:
-#ifdef __LOCK_FREE__
-            lfree.WriterLockFreeStart(header->excep_lf_offset);
-#endif
-            mm.WriteData(header->excep_buff, OFFSET_SIZE-1, header->excep_offset);
-            break;
-        default:
-            Logger::Log(LOG_LEVEL_ERROR, "unknown exception status: %d",
-                        header->excep_updating_status);
-            rval = MBError::INVALID_ARG;
+        mm.WriteData(header->excep_buff, OFFSET_SIZE - 1, header->excep_offset);
+        break;
+    default:
+        Logger::Log(LOG_LEVEL_ERROR, "unknown exception status: %d",
+            header->excep_updating_status);
+        rval = MBError::INVALID_ARG;
     }
 #ifdef __LOCK_FREE__
     lfree.WriterLockFreeStop();
 #endif
 
-    if(rval == MBError::SUCCESS)
-    {
+    if (rval == MBError::SUCCESS) {
         header->excep_updating_status = EXCEP_STATUS_NONE;
         Logger::Log(LOG_LEVEL_INFO, "successfully recovered from abnormal termination");
-    }
-    else
-    {
+    } else {
         Logger::Log(LOG_LEVEL_ERROR, "failed to recover from abnormal termination");
     }
 
     return rval;
 }
 
-void Dict::WriteData(const uint8_t *buff, unsigned len, size_t offset) const
+void Dict::WriteData(const uint8_t* buff, unsigned len, size_t offset) const
 {
-    if(offset + len > header->m_data_offset)
-    {
+    if (offset + len > header->m_data_offset) {
         std::cerr << "invalid dict write: " << offset << " " << len << " "
                   << header->m_data_offset << "\n";
-        throw (int) MBError::OUT_OF_BOUND;
+        throw(int) MBError::OUT_OF_BOUND;
     }
 
-    if(kv_file->RandomWrite(buff, len, offset) != len)
-        throw (int) MBError::WRITE_ERROR;
+    if (kv_file->RandomWrite(buff, len, offset) != len)
+        throw(int) MBError::WRITE_ERROR;
 }
 
 }

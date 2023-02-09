@@ -22,15 +22,14 @@
 #include <string>
 
 // A simple mabain client expression LL parser
-class ExprParser
-{
+class ExprParser {
 public:
-    ExprParser(const std::string &expr);
+    ExprParser(const std::string& expr);
     ~ExprParser();
-    int Evaluate(std::string &result);
+    int Evaluate(std::string& result);
 
 private:
-    int Parse(std::string &result);
+    int Parse(std::string& result);
 
     size_t pos;
     std::string expr;

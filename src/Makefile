@@ -4,7 +4,7 @@ TARGET=libmabain.so
 all: $(TARGET)
 
 CFLAGS  = -I. -I.. -Iutil -Wall -Werror -c -Wwrite-strings -Wsign-compare -Wcast-align -Wformat-security -fdiagnostics-show-option
-CFLAGS += -g -ggdb -fPIC -O2 -std=c++11
+CFLAGS += -g -ggdb -fPIC -O2 -std=c++17
 CFLAGS += -D__LOCK_FREE__
 LDFLAGS = -lpthread
 

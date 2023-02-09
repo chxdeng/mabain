@@ -21,7 +21,7 @@
 
 #include <stdint.h>
 
-int bin_2_hex(const uint8_t *data, int len, char *buff, int buf_size);
-int hex_2_bin(const char *data, int len, uint8_t *buff, int buf_size);
+int bin_2_hex(const uint8_t* data, int len, char* buff, int buf_size);
+int hex_2_bin(const char* data, int len, uint8_t* buff, int buf_size);
 
 #endif

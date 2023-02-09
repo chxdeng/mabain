@@ -21,12 +21,13 @@
 
 namespace mabain {
 
-void MBLock::Init(pthread_mutex_t *lock)
+void MBLock::Init(pthread_mutex_t* lock)
 {
     mb_lock_ptr = lock;
 }
 
-MBLock::MBLock() : mb_lock_ptr(nullptr)
+MBLock::MBLock()
+    : mb_lock_ptr(nullptr)
 {
 }
 
@@ -36,14 +37,14 @@ MBLock::~MBLock()
 
 int MBLock::Lock()
 {
-    if(mb_lock_ptr == NULL)
+    if (mb_lock_ptr == NULL)
         return -1;
     return ShmMutexLock(*mb_lock_ptr);
 }
 
 int MBLock::UnLock()
 {
-    if(mb_lock_ptr == NULL)
+    if (mb_lock_ptr == NULL)
         return -1;
     return pthread_mutex_unlock(mb_lock_ptr);
 }

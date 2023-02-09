@@ -20,18 +20,18 @@
 
 using namespace mabain;
 
-const char *db_dir = "./tmp_dir/";
+const char* db_dir = "./tmp_dir/";
 
 // Remove key-value pair to mabain db
-int main(int argc, char *argv[])
+int main(int argc, char* argv[])
 {
-    if(argc == 2) {
+    if (argc == 2) {
         db_dir = argv[1];
     }
 
     mabain::DB::SetLogFile("/var/tmp/mabain_test/mabain.log");
     DB db(db_dir, CONSTS::WriterOptions());
-    if(!db.is_open()) {
+    if (!db.is_open()) {
         std::cerr << "failed to open mabain db: " << db.StatusStr() << "\n";
         exit(1);
     }
@@ -47,14 +47,14 @@ int main(int argc, char *argv[])
     value[2] = "Purple";
 
     // Add
-    for(int i = 0; i < 3; i++) {
+    for (int i = 0; i < 3; i++) {
         db.Add(key[i], value[i]);
     }
 
     // Remove
-    for(int i = 0; i < 3; i++) {
+    for (int i = 0; i < 3; i++) {
         rval = db.Remove(key[i]);
-        if(rval != MBError::SUCCESS)
+        if (rval != MBError::SUCCESS)
             std::cerr << "failed to remove key " << key[i] << "\n";
         else
             std::cout << "Removed " << key[i] << ": " << value[i] << "\n";
@@ -62,9 +62,9 @@ int main(int argc, char *argv[])
 
     // Query
     MBData mb_data;
-    for(int i = 0; i < 3; i++) {
+    for (int i = 0; i < 3; i++) {
         rval = db.Find(key[i], mb_data);
-        if(rval != MBError::SUCCESS)
+        if (rval != MBError::SUCCESS)
             std::cout << "key " << key[i] << " not found\n";
     }
 

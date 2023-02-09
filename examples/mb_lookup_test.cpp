@@ -20,17 +20,17 @@
 
 using namespace mabain;
 
-const char *db_dir = "./tmp_dir/";
+const char* db_dir = "./tmp_dir/";
 
 // Perform exact key match
-int main(int argc, char *argv[])
+int main(int argc, char* argv[])
 {
-    if(argc == 2) {
+    if (argc == 2) {
         db_dir = argv[1];
     }
 
     DB db(db_dir, CONSTS::ReaderOptions());
-    if(!db.is_open()) {
+    if (!db.is_open()) {
         std::cerr << "failed to open mabain db: " << db.StatusStr() << "\n";
         exit(1);
     }
@@ -44,10 +44,10 @@ int main(int argc, char *argv[])
     key[2] = "Orange";
     key[3] = "Kiwi";
 
-    for(int i = 0; i < 4; i++) {
+    for (int i = 0; i < 4; i++) {
         rval = db.Find(key[i], mbdata);
-        if(rval == MBError::SUCCESS) {
-            std::cout << key[i] << ": " << std::string((char *) mbdata.buff, mbdata.data_len) << "\n";
+        if (rval == MBError::SUCCESS) {
+            std::cout << key[i] << ": " << std::string((char*)mbdata.buff, mbdata.data_len) << "\n";
         } else {
             std::cout << key[i] << ": not found\n";
         }

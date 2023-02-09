@@ -24,11 +24,9 @@
 namespace mabain {
 
 // mabain errors
-class MBError
-{
+class MBError {
 public:
-    enum mb_error
-    {
+    enum mb_error {
         SUCCESS = 0,
         NO_MEMORY = 1,
         OUT_OF_BOUND = 2,

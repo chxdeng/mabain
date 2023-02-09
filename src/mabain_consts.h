@@ -21,8 +21,7 @@
 
 namespace mabain {
 
-class CONSTS
-{
+class CONSTS {
 public:
     static const int ACCESS_MODE_READER;
     static const int ACCESS_MODE_WRITER;

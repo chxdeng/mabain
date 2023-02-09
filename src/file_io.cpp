@@ -16,25 +16,25 @@
 
 // @author Changxue Deng <chadeng@cisco.com>
 
-#include <sys/mman.h>
 #include <errno.h>
+#include <sys/mman.h>
 
 #include "file_io.h"
 
 namespace mabain {
 
-FileIO::FileIO(const std::string &fpath, int oflags, int fmode, bool sync)
-        : path(fpath),
-          options(oflags),
-          sync_on_write(sync),
-          mode(fmode)
+FileIO::FileIO(const std::string& fpath, int oflags, int fmode, bool sync)
+    : path(fpath)
+    , options(oflags)
+    , sync_on_write(sync)
+    , mode(fmode)
 {
     fd = -1;
 }
 
 FileIO::~FileIO()
 {
-    if(fd > 0)
+    if (fd > 0)
         close(fd);
 }
 
@@ -47,78 +47,68 @@ int FileIO::Open()
     return fd;
 }
 
-size_t FileIO::Write(const void *data, size_t size)
+size_t FileIO::Write(const void* data, size_t size)
 {
-    if(options & MMAP_ANONYMOUS_MODE)
+    if (options & MMAP_ANONYMOUS_MODE)
         return 0;
 
     size_t bytes_written;
 
-    if(fd > 0)
-    {
+    if (fd > 0) {
         bytes_written = write(fd, data, size);
-        if(sync_on_write) fsync(fd);
-    }
-    else
-    {
+        if (sync_on_write)
+            fsync(fd);
+    } else {
         bytes_written = 0;
     }
 
     return bytes_written;
 }
 
-size_t FileIO::Read(void *buff, size_t size)
+size_t FileIO::Read(void* buff, size_t size)
 {
-    if(options & MMAP_ANONYMOUS_MODE)
+    if (options & MMAP_ANONYMOUS_MODE)
         return 0;
 
     size_t bytes_read;
 
-    if(fd > 0)
-    {
+    if (fd > 0) {
         bytes_read = read(fd, buff, size);
-    }
-    else
-    {
+    } else {
         bytes_read = 0;
     }
 
     return bytes_read;
 }
 
-size_t FileIO::RandomWrite(const void *data, size_t size, off_t offset)
+size_t FileIO::RandomWrite(const void* data, size_t size, off_t offset)
 {
-    if(options & MMAP_ANONYMOUS_MODE)
+    if (options & MMAP_ANONYMOUS_MODE)
         return 0;
 
     size_t bytes_written;
 
-    if(fd > 0)
-    {
+    if (fd > 0) {
         bytes_written = pwrite(fd, data, size, offset);
-        if(sync_on_write) fsync(fd);
-    }
-    else
-    {
+        if (sync_on_write)
+            fsync(fd);
+    } else {
         bytes_written = 0;
     }
 
     return bytes_written;
 }
 
-size_t FileIO::RandomRead(void *buff, size_t size, off_t offset)
+size_t FileIO::RandomRead(void* buff, size_t size, off_t offset)
 {
-    if(options & MMAP_ANONYMOUS_MODE)
+    if (options & MMAP_ANONYMOUS_MODE)
         return 0;
 
     size_t bytes_read;
 
-    if(fd > 0)
-    {
+    if (fd > 0) {
         bytes_read = pread(fd, buff, size, offset);
-    }
-    else
-    {
+    } else {
         bytes_read = 0;
     }
 
@@ -137,8 +127,7 @@ off_t FileIO::SetOffset(off_t offset)
 
 void FileIO::Close()
 {
-    if(fd > 0)
-    {
+    if (fd > 0) {
         close(fd);
         fd = -1;
     }
@@ -151,7 +140,7 @@ bool FileIO::IsOpen() const
 
 int FileIO::TruncateFile(off_t filesize)
 {
-    if(fd > 0)
+    if (fd > 0)
         return ftruncate(fd, filesize);
 
     return 1;
@@ -159,7 +148,7 @@ int FileIO::TruncateFile(off_t filesize)
 
 void FileIO::Flush()
 {
-    if(fd > 0)
+    if (fd > 0)
         fsync(fd);
 }
 
