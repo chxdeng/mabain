@@ -149,7 +149,7 @@ TEST_F(EvictionTest, different_queue_size_test)
     assert(db_async->is_open());
 
     mbconf.options = CONSTS::ACCESS_MODE_READER;
-    mbconf.queue_size =  39;
+    mbconf.queue_size =  3;
     db = new DB(mbconf);
     assert(!db->is_open());
 

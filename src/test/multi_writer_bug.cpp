@@ -79,13 +79,29 @@ void thread_test()
     for (int i = 0; i < num; i++) {
         keystr = tkey_int.get_key(i);
         if (db->Find(keystr, mbd) != MBError::SUCCESS) {
-            if (db->Add(keystr, keystr) != MBError::SUCCESS)
+            if (db->AddAsync(keystr.data(), keystr.size(), keystr.data(), keystr.size()) != MBError::SUCCESS)
                 cnt++;
         }
     }
-    std::cout << "DDD " << cnt << "\n";
+    std::cout << "failed count: " << cnt << "\n";
     std::cout << "===========\n";
     delete db;
+}
+
+static void overwrite_test()
+{
+    DB* db = Initialize();
+    std::string key = "This key is used to test overwrite!";
+    std::string val0 = "This is the original value";
+    assert(MBError::SUCCESS == db->AddAsync(key.data(), key.size(), val0.data(), val0.size(), true));
+    MBData mbd;
+    assert(MBError::SUCCESS == db->Find(key, mbd));
+    assert(val0 == std::string((const char*)mbd.buff, mbd.data_len));
+    std::string val1 = "This is the updated value";
+    assert(MBError::SUCCESS == db->AddAsync(key.data(), key.size(), val1.data(), val1.size(), true));
+    sleep(1); // wait for the async writer to update it
+    assert(MBError::SUCCESS == db->Find(key, mbd));
+    assert(val1 == std::string((const char*)mbd.buff, mbd.data_len));
 }
 
 int main()
@@ -101,6 +117,8 @@ int main()
     for (int i = 0; i < nthread; i++) {
         thr[i].join();
     }
+
+    overwrite_test();
 
     delete db_writer;
     DB::CloseLogFile();

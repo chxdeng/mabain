@@ -85,7 +85,7 @@ int AsyncWriter::StopAsyncThread()
     dict->SHMQ_Signal();
 
     if (tid != 0) {
-        Logger::Log(LOG_LEVEL_INFO, "joining async writer thread");
+        Logger::Log(LOG_LEVEL_DEBUG, "joining async writer thread");
         pthread_join(tid, NULL);
     }
 
@@ -215,7 +215,7 @@ void* AsyncWriter::async_writer_thread()
     bool skip;
     MBPipe mbp(db->GetDBDir(), CONSTS::ACCESS_MODE_WRITER);
 
-    Logger::Log(LOG_LEVEL_INFO, "async writer started");
+    Logger::Log(LOG_LEVEL_DEBUG, "async writer started");
     ResourceCollection rc(*db);
     writer_lock.lock();
     rc.ExceptionRecovery();
@@ -352,7 +352,7 @@ void* AsyncWriter::async_writer_thread()
     }
 
     mbd.buff = NULL;
-    Logger::Log(LOG_LEVEL_INFO, "async writer exiting");
+    Logger::Log(LOG_LEVEL_DEBUG, "async writer exiting");
     return NULL;
 }
 

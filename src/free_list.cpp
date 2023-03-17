@@ -43,7 +43,7 @@ FreeList::FreeList(const std::string& file_path, size_t buff_alignment,
     // The maximal buffer size cannot be greather than 32767.
     assert(GetBufferSizeByIndex(max_n_buff - 1) <= 65535);
 
-    Logger::Log(LOG_LEVEL_INFO, "%s maximum number of buffers: %d", file_path.c_str(),
+    Logger::Log(LOG_LEVEL_DEBUG, "%s maximum number of buffers: %d", file_path.c_str(),
         max_num_buffer);
     buffer_free_list = new MBlsq*[max_num_buffer];
     for (size_t i = 0; i < max_num_buffer; i++) {
@@ -144,7 +144,7 @@ int FreeList::StoreListOnDisk()
         return MBError::OPEN_FAILURE;
     }
 
-    Logger::Log(LOG_LEVEL_INFO, "%s write %lld buffers to list disk: %llu", list_path.c_str(),
+    Logger::Log(LOG_LEVEL_DEBUG, "%s write %lld buffers to list disk: %llu", list_path.c_str(),
         count, tot_size);
     for (size_t buf_index = 0; buf_index < max_num_buffer; buf_index++) {
         int64_t buf_count = buffer_free_list[buf_index]->Count();
@@ -213,7 +213,7 @@ int FreeList::LoadListFromDisk()
         return MBError::WRITE_ERROR;
     }
 
-    Logger::Log(LOG_LEVEL_INFO, "%s read %lld buffers to free list: %llu",
+    Logger::Log(LOG_LEVEL_DEBUG, "%s read %lld buffers to free list: %llu",
         list_path.c_str(), count, tot_size);
 
     return MBError::SUCCESS;

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017 Cisco Inc.
+ * Copyright (C) 2023 Cisco Inc.
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU General Public License, version 2,
@@ -78,7 +78,7 @@ int DB::Close()
         release_file_lock(writer_lock_fd);
         ResourcePool::getInstance().RemoveResourceByDB(mb_dir);
     }
-    Logger::Log(LOG_LEVEL_INFO, "connector %u disconnected from DB", identifier);
+    Logger::Log(LOG_LEVEL_DEBUG, "connector %u disconnected from DB", identifier);
     return rval;
 }
 
@@ -213,7 +213,7 @@ void DB::PreCheckDB(const MBConfig& config, bool& init_header, bool& update_head
             status = MBError::NO_DB;
             return;
         }
-        Logger::Log(LOG_LEVEL_INFO, "connector %u DB options: %d",
+        Logger::Log(LOG_LEVEL_DEBUG, "connector %u DB options: %d",
             config.connect_id, config.options);
         // Check if DB exist. This can be done by check existence of the first index file.
         // If this is the first time the DB is opened and it is in writer mode, then we
@@ -245,7 +245,7 @@ void DB::PostDBUpdate(const MBConfig& config, bool init_header, bool update_head
 {
     if ((config.options & CONSTS::ACCESS_MODE_WRITER) && (init_header || update_header)) {
         if (init_header) {
-            Logger::Log(LOG_LEVEL_INFO, "opened a new db %s", mb_dir.c_str());
+            Logger::Log(LOG_LEVEL_DEBUG, "opened a new db %s", mb_dir.c_str());
         } else {
             Logger::Log(LOG_LEVEL_INFO, "converted %s to version %d.%d.%d", mb_dir.c_str(),
                 version[0], version[1], version[2]);
@@ -281,7 +281,7 @@ void DB::PostDBUpdate(const MBConfig& config, bool init_header, bool update_head
         }
     }
 
-    Logger::Log(LOG_LEVEL_INFO, "connector %u successfully opened DB %s for %s",
+    Logger::Log(LOG_LEVEL_DEBUG, "connector %u successfully opened DB %s for %s",
         identifier, mb_dir.c_str(),
         (config.options & CONSTS::ACCESS_MODE_WRITER) ? "writing" : "reading");
     status = MBError::SUCCESS;
@@ -521,15 +521,36 @@ int DB::Add(const char* key, int len, MBData& mbdata, bool overwrite)
             } catch (int error) {
                 rval = error;
             }
-        } else
+        } else {
             rval = MBError::TRY_AGAIN;
+        }
 
-        if (rval == MBError::TRY_AGAIN) {
+        int retry_cnt = 0;
+        while (rval == MBError::TRY_AGAIN) {
             rval = dict->SHMQ_Add(reinterpret_cast<const char*>(key), len,
                 reinterpret_cast<const char*>(mbdata.buff), mbdata.data_len, overwrite);
+            if (!(mbdata.options & CONSTS::OPTION_SHMQ_RETRY)) {
+                break;
+            }
+            if (retry_cnt++ > MB_SHM_RETRY_TIMEOUT) {
+                break;
+            }
+            usleep(1);
         }
     }
 
+    return rval;
+}
+
+int DB::AddAsync(const char* key, int len, const char* data, int data_len, bool overwrite)
+{
+    MBData mbdata;
+    mbdata.data_len = data_len;
+    mbdata.buff = (uint8_t*)data;
+    mbdata.options |= CONSTS::OPTION_SHMQ_RETRY;
+
+    int rval = Add(key, len, mbdata, overwrite);
+    mbdata.buff = NULL;
     return rval;
 }
 

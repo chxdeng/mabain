@@ -9,4 +9,5 @@ binaries/*
 data/*
 src/test/key_list*
 src/test/mb_test*
+src/test/run_test*
 tmp/*

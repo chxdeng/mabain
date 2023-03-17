@@ -150,7 +150,7 @@ int Dict::Init(uint32_t id)
         return MBError::ALLOCATION_ERROR;
     }
 
-    Logger::Log(LOG_LEVEL_INFO, "connector %u initializing DictMem", id);
+    Logger::Log(LOG_LEVEL_DEBUG, "connector %u initializing DictMem", id);
     mm.InitRootNode();
 
     if (header->data_size > CONSTS::MAX_DATA_SIZE) {
@@ -1163,7 +1163,7 @@ int Dict::UpdateNumWriter(int delta) const
         header->lock_free.offset = MAX_6B_OFFSET;
     }
 
-    Logger::Log(LOG_LEVEL_INFO, "number of writer is set to: %d", header->num_writer);
+    Logger::Log(LOG_LEVEL_DEBUG, "number of writer is set to: %d", header->num_writer);
     return MBError::SUCCESS;
 }
 
@@ -1201,7 +1201,7 @@ int Dict::ExceptionRecovery()
 
     int rval = MBError::SUCCESS;
     if (header->excep_updating_status == EXCEP_STATUS_NONE) {
-        Logger::Log(LOG_LEVEL_INFO, "writer was shutdown successfully previously");
+        Logger::Log(LOG_LEVEL_DEBUG, "writer was shutdown successfully previously");
         return rval;
     }
 

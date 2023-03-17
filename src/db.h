@@ -30,7 +30,8 @@
 
 namespace mabain {
 
-#define MB_MAX_NUM_SHM_QUEUE_NODE 64
+#define MB_MAX_NUM_SHM_QUEUE_NODE 8
+#define MB_SHM_RETRY_TIMEOUT 1000000 // 1 second
 
 class Dict;
 class MBlsq;
@@ -119,6 +120,7 @@ public:
     int Add(const char* key, int len, const char* data, int data_len, bool overwrite = false);
     int Add(const char* key, int len, MBData& data, bool overwrite = false);
     int Add(const std::string& key, const std::string& value, bool overwrite = false);
+    int AddAsync(const char* key, int len, const char* data, int data_len, bool overwrite = false);
     // Find an entry by exact match using a key
     int Find(const char* key, int len, MBData& mdata) const;
     int Find(const std::string& key, MBData& mdata) const;

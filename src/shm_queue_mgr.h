@@ -33,7 +33,7 @@ namespace mabain {
 #define MABAIN_ASYNC_TYPE_BACKUP 5
 
 #define MB_ASYNC_SHM_KEY_SIZE 256
-#define MB_ASYNC_SHM_DATA_SIZE 1024
+#define MB_ASYNC_SHM_DATA_SIZE 0x7FFF
 #define MB_ASYNC_SHM_LOCK_TMOUT 5
 
 typedef struct _AsyncNode {

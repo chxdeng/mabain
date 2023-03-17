@@ -41,7 +41,7 @@ MBPipe::MBPipe(const std::string& mbdir, int mode)
 {
     if (mode & CONSTS::ACCESS_MODE_WRITER) {
         unlink(fifo_path.c_str());
-        Logger::Log(LOG_LEVEL_INFO, "creating pipe %s", fifo_path.c_str());
+        Logger::Log(LOG_LEVEL_DEBUG, "creating pipe %s", fifo_path.c_str());
         if (mkfifo(fifo_path.c_str(), S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH) < 0) {
             Logger::Log(LOG_LEVEL_ERROR, "failed to create fifo %s %s",
                 fifo_path.c_str(), strerror(errno));

@@ -69,13 +69,13 @@ RollableFile::RollableFile(const std::string& fpath, size_t blocksize, size_t me
         if (max_num_block == 0 || max_num_block > MAX_NUM_BLOCK)
             max_num_block = MAX_NUM_BLOCK;
 
-        Logger::Log(LOG_LEVEL_INFO, "maximal block number for %s is %d",
+        Logger::Log(LOG_LEVEL_DEBUG, "maximal block number for %s is %d",
             fpath.c_str(), max_num_block);
 
         if (rc_offset_percentage == 0 || rc_offset_percentage > 100 || rc_offset_percentage < 50)
             rc_offset_percentage = RC_OFFSET_PERCENTAGE;
 
-        Logger::Log(LOG_LEVEL_INFO, "rc_offset_percentage is set to %d", rc_offset_percentage);
+        Logger::Log(LOG_LEVEL_DEBUG, "rc_offset_percentage is set to %d", rc_offset_percentage);
     }
 
     Logger::Log(LOG_LEVEL_DEBUG, "opening rollable file %s for %s, mmap size: %d",
@@ -88,13 +88,13 @@ RollableFile::RollableFile(const std::string& fpath, size_t blocksize, size_t me
             Logger::Log(LOG_LEVEL_WARN, "failed to get page size, turning off sliding memory");
             sliding_mmap = false;
         } else {
-            Logger::Log(LOG_LEVEL_INFO, "sliding mmap is turned on for " + fpath);
+            Logger::Log(LOG_LEVEL_DEBUG, "sliding mmap is turned on for " + fpath);
         }
     }
 
     files.assign(3, NULL);
     if (mode & CONSTS::SYNC_ON_WRITE)
-        Logger::Log(LOG_LEVEL_INFO, "Sync is turned on for " + fpath);
+        Logger::Log(LOG_LEVEL_DEBUG, "Sync is turned on for " + fpath);
 }
 
 void RollableFile::InitShmSlidingAddr(std::atomic<size_t>* shm_sliding_addr)
