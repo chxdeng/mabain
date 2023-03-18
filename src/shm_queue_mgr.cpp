@@ -77,7 +77,7 @@ shm_lock_and_queue* ShmQueueMgr::CreateFile(uint64_t qid, int qsize,
         if (init_queue)
             slaq->initialized = 0;
         if (slaq->initialized == 0) {
-            Logger::Log(LOG_LEVEL_INFO, "initializing shared memory queue");
+            Logger::Log(LOG_LEVEL_DEBUG, "initializing shared memory queue");
             InitShmObjects(slaq, qsize);
         }
     } else {

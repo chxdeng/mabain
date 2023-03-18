@@ -38,6 +38,7 @@ public:
     static const int OPTION_INTERNAL_NODE_BOUND;
     static const int MAX_KEY_LENGHTH;
     static const int MAX_DATA_SIZE;
+    static const int OPTION_SHMQ_RETRY;
 
     static int WriterOptions();
     static int ReaderOptions();
