@@ -277,8 +277,10 @@ void ResourceCollection::Finish()
     header->rc_m_index_off_pre = 0;
     header->rc_m_data_off_pre = 0;
 
-    dict->RemoveUnused(header->m_data_offset, true);
-    dmm->RemoveUnused(header->m_index_offset, true);
+    // TODO the temp file cannot be removed here. It could cause some
+    // rare race conditons.
+    //dict->RemoveUnused(header->m_data_offset, true);
+    //dmm->RemoveUnused(header->m_index_offset, true);
 }
 
 bool ResourceCollection::MoveIndexBuffer(int phase, size_t& offset_src, int size)

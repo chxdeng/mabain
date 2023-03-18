@@ -158,6 +158,7 @@ int main(int argc, char* argv[])
     }
 
     DB::SetLogFile(std::string(mbdir) + "/mabain.log");
+    DB::LogDebug();
     SetTestStatus(false);
     run_mb_test(NULL);
     DB::CloseLogFile();
