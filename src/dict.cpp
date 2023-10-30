@@ -412,19 +412,19 @@ int Dict::ReadDataFromNode(MBData& data, const uint8_t* node_ptr) const
     return MBError::SUCCESS;
 }
 
-int Dict::FindPrefix(const uint8_t* key, int len, MBData& data, AllPrefixResults* presults)
+int Dict::FindPrefix(const uint8_t* key, int len, MBData& data)
 {
     int rval;
     MBData data_rc;
     size_t rc_root_offset = header->rc_root_offset.load(MEMORY_ORDER_READER);
     if (rc_root_offset != 0) {
         reader_rc_off = rc_root_offset;
-        rval = FindPrefix_Internal(rc_root_offset, key, len, data_rc, presults);
+        rval = FindPrefix_Internal(rc_root_offset, key, len, data_rc);
 #ifdef __LOCK_FREE__
         while (rval == MBError::TRY_AGAIN) {
             nanosleep((const struct timespec[]) { { 0, 10L } }, NULL);
             data_rc.Clear();
-            rval = FindPrefix_Internal(rc_root_offset, key, len, data_rc, presults);
+            rval = FindPrefix_Internal(rc_root_offset, key, len, data_rc);
         }
 #endif
         if (rval != MBError::NOT_EXIST && rval != MBError::SUCCESS)
@@ -438,12 +438,12 @@ int Dict::FindPrefix(const uint8_t* key, int len, MBData& data, AllPrefixResults
         }
     }
 
-    rval = FindPrefix_Internal(0, key, len, data, presults);
+    rval = FindPrefix_Internal(0, key, len, data);
 #ifdef __LOCK_FREE__
     while (rval == MBError::TRY_AGAIN) {
         nanosleep((const struct timespec[]) { { 0, 10L } }, NULL);
         data.Clear();
-        rval = FindPrefix_Internal(0, key, len, data, presults);
+        rval = FindPrefix_Internal(0, key, len, data);
     }
 #endif
 
@@ -455,8 +455,7 @@ int Dict::FindPrefix(const uint8_t* key, int len, MBData& data, AllPrefixResults
     return rval;
 }
 
-int Dict::FindPrefix_Internal(size_t root_off, const uint8_t* key, int len, MBData& data,
-    AllPrefixResults* presults)
+int Dict::FindPrefix_Internal(size_t root_off, const uint8_t* key, int len, MBData& data)
 {
     int rval;
     EdgePtrs& edge_ptrs = data.edge_ptrs;
@@ -525,17 +524,7 @@ int Dict::FindPrefix_Internal(size_t root_off, const uint8_t* key, int len, MBDa
             if (rval != MBError::READ_ERROR) {
                 if (node_buff[0] & FLAG_NODE_MATCH) {
                     data.match_len = p - key;
-                    if (data.options & CONSTS::OPTION_ALL_PREFIX) {
-                        int rc = ReadDataFromNode(data, node_buff);
-                        if (rc == MBError::SUCCESS) {
-                            presults->results.push_back(PrefixResult(data.match_len, data.data_len, (char*)data.buff));
-                            data.buff = nullptr;
-                            data.buff_len = 0;
-                        } else
-                            rval = rc;
-                    } else {
-                        memcpy(last_node_buffer, node_buff, NODE_EDGE_KEY_FIRST);
-                    }
+                    memcpy(last_node_buffer, node_buff, NODE_EDGE_KEY_FIRST);
                     last_prefix_rval = MBError::SUCCESS;
                 }
             }

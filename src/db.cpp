@@ -39,8 +39,8 @@
 
 namespace mabain {
 
-// Current mabain version 1.4.0
-uint16_t version[4] = { 1, 4, 0, 0 };
+// Current mabain version 1.4.1
+uint16_t version[4] = { 1, 4, 1, 0 };
 
 DB::~DB()
 {
@@ -419,6 +419,32 @@ const char* DB::StatusStr() const
     return MBError::get_error_str(status);
 }
 
+// Check if key is in DB
+bool DB::InDB(const char* key, int len, int& err)
+{
+    err = MBError::SUCCESS;
+    if (key == nullptr || len == 0) {
+        return false;
+    }
+    if (status != MBError::SUCCESS) {
+        err = MBError::NOT_INITIALIZED;
+        return false;
+    }
+    // Writer in async mode cannot be used for lookup
+    if (options & CONSTS::ASYNC_WRITER_MODE) {
+        err = MBError::NOT_ALLOWED;
+        return false;
+    }
+    MBData data(0, CONSTS::OPTION_FIND_AND_STORE_PARENT);
+    int rval = dict->Find(reinterpret_cast<const uint8_t*>(key), len, data);
+    if (rval == MBError::IN_DICT) {
+        return true; // found it
+    } else if (rval != MBError::NOT_EXIST) {
+        err = rval; // error
+    }
+    return false;
+}
+
 // Find the exact key match
 int DB::Find(const char* key, int len, MBData& mdata) const
 {
@@ -457,27 +483,6 @@ int DB::FindLowerBound(const char* key, int len, MBData& data) const
     return dict->FindBound(0, reinterpret_cast<const uint8_t*>(key), len, data);
 }
 
-// Find all possible prefix matches.
-int DB::FindPrefix(const std::string& key, AllPrefixResults& results)
-{
-    if (status != MBError::SUCCESS)
-        return MBError::NOT_INITIALIZED;
-    // Writer in async mode cannot be used for lookup
-    if (options & CONSTS::ASYNC_WRITER_MODE)
-        return MBError::NOT_ALLOWED;
-
-    MBData data;
-    int rval;
-    data.options |= CONSTS::OPTION_ALL_PREFIX;
-    rval = dict->FindPrefix((const uint8_t*)key.data(), key.size(), data, &results);
-    if (rval == MBError::SUCCESS) {
-        results.results.push_back(PrefixResult(data.match_len, data.data_len, (char*)data.buff));
-        data.buff = nullptr;
-        data.buff_len = 0;
-    }
-    return rval;
-}
-
 // Find the longest prefix match
 int DB::FindLongestPrefix(const char* key, int len, MBData& data) const
 {
@@ -491,7 +496,7 @@ int DB::FindLongestPrefix(const char* key, int len, MBData& data) const
 
     data.match_len = 0;
 
-    return dict->FindPrefix(reinterpret_cast<const uint8_t*>(key), len, data, nullptr);
+    return dict->FindPrefix(reinterpret_cast<const uint8_t*>(key), len, data);
 }
 
 int DB::FindLongestPrefix(const std::string& key, MBData& data) const
@@ -585,6 +590,25 @@ int DB::Remove(const char* key, int len)
         rval = dict->SHMQ_Remove(reinterpret_cast<const char*>(key), len);
     }
 
+    return rval;
+}
+
+int DB::RemoveAsync(const char* key, int len)
+{
+    if (key == nullptr || len == 0)
+        return MBError::INVALID_ARG;
+    if (status != MBError::SUCCESS)
+        return MBError::NOT_INITIALIZED;
+
+    int rval = MBError::SUCCESS;
+    int retry_cnt = 0;
+    do {
+        rval = dict->SHMQ_Remove(reinterpret_cast<const char*>(key), len);
+        if (rval != MBError::TRY_AGAIN || retry_cnt++ > MB_SHM_RETRY_TIMEOUT) {
+            break;
+        }
+        usleep(1);
+    } while (true);
     return rval;
 }
 
