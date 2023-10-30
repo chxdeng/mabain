@@ -196,7 +196,6 @@ static void prefix_lookup_test(std::string& list_file, MBConfig& mbconf, int64_t
     assert(in.is_open());
     int count = 0;
     std::string line;
-    MBData data(256, CONSTS::OPTION_ALL_PREFIX);
     struct timeval start, stop;
     int nfound = 0;
     gettimeofday(&start, NULL);
@@ -205,9 +204,9 @@ static void prefix_lookup_test(std::string& list_file, MBConfig& mbconf, int64_t
             continue;
         }
 
-        AllPrefixResults result;
-        db.FindPrefix(line, result);
-        nfound += result.results.size();
+        for (DB::iterator iter = db.begin(line); iter != db.end(); ++iter) {
+            nfound++;
+        }
         count++;
         if (count % 1000000 == 0)
             std::cout << "Looked up " << count << "\n";

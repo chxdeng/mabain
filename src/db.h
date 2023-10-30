@@ -69,6 +69,7 @@ public:
         std::string key;
         MBData value;
         int match;
+        std::string prefix;
 
         iterator(const DB& db, int iter_state);
         // Copy constructor
@@ -82,6 +83,7 @@ public:
         const iterator& operator++();
 
     private:
+        bool match_prefix(const std::string& key);
         int get_node_offset(const std::string& node_key, size_t& parent_edge_off,
             size_t& node_offset);
         int load_node(const std::string& curr_node_key, size_t& parent_edge_off);
@@ -121,20 +123,21 @@ public:
     int Add(const char* key, int len, MBData& data, bool overwrite = false);
     int Add(const std::string& key, const std::string& value, bool overwrite = false);
     int AddAsync(const char* key, int len, const char* data, int data_len, bool overwrite = false);
+    // Check if a key exists in DB
+    bool InDB(const char* key, int len, int& err);
     // Find an entry by exact match using a key
     int Find(const char* key, int len, MBData& mdata) const;
     int Find(const std::string& key, MBData& mdata) const;
     // Find the longest prefix match using a key
     int FindLongestPrefix(const char* key, int len, MBData& data) const;
     int FindLongestPrefix(const std::string& key, MBData& data) const;
-    // Find all possible prefix matches using a key
-    int FindPrefix(const std::string& key, AllPrefixResults& result);
     // Find lower bound does not support reader/writer concurrency currently.
     // FindLowerBound returns that largest entry that is not greater than the given key.
     int FindLowerBound(const char* key, int len, MBData& data) const;
     int FindLowerBound(const std::string& key, MBData& data) const;
     // Remove an entry using a key
     int Remove(const char* key, int len);
+    int RemoveAsync(const char* key, int len);
     int Remove(const std::string& key);
     int RemoveAll();
     int RemoveAllSync();
@@ -196,6 +199,7 @@ public:
 
     //iterator
     const iterator begin(bool check_async_mode = true, bool rc_mode = false) const;
+    const iterator begin(const std::string& prefix) const;
     const iterator end() const;
 
 private:

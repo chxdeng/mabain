@@ -64,30 +64,6 @@ typedef struct _EdgePtrs {
     size_t parent_offset;
 } EdgePtrs;
 
-class PrefixResult {
-public:
-    PrefixResult(short ml, short dl, char* bf)
-        : match_len(ml)
-        , data_len(dl)
-        , buff(bf)
-    {
-    }
-    short match_len;
-    short data_len;
-    char* buff;
-};
-
-class AllPrefixResults {
-public:
-    AllPrefixResults() { }
-    ~AllPrefixResults()
-    {
-        for (unsigned i = 0; i < results.size(); i++)
-            free(results[i].buff);
-    }
-    std::vector<PrefixResult> results;
-};
-
 // Data class for find and remove
 // All memeber variable in this class should be kept public so that it can
 // be easily accessed by the caller to get the data/value buffer and buffer len.

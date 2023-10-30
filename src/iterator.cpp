@@ -72,15 +72,29 @@ static iterator_node* new_iterator_node(const std::string& key, MBData* mbdata)
 // for(DB::iterator iter = db.begin(); iter != db.end(); ++iter) {
 //     std::cout << iter.key << "\n";
 // }
+// To match all pairs under a prefix subtree
+// for(DB::iterator iter = db.begin(prefix); iter != db.end(); ++iter) {
+//     std::cout << iter.key << "\n";
+// }
 /////////////////////////////////////////////////////////////////////
 
 const DB::iterator DB::begin(bool check_async_mode, bool rc_mode) const
 {
     DB::iterator iter = iterator(*this, DB_ITER_STATE_INIT);
+    iter.prefix = "";
     if (rc_mode)
         iter.value.options |= CONSTS::OPTION_RC_MODE;
     iter.init(check_async_mode);
 
+    return iter;
+}
+
+// iterator for all prefix match
+const DB::iterator DB::begin(const std::string& prefix) const
+{
+    DB::iterator iter = iterator(*this, DB_ITER_STATE_INIT);
+    iter.prefix = prefix;
+    iter.init(true);
     return iter;
 }
 
@@ -171,6 +185,18 @@ bool DB::iterator::operator!=(const iterator& rhs)
     return state != rhs.state;
 }
 
+// match the key with prefix or prefix with key
+bool DB::iterator::match_prefix(const std::string& key)
+{
+    if (prefix.size() == 0 || key.size() == 0) {
+        return true;
+    }
+    if (key.size() <= prefix.size()) {
+        return memcmp(key.data(), prefix.data(), key.size()) == 0;
+    }
+    return memcmp(key.data(), prefix.data(), prefix.size()) == 0;
+}
+
 int DB::iterator::get_node_offset(const std::string& node_key,
     size_t& parent_edge_off,
     size_t& node_offset)
@@ -227,24 +253,26 @@ int DB::iterator::load_kvs(const std::string& curr_node_key,
             break;
 
         match_str = curr_node_key + match_str;
-        if (child_node_off > 0) {
-            inode = new_iterator_node(match_str, NULL);
-            if (inode != NULL) {
-                rval = child_node_list->AddToTail(inode);
-                if (rval != MBError::SUCCESS) {
-                    free_iterator_node(inode);
-                    return rval;
+        if (match_prefix(match_str)) {
+            if (child_node_off > 0) {
+                inode = new_iterator_node(match_str, NULL);
+                if (inode != NULL) {
+                    rval = child_node_list->AddToTail(inode);
+                    if (rval != MBError::SUCCESS) {
+                        free_iterator_node(inode);
+                        return rval;
+                    }
                 }
             }
-        }
 
-        if (match != MATCH_NONE) {
-            inode = new_iterator_node(match_str, &value);
-            if (inode != NULL) {
-                rval = kv_per_node->AddToTail(inode);
-                if (rval != MBError::SUCCESS) {
-                    free_iterator_node(inode);
-                    return rval;
+            if (match != MATCH_NONE) {
+                inode = new_iterator_node(match_str, &value);
+                if (inode != NULL) {
+                    rval = kv_per_node->AddToTail(inode);
+                    if (rval != MBError::SUCCESS) {
+                        free_iterator_node(inode);
+                        return rval;
+                    }
                 }
             }
         }

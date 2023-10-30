@@ -101,7 +101,7 @@ static void show_help()
     std::cout << "\tfind(\"key\")\t\tsearch entry by key\n";
     std::cout << "\tfindPrefix(\"key\")\tsearch entry by key using longest prefix match\n";
     std::cout << "\tfindLower(\"key\")\tsearch entry by key using lower bound if not found\n";
-    std::cout << "\tfindAll\t\t\tlist all entries\n";
+    std::cout << "\tfindAll(\"prefix\")\t\tlist all entries for the prefix\n";
     std::cout << "\tinsert(\"key\":\"value\")\tinsert a key-value pair\n";
     std::cout << "\treplace(\"key\":\"value\")\treplace a key-value pair\n";
     std::cout << "\tdelete(\"key\")\t\tdelete entry by key\n";
@@ -254,8 +254,14 @@ static int parse_command(std::string& cmd,
             if (expr.Evaluate(key) < 0)
                 return COMMAND_PARSING_ERROR;
             return COMMAND_FIND_LOWER_BOUND;
-        } else if (cmd.compare("findAll") == 0)
+        } else if (cmd.compare(0, 8, "findAll(") == 0) {
+            if (cmd[cmd.length() - 1] != ')')
+                return COMMAND_UNKNOWN;
+            ExprParser expr(cmd.substr(8, cmd.length() - 9));
+            if (expr.Evaluate(key) < 0)
+                return COMMAND_PARSING_ERROR;
             return COMMAND_FIND_ALL;
+        }
         break;
     case 'd':
         if (cmd.compare(0, 7, "delete(") == 0) {
@@ -322,13 +328,13 @@ static int parse_command(std::string& cmd,
 }
 
 #define ENTRY_PER_PAGE 20
-static void display_all_kvs(DB* db)
+static void display_all_kvs(DB* db, const std::string& prefix)
 {
     if (db == NULL)
         return;
 
     int count = 0;
-    for (DB::iterator iter = db->begin(); iter != db->end(); ++iter) {
+    for (DB::iterator iter = db->begin(prefix); iter != db->end(); ++iter) {
         count++;
         std::cout << iter.key << ": " << std::string((char*)iter.value.buff, iter.value.data_len) << "\n";
         if (count % ENTRY_PER_PAGE == 0) {
@@ -423,7 +429,7 @@ static int RunCommand(int mode, DB* db, int cmd_id, const std::string& key,
         std::cout << MBError::get_error_str(rval) << "\n";
         break;
     case COMMAND_FIND_ALL:
-        display_all_kvs(db);
+        display_all_kvs(db, key);
         break;
     case COMMAND_RESET_N_WRITER:
         if (mode & CONSTS::ACCESS_MODE_WRITER)
