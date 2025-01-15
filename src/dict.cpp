@@ -27,6 +27,7 @@
 #include "error.h"
 #include "integer_4b_5b.h"
 #include "mabain_consts.h"
+#include "mb_mm.h"
 
 #define DATA_HEADER_SIZE 32
 
@@ -47,8 +48,7 @@ Dict::Dict(const std::string& mbdir, bool init_header, int datasize,
     int max_num_index_blk, int max_num_data_blk,
     int64_t entry_per_bucket, uint32_t queue_size,
     const char* queue_dir)
-    : DRMBase(mbdir, db_options, false, false)
-    , options(db_options)
+    : DRMBase(mbdir, db_options, false)
     , mm(mbdir, init_header, memsize_index, db_options, block_sz_idx, max_num_index_blk, queue_size)
     , queue(NULL)
 {
@@ -340,10 +340,10 @@ int Dict::DeleteDataFromEdge(MBData& data, EdgePtrs& edge_ptrs)
         if (ReadData(reinterpret_cast<uint8_t*>(&data_len), DATA_SIZE_BYTE, data_off)
             != DATA_SIZE_BYTE)
             return MBError::READ_ERROR;
-        if (jemm) {
-            rel_size = free_lists->GetAlignmentSize(data_len + DATA_HDR_BYTE);
-        } else {
+        if (options & CONSTS::OPTION_JEMALLOC) {
             rel_size = data_len + DATA_HDR_BYTE;
+        } else {
+            rel_size = free_lists->GetAlignmentSize(data_len + DATA_HDR_BYTE);
         }
         header->pending_data_buff_size += rel_size;
         ReleaseBuffer(data_off, rel_size);
@@ -372,10 +372,10 @@ int Dict::DeleteDataFromEdge(MBData& data, EdgePtrs& edge_ptrs)
                 != DATA_SIZE_BYTE)
                 return MBError::READ_ERROR;
 
-            if (jemm) {
-                rel_size = free_lists->GetAlignmentSize(data_len + DATA_HDR_BYTE);
-            } else {
+            if (options & CONSTS::OPTION_JEMALLOC) {
                 rel_size = data_len + DATA_HDR_BYTE;
+            } else {
+                rel_size = free_lists->GetAlignmentSize(data_len + DATA_HDR_BYTE);
             }
             header->pending_data_buff_size += rel_size;
             ReleaseBuffer(data_off, rel_size);
@@ -759,6 +759,11 @@ void Dict::PrintStats(std::ostream& out_stream) const
     if (status != MBError::SUCCESS)
         return;
 
+    if (options & CONSTS::OPTION_JEMALLOC) {
+        kv_file->Purge();
+        out_stream << "Number of arenas: " << MemoryManager::mb_get_num_arenas() << std::endl;
+        out_stream << "Total allocated size: " << MemoryManager::mb_total_allocated() << std::endl;
+    }
     out_stream << "DB stats:\n";
     out_stream << "\tNumber of DB writer: " << header->num_writer << std::endl;
     out_stream << "\tNumber of DB reader: " << header->num_reader << std::endl;
@@ -766,10 +771,13 @@ void Dict::PrintStats(std::ostream& out_stream) const
     out_stream << "\tEntry count per bucket: " << header->entry_per_bucket << std::endl;
     out_stream << "\tEviction bucket index: " << header->eviction_bucket_index << std::endl;
     out_stream << "\tData block size: " << header->data_block_size << std::endl;
-    out_stream << "\tData size: " << header->m_data_offset << std::endl;
-    out_stream << "\tPending Buffer Size: " << header->pending_data_buff_size << std::endl;
-    if (free_lists)
-        out_stream << "\tTrackable Buffer Size: " << free_lists->GetTotSize() << std::endl;
+    if (options & CONSTS::OPTION_JEMALLOC) {
+        out_stream << "\tAllocated buffer size: " << kv_file->Allocated() << std::endl;
+    } else if (free_lists != nullptr) {
+        out_stream << "\tData size: " << header->m_data_offset << std::endl;
+        out_stream << "\tPending buffer size: " << header->pending_data_buff_size << std::endl;
+        out_stream << "\tTrackable buffer size: " << free_lists->GetTotSize() << std::endl;
+    }
     mm.PrintStats(out_stream);
 
     kv_file->PrintStats(out_stream);
@@ -966,8 +974,11 @@ int Dict::Remove(const uint8_t* key, int len, MBData& data)
 
 int Dict::RemoveAll()
 {
+    if (options & CONSTS::OPTION_JEMALLOC) {
+        // TODO
+        return MBError::SUCCESS;
+    }
     int rval = MBError::SUCCESS;
-    ;
     for (int c = 0; c < NUM_ALPHABET; c++) {
         rval = mm.ClearRootEdge(c);
         if (rval != MBError::SUCCESS)
@@ -978,7 +989,7 @@ int Dict::RemoveAll()
 
     header->count = 0;
     header->m_data_offset = GetStartDataOffset();
-    if (jemm) {
+    if (options & CONSTS::OPTION_JEMALLOC) {
         //TODO implement this
     } else {
         free_lists->Empty();
@@ -1003,8 +1014,22 @@ AsyncNode* Dict::GetAsyncQueuePtr() const
 // Reserve buffer and write to it
 void Dict::ReserveData(const uint8_t* buff, int size, size_t& offset)
 {
-    if (jemm) {
-        //TODO implement this
+    if (options & CONSTS::OPTION_JEMALLOC) {
+        int buf_size = size + DATA_HDR_BYTE;
+        void* ptr = kv_file->Malloc(buf_size, offset);
+        if (ptr == NULL) {
+            Logger::Log(LOG_LEVEL_ERROR, "failed to allocate memory for data buffer");
+            throw MBError::NO_MEMORY;
+        }
+        uint16_t dsize[2];
+        dsize[0] = static_cast<uint16_t>(size);
+        // store bucket index for LRU eviction
+        dsize[1] = (header->num_update / header->entry_per_bucket) % 0xFFFF;
+        if (dsize[1] == header->eviction_bucket_index && header->num_update > header->entry_per_bucket) {
+            header->eviction_bucket_index++;
+        }
+        memcpy(ptr, &dsize[0], DATA_HDR_BYTE);
+        memcpy(static_cast<uint8_t*>(ptr) + DATA_HDR_BYTE, buff, size);
     } else {
         reserveDataFL(buff, size, offset);
     }
@@ -1067,8 +1092,8 @@ int Dict::ReleaseBuffer(size_t offset, int size)
 #ifdef __DEBUG__
     remove_tracking_buffer(offset, size);
 #endif
-    if (jemm) {
-        //TODO implement this
+    if (options & CONSTS::OPTION_JEMALLOC) {
+        kv_file->Free(offset);
         return MBError::SUCCESS;
     } else {
         return free_lists->ReleaseBuffer(offset, size);
@@ -1078,8 +1103,8 @@ int Dict::ReleaseBuffer(size_t offset, int size)
 void Dict::ReleaseAlignmentBuffer(size_t offset, size_t alignment_off)
 {
     // alignment is not a real buffer, so no need to track it
-    if (jemm) {
-        //TODO implement this (no-op)
+    if (options & CONSTS::OPTION_JEMALLOC) {
+        // no-op
     } else {
         free_lists->ReleaseAlignmentBuffer(offset, alignment_off);
     }
@@ -1090,8 +1115,8 @@ int Dict::ReleaseBuffer(size_t offset)
 #ifdef __DEBUG__
     remove_tracking_buffer(offset);
 #endif
-    if (jemm) {
-        // TODO: Implement this
+    if (options & CONSTS::OPTION_JEMALLOC) {
+        kv_file->Free(offset);
         return MBError::SUCCESS;
     } else {
         uint16_t data_size;
@@ -1331,13 +1356,18 @@ int Dict::ExceptionRecovery()
 
 void Dict::WriteData(const uint8_t* buff, unsigned len, size_t offset) const
 {
-    if (offset + len > header->m_data_offset) {
-        std::cerr << "invalid dict write: " << offset << " " << len << " "
-                  << header->m_data_offset << "\n";
-        throw(int) MBError::OUT_OF_BOUND;
-    }
+    if (options & CONSTS::OPTION_JEMALLOC) {
+        kv_file->Memcpy(buff, len, offset);
+    } else {
+        if (offset + len > header->m_data_offset) {
+            std::cerr << "invalid dict write: " << offset << " " << len << " "
+                      << header->m_data_offset << "\n";
+            throw(int) MBError::OUT_OF_BOUND;
+        }
 
-    if (kv_file->RandomWrite(buff, len, offset) != len)
-        throw(int) MBError::WRITE_ERROR;
+        if (kv_file->RandomWrite(buff, len, offset) != len)
+            throw(int) MBError::WRITE_ERROR;
+    }
 }
+
 }

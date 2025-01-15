@@ -64,7 +64,7 @@ namespace mabain {
 
 DictMem::DictMem(const std::string& mbdir, bool init_header, size_t memsize,
     int mode, uint32_t block_size, int max_num_blk, uint32_t queue_size)
-    : DRMBase(mbdir, mode, true, false)
+    : DRMBase(mbdir, mode, true)
     , is_valid(false)
 {
     root_offset = 0;
@@ -587,8 +587,13 @@ bool DictMem::FindNext(const unsigned char* key, int keylen, int& match_len,
 bool DictMem::ReserveNode(int nt, size_t& offset, uint8_t*& ptr)
 {
     bool ret;
-    if (jemm) {
-        // TODO use jemalloc
+    if (options & CONSTS::OPTION_JEMALLOC) {
+        size_t buf_size = node_size[nt];
+        ptr = (uint8_t*)kv_file->Malloc(buf_size, offset);
+        if (ptr == nullptr) {
+            Logger::Log(LOG_LEVEL_ERROR, "failed to allocate node buffer");
+            throw MBError::NO_MEMORY;
+        }
         ret = false;
     } else {
         ret = reserveNodeFL(nt, offset, ptr);
@@ -655,8 +660,13 @@ bool DictMem::reserveNodeFL(int nt, size_t& offset, uint8_t*& ptr)
 // Reserve buffer for a new key
 void DictMem::ReserveData(const uint8_t* key, int size, size_t& offset, bool map_new_sliding)
 {
-    if (jemm) {
-        // TODO use jemalloc
+    if (options & CONSTS::OPTION_JEMALLOC) {
+        void* ptr = kv_file->Malloc(size, offset);
+        if (ptr == nullptr) {
+            Logger::Log(LOG_LEVEL_ERROR, "failed to allocate buffer");
+            throw MBError::NO_MEMORY;
+        }
+        memcpy(ptr, key, size);
     } else {
         reserveDataFL(key, size, offset, map_new_sliding);
     }
@@ -716,8 +726,8 @@ void DictMem::ReleaseNode(size_t offset, int nt)
 #ifdef __DEBUG__
     remove_tracking_buffer(offset);
 #endif
-    if (jemm) {
-        // TODO use jemalloc
+    if (options & CONSTS::OPTION_JEMALLOC) {
+        kv_file->Free(offset);
     } else {
         releaseNodeFL(offset, nt);
     }
@@ -743,8 +753,8 @@ void DictMem::ReleaseBuffer(size_t offset, int size)
 #ifdef __DEBUG__
     remove_tracking_buffer(offset, size);
 #endif
-    if (jemm) {
-        // TODO use jemalloc
+    if (options & CONSTS::OPTION_JEMALLOC) {
+        kv_file->Free(offset);
     } else {
         releaseBufferFL(offset, size);
     }
@@ -1191,9 +1201,13 @@ void DictMem::PrintStats(std::ostream& out_stream) const
     out_stream << "\tEdge string size: " << header->edge_str_size << std::endl;
     out_stream << "\tEdge size: " << header->n_edges * EDGE_SIZE << std::endl;
     out_stream << "\tException flag: " << header->excep_updating_status << std::endl;
-    out_stream << "\tPending Buffer Size: " << header->pending_index_buff_size << std::endl;
-    if (free_lists != NULL)
-        out_stream << "\tTrackable Buffer Size: " << free_lists->GetTotSize() << std::endl;
+    if (options & CONSTS::OPTION_JEMALLOC) {
+        kv_file->Purge();
+        out_stream << "\tAllocated buffer size: " << kv_file->Allocated() << std::endl;
+    } else if (free_lists != nullptr) {
+        out_stream << "\tPending buffer size: " << header->pending_index_buff_size << std::endl;
+        out_stream << "\tTrackable buffer size: " << free_lists->GetTotSize() << std::endl;
+    }
     kv_file->PrintStats(out_stream);
 #ifdef __DEBUG__
     out_stream << "Size of index tracking buffer: " << buffer_map.size() << std::endl;
@@ -1220,14 +1234,18 @@ void DictMem::Flush() const
 
 void DictMem::WriteData(const uint8_t* buff, unsigned len, size_t offset) const
 {
-    if (offset + len > header->m_index_offset) {
-        std::cerr << "invalid dmm write: " << offset << " " << len << " "
-                  << header->m_index_offset << "\n";
-        throw(int) MBError::OUT_OF_BOUND;
-    }
+    if (options & CONSTS::OPTION_JEMALLOC) {
+        kv_file->Memcpy(buff, len, offset);
+    } else {
+        if (offset + len > header->m_index_offset) {
+            std::cerr << "invalid dmm write: " << offset << " " << len << " "
+                      << header->m_index_offset << "\n";
+            throw(int) MBError::OUT_OF_BOUND;
+        }
 
-    if (kv_file->RandomWrite(buff, len, offset) != len)
-        throw(int) MBError::WRITE_ERROR;
+        if (kv_file->RandomWrite(buff, len, offset) != len)
+            throw(int) MBError::WRITE_ERROR;
+    }
 }
 
 }

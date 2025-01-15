@@ -6,6 +6,11 @@
 #./key_list_5 tracking_buffer 750000000 remove 0
 #./key_list_6 tracking_buffer 750000000 remove 0
 #	#	1	#	0
+./key_list_1 jemalloc 256000000 remove 0
+./key_list_1 jemalloc 256000000 remove 0
+./key_list_1 jemalloc 256000000 remove 0
+./key_list_2 jemalloc 256000000 remove 0
+#	#	1	#	0
 ./key_list_1 load 1000000 keep 49998
 ./key_list_1 update 1000000 keep 49998
 ./key_list_1 iterator 1000000 keep 49998

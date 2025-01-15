@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2017 Cisco Inc.
+ * Copyright (C) 2025 Cisco Inc.
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU General Public License, version 2,
@@ -506,6 +506,10 @@ void ResourceCollection::ProcessRCTree()
 
 int ResourceCollection::ExceptionRecovery()
 {
+    if (db_ref.GetDBOptions() & CONSTS::OPTION_JEMALLOC) {
+        // cannot do exception recovery for jemalloc mode since jemalloc memory does not survive restart
+        return MBError::RC_SKIPPED;
+    }
     if (!db_ref.is_open())
         return db_ref.Status();
 

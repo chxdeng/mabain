@@ -140,14 +140,18 @@ private:
 
 inline void DictMem::WriteEdge(const EdgePtrs& edge_ptrs) const
 {
-    if (edge_ptrs.offset + EDGE_SIZE > header->m_index_offset) {
-        std::cerr << "invalid edge write: " << edge_ptrs.offset << " " << EDGE_SIZE
-                  << " " << header->m_index_offset << "\n";
-        throw(int) MBError::OUT_OF_BOUND;
-    }
+    if (options & CONSTS::OPTION_JEMALLOC) {
+        kv_file->Memcpy(edge_ptrs.ptr, EDGE_SIZE, edge_ptrs.offset);
+    } else {
+        if (edge_ptrs.offset + EDGE_SIZE > header->m_index_offset) {
+            std::cerr << "invalid edge write: " << edge_ptrs.offset << " " << EDGE_SIZE
+                      << " " << header->m_index_offset << "\n";
+            throw(int) MBError::OUT_OF_BOUND;
+        }
 
-    if (kv_file->RandomWrite(edge_ptrs.ptr, EDGE_SIZE, edge_ptrs.offset) != EDGE_SIZE)
-        throw(int) MBError::WRITE_ERROR;
+        if (kv_file->RandomWrite(edge_ptrs.ptr, EDGE_SIZE, edge_ptrs.offset) != EDGE_SIZE)
+            throw(int) MBError::WRITE_ERROR;
+    }
 }
 
 inline size_t DictMem::GetRootOffset() const
@@ -183,7 +187,6 @@ inline void DictMem::InitNodePtrs(uint8_t* ptr, int nt, NodePtrs& node_ptrs)
     node_ptrs.edge_key_ptr = ptr + NODE_EDGE_KEY_FIRST;
     node_ptrs.edge_ptr = node_ptrs.edge_key_ptr + nt;
 }
-
 }
 
 #endif

@@ -43,6 +43,18 @@ MemoryManager::MemoryManager(void* addr, size_t size)
     configure_jemalloc();
 }
 
+MemoryManager::~MemoryManager()
+{
+    if (extent_hooks != nullptr) {
+        delete extent_hooks;
+    }
+    std::string arena_destroy = "arena." + std::to_string(arena_index) + ".destroy";
+    int rc = mallctl(arena_destroy.c_str(), nullptr, nullptr, nullptr, 0);
+    if (rc != 0) {
+        Logger::Log(LOG_LEVEL_ERROR, "failed to destroy jemalloc arena %u, error code %d", arena_index, rc);
+    }
+}
+
 void MemoryManager::Init(void* addr, size_t size)
 {
     shm_addr = addr;
@@ -65,6 +77,12 @@ void MemoryManager::mb_free(void* ptr)
     }
 }
 
+void MemoryManager::mb_free(size_t offset)
+{
+    void* ptr = static_cast<char*>(shm_addr) + offset;
+    dallocx(ptr, MALLOCX_ARENA(arena_index) | MALLOCX_TCACHE_NONE);
+}
+
 int MemoryManager::mb_purge()
 {
     std::string arena_purge = "arena." + std::to_string(arena_index) + ".purge";
@@ -73,6 +91,47 @@ int MemoryManager::mb_purge()
         return MBError::JEMALLOC_ERROR;
     }
     return MBError::SUCCESS;
+}
+
+size_t MemoryManager::mb_allocated() const
+{
+    size_t allocated;
+    size_t sz = sizeof(allocated);
+    std::string arena_allocated = "stats.arenas." + std::to_string(arena_index) + ".allocated";
+
+    // Query the allocated memory for the specific arena
+    int rc = mallctl(arena_allocated.c_str(), &allocated, &sz, nullptr, 0);
+    if (rc != 0) {
+        Logger::Log(LOG_LEVEL_ERROR, "failed to query allocated memory for arena %u, error code %d",
+            arena_index, rc);
+        return 0;
+    }
+    return allocated;
+}
+
+unsigned MemoryManager::mb_get_num_arenas()
+{
+    unsigned narenas;
+    size_t sz = sizeof(narenas);
+
+    if (mallctl("arenas.narenas", &narenas, &sz, nullptr, 0) != 0) {
+        Logger::Log(LOG_LEVEL_ERROR, "failed to query number of arenas");
+        return 0;
+    }
+    return narenas;
+}
+
+size_t MemoryManager::mb_total_allocated()
+{
+    size_t allocated;
+    size_t sz = sizeof(allocated);
+    std::string arena_allocated = "stats.allocated";
+    int rc = mallctl(arena_allocated.c_str(), &allocated, &sz, nullptr, 0);
+    if (rc != 0) {
+        Logger::Log(LOG_LEVEL_ERROR, "failed to query allocated memory error code %d", rc);
+        return 0;
+    }
+    return allocated;
 }
 
 void MemoryManager::configure_jemalloc()
@@ -98,6 +157,7 @@ void MemoryManager::configure_jemalloc()
         Logger::Log(LOG_LEVEL_ERROR, "failed to create jemalloc arena");
         return;
     }
+    Logger::Log(LOG_LEVEL_INFO, "jemalloc arena index: %u created", arena_ind);
 
     std::string arena_hooks = "arena." + std::to_string(arena_ind) + ".extent_hooks";
     if (mallctl(arena_hooks.c_str(), nullptr, nullptr, &extent_hooks, hooks_sz) != 0) {

@@ -401,4 +401,56 @@ void RollableFile::RemoveUnused(size_t max_size, bool writer_mode)
     }
 }
 
+////////////////////////////////////
+// memory management using jemalloc
+////////////////////////////////////
+
+void* RollableFile::Malloc(size_t size, size_t& offset)
+{
+    int rval = CheckAndOpenFile(0, true); // order 0 is used for jemalloc
+    if (rval != MBError::SUCCESS)
+        return nullptr;
+    if (files[0]->IsMapped()) {
+        return files[0]->Malloc(size, offset);
+    }
+    return nullptr;
+}
+
+int RollableFile::Memcpy(const void* src, size_t size, size_t offset)
+{
+    if (files[0]->IsMapped()) {
+        return files[0]->Memcpy(src, size, offset);
+    }
+    return MBError::MMAP_FAILED;
+}
+
+void RollableFile::Free(void* ptr) const
+{
+    // order 0 is used for jemalloc
+    files[0]->Free(ptr);
+}
+
+void RollableFile::Free(size_t offset) const
+{
+    // order 0 is used for jemalloc
+    files[0]->Free(offset);
+}
+
+size_t RollableFile::Allocated() const
+{
+    if (files.size() > 0 && files[0] != nullptr) {
+        // order 0 is used for jemalloc
+        return files[0]->Allocated();
+    }
+    return 0;
+}
+
+void RollableFile::Purge() const
+{
+    if (files.size() > 0 && files[0] != nullptr) {
+        // order 0 is used for jemalloc
+        files[0]->Purge();
+    }
+}
+
 }

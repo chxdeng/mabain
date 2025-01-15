@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2018 Cisco Inc.
+ * Copyright (C) 2025 Cisco Inc.
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU General Public License, version 2,
@@ -100,6 +100,11 @@ std::shared_ptr<MmapFileIO> ResourcePool::OpenFile(const std::string& fpath,
             if (mmap_file->MapFile(file_size, 0) != NULL) {
                 if (!(mode & CONSTS::MEMORY_ONLY_MODE))
                     mmap_file->Close();
+                if (mode & CONSTS::OPTION_JEMALLOC) {
+                    if (fpath.find("_mabain_h") == std::string::npos) { // no need to init MemoryManager for header file
+                        mmap_file->InitMemoryManager();
+                    }
+                }
             } else {
                 map_file = false;
             }

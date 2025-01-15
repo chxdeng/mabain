@@ -23,7 +23,6 @@
 #endif
 
 #include "free_list.h"
-#include "mb_mm.h"
 #include "rollable_file.h"
 
 #define DATA_BUFFER_ALIGNMENT 1
@@ -114,18 +113,15 @@ typedef struct _IndexHeader {
 // An abstract interface class for Dict and DictMem
 class DRMBase {
 public:
-    DRMBase(const std::string& mbdir, int opts, bool index, bool je)
-        : jemm(je)
+    DRMBase(const std::string& mbdir, int opts, bool index)
+        : options(opts)
     {
         // derived class will initialize header and kv_file
         header = nullptr;
         kv_file = nullptr;
         free_lists = nullptr;
-        memManager = nullptr;
         if (opts & CONSTS::ACCESS_MODE_WRITER) {
-            if (jemm) {
-                memManager = new MemoryManager();
-            } else {
+            if (!(opts & CONSTS::OPTION_JEMALLOC)) {
                 if (index) {
                     free_lists = new FreeList(mbdir + "_ibfl", BUFFER_ALIGNMENT, NUM_BUFFER_RESERVE);
                 } else {
@@ -167,12 +163,11 @@ protected:
     static void ReadHeader(const std::string& header_path, uint8_t* buff, int buf_size);
     static void WriteHeader(const std::string& header_path, uint8_t* buff);
 
+    int options;
     IndexHeader* header;
     RollableFile* kv_file;
-    // free_lists is the old way of managing memory. It will be replacde by jemalloc.
-    bool jemm; // use jemmaloc if set
+    // free_lists is the old way of managing memory. It will be replaced by jemalloc.
     FreeList* free_lists;
-    MemoryManager* memManager; // memory manager using jemalloc
 
 #ifdef __DEBUG__
 #define __BUFFER_TRACKER_IN_USE 1
@@ -206,8 +201,12 @@ protected:
 
 inline void DRMBase::WriteData(const uint8_t* buff, unsigned len, size_t offset) const
 {
-    if (kv_file->RandomWrite(buff, len, offset) != len)
-        throw(int) MBError::WRITE_ERROR;
+    if (options & CONSTS::OPTION_JEMALLOC) {
+        kv_file->Memcpy(buff, len, offset);
+    } else {
+        if (kv_file->RandomWrite(buff, len, offset) != len)
+            throw(int) MBError::WRITE_ERROR;
+    }
 }
 
 inline int DRMBase::Reserve(size_t& offset, int size, uint8_t*& ptr)

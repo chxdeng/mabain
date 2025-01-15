@@ -136,8 +136,6 @@ private:
     int ReleaseBuffer(size_t offset, int size);
     void ReleaseAlignmentBuffer(size_t offset, size_t alignment_off);
 
-    // DB access permission
-    int options;
     // Memory management
     DictMem mm;
 

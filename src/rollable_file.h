@@ -39,6 +39,14 @@ public:
         size_t memcap, int access_mode, long max_block = 0, int rc_offset_percentage = 75);
     ~RollableFile();
 
+    // memory management using jemalloc
+    void* Malloc(size_t size, size_t& offset);
+    int Memcpy(const void* src, size_t size, size_t offset);
+    void Free(void* ptr) const;
+    void Free(size_t offset) const;
+    size_t Allocated() const;
+    void Purge() const;
+
     size_t RandomWrite(const void* data, size_t size, off_t offset);
     size_t RandomRead(void* buff, size_t size, off_t offset);
     void InitShmSlidingAddr(std::atomic<size_t>* shm_sliding_addr);

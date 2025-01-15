@@ -41,6 +41,7 @@ static int n_reader = 7;
 static int key_type = 0;
 static bool sync_on_write = false;
 static unsigned long long memcap = 1024ULL * 1024 * 1024;
+static bool use_jemalloc = false;
 
 static void get_sha256_str(int key, char* sha256_str)
 {
@@ -156,7 +157,10 @@ static void InitDB(bool writer_mode = true)
     mdb_txn_commit(txn);
 #elif MABAIN
     std::string db_dir_tmp = std::string(db_dir) + "/mabain/";
-    int options = mabain::CONSTS::WriterOptions() | mabain::CONSTS::ASYNC_WRITER_MODE;
+    int options = mabain::CONSTS::WriterOptions();
+    if (use_jemalloc) {
+        options |= mabain::CONSTS::OPTION_JEMALLOC;
+    }
     if (sync_on_write) {
         options |= mabain::CONSTS::SYNC_ON_WRITE;
     }
@@ -594,6 +598,8 @@ int main(int argc, char* argv[])
             if (++i >= argc)
                 abort();
             memcap = atoi(argv[i]);
+        } else if (strcmp(argv[i], "-j") == 0) {
+            use_jemalloc = true;
         } else {
             std::cerr << "invalid argument: " << argv[i] << "\n";
         }

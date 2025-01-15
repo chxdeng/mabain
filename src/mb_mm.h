@@ -29,12 +29,16 @@ class MemoryManager {
 public:
     MemoryManager();
     MemoryManager(void* addr, size_t size);
-    ~MemoryManager() { }
+    ~MemoryManager();
     void Init(void* addr, size_t size);
 
     void* mb_malloc(size_t size);
     void mb_free(void* ptr);
+    void mb_free(size_t offset);
     int mb_purge();
+    size_t mb_allocated() const;
+    static unsigned mb_get_num_arenas();
+    static size_t mb_total_allocated();
 
     size_t get_shm_offset(void* ptr) { return static_cast<char*>(ptr) - static_cast<char*>(shm_addr); }
 

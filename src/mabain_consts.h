@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2017 Cisco Inc.
+ * Copyright (C) 2025 Cisco Inc.
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU General Public License, version 2,
@@ -38,6 +38,7 @@ public:
     static const int MAX_KEY_LENGHTH;
     static const int MAX_DATA_SIZE;
     static const int OPTION_SHMQ_RETRY;
+    static const int OPTION_JEMALLOC;
 
     static int WriterOptions();
     static int ReaderOptions();

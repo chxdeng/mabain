@@ -558,6 +558,45 @@ static void tracking_buffer_test(std::string& list_file, MBConfig& mbconf, int64
     std::cout << "Tracking buffer test passed: " << list_file << "\n";
 }
 
+static void jemalloc_test(std::string& list_file, const MBConfig& mbconf, int64_t expected_count)
+{
+    MBConfig conf;
+    memcpy(&conf, &mbconf, sizeof(conf));
+    std::cout << "Jemalloc test: " << list_file << "\n";
+    conf.options = CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC;
+    conf.block_size_data = 128 * 1024 * 1024LL;
+    conf.block_size_index = 128 * 1024 * 1024LL;
+    conf.max_num_data_block = 1;
+    conf.max_num_index_block = 1;
+    conf.memcap_index = mbconf.block_size_index;
+    conf.memcap_data = mbconf.block_size_data;
+
+    DB db(conf);
+    std::cout << db.StatusStr() << "\n";
+    assert(db.is_open());
+
+    std::ifstream in(list_file.c_str());
+    std::string line;
+    std::vector<std::string> keys;
+    std::cout << "Loading " << list_file << "\n";
+    while (std::getline(in, line)) {
+        if (line.length() > (unsigned)CONSTS::MAX_KEY_LENGHTH) {
+            continue;
+        }
+        db.Add(line, line);
+        keys.push_back(line);
+    }
+    in.close();
+    std::cout << "Removing " << list_file << "\n";
+    for (size_t i = 0; i < keys.size(); i++) {
+        db.Remove(keys[i]);
+    }
+
+    db.PrintStats();
+    db.Close();
+    std::cout << "Jemalloc test passed: " << list_file << "\n";
+}
+
 static void SetTestStatus(bool success)
 {
     std::string cmd;
@@ -589,6 +628,7 @@ int main(int argc, char* argv[])
     }
 
     DB::SetLogFile(std::string(MB_DIR) + "/mabain.log");
+    //DB::LogDebug();
     std::ifstream test_in(test_list_file);
     assert(test_in.is_open());
     std::string file;
@@ -596,7 +636,7 @@ int main(int argc, char* argv[])
     std::string remove;
     int64_t memcap;
     int64_t expected_count;
-    bool remove_db;
+    bool remove_db = false;
     uint32_t db_id = 1;
     MBConfig mbconf;
     memset(&mbconf, 0, sizeof(mbconf));
@@ -610,6 +650,7 @@ int main(int argc, char* argv[])
             // comment line
             continue;
         }
+
         std::cout << "============================================\n";
         std::cout << file << " " << mode << " " << memcap << " " << remove << " " << expected_count << "\n";
         mbconf.connect_id = db_id;
@@ -658,6 +699,8 @@ int main(int argc, char* argv[])
             backup_test(backup_dir, file, mbconf, expected_count);
         } else if (mode.compare("tracking_buffer") == 0) {
             tracking_buffer_test(file, mbconf, expected_count);
+        } else if (mode.compare("jemalloc") == 0) {
+            jemalloc_test(file, mbconf, expected_count);
         } else {
             std::cerr << "Unknown test\n";
             abort();

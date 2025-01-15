@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2023 Cisco Inc.
+ * Copyright (C) 2025 Cisco Inc.
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU General Public License, version 2,
@@ -76,7 +76,8 @@ int DB::Close()
     status = MBError::DB_CLOSED;
     if (options & CONSTS::ACCESS_MODE_WRITER) {
         release_file_lock(writer_lock_fd);
-        ResourcePool::getInstance().RemoveResourceByDB(mb_dir);
+        std::string lock_file = mb_dir + "_lock";
+        ResourcePool::getInstance().RemoveResourceByPath(lock_file);
     }
     Logger::Log(LOG_LEVEL_DEBUG, "connector %u disconnected from DB", identifier);
     return rval;
@@ -286,7 +287,7 @@ void DB::PostDBUpdate(const MBConfig& config, bool init_header, bool update_head
         (config.options & CONSTS::ACCESS_MODE_WRITER) ? "writing" : "reading");
     status = MBError::SUCCESS;
 
-    if (config.options & CONSTS::ACCESS_MODE_WRITER) {
+    if (!(config.options & CONSTS::OPTION_JEMALLOC) && (config.options & CONSTS::ACCESS_MODE_WRITER)) {
         if (!(config.options & CONSTS::ASYNC_WRITER_MODE)) {
             // Run rc exception recovery
             ResourceCollection rc(*this);
