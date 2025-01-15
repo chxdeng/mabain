@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2017 Cisco Inc.
+ * Copyright (C) 2025 Cisco Inc.
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU General Public License, version 2,
@@ -132,6 +132,9 @@ private:
     int ReadUpperBound(EdgePtrs& edge_ptrs, MBData& data) const;
     int ReadDataFromBoundEdge(bool use_curr_edge, EdgePtrs& edge_ptrs,
         EdgePtrs& bound_edge_ptrs, MBData& data, int root_key) const;
+    void reserveDataFL(const uint8_t* buff, int size, size_t& offset);
+    int ReleaseBuffer(size_t offset, int size);
+    void ReleaseAlignmentBuffer(size_t offset, size_t alignment_off);
 
     // DB access permission
     int options;

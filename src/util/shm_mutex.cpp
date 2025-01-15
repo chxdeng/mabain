@@ -16,26 +16,23 @@
 
 // @author Changxue Deng <chadeng@cisco.com>
 
-#include <unistd.h>
 #include "shm_mutex.h"
-#include "../logger.h"
 #include "../error.h"
+#include "../logger.h"
+#include <unistd.h>
 
 namespace mabain {
 
-int ShmMutexLock(pthread_mutex_t &mutex)
+int ShmMutexLock(pthread_mutex_t& mutex)
 {
     int rval = pthread_mutex_lock(&mutex);
 #ifndef __APPLE__
-    if(rval == EOWNERDEAD)
-    {
+    if (rval == EOWNERDEAD) {
         Logger::Log(LOG_LEVEL_WARN, "owner died without unlock");
         rval = pthread_mutex_consistent(&mutex);
-        if(rval != 0)
+        if (rval != 0)
             Logger::Log(LOG_LEVEL_ERROR, "failed to recover mutex %d", errno);
-    }
-    else if(rval != 0)
-    {
+    } else if (rval != 0) {
         Logger::Log(LOG_LEVEL_ERROR, "failed to lock mutex %d", errno);
     }
 #endif
@@ -43,14 +40,13 @@ int ShmMutexLock(pthread_mutex_t &mutex)
     return rval;
 }
 
-int InitShmMutex(pthread_mutex_t *mutex)
+int InitShmMutex(pthread_mutex_t* mutex)
 {
-    if(mutex == NULL)
+    if (mutex == NULL)
         return MBError::INVALID_ARG;
 
     pthread_mutexattr_t attr;
-    if(pthread_mutexattr_init(&attr))
-    {
+    if (pthread_mutexattr_init(&attr)) {
         Logger::Log(LOG_LEVEL_WARN, "pthread_mutexkattr_init failed");
         return MBError::MUTEX_ERROR;
     }
@@ -58,28 +54,24 @@ int InitShmMutex(pthread_mutex_t *mutex)
     // Set mutex priority protocol to avoid hang in glibc
     // See https://bugzilla.redhat.com/show_bug.cgi?id=1401665 and
     // https://bugs.launchpad.net/ubuntu/+source/glibc/+bug/1706780
-    if(pthread_mutexattr_setprotocol(&attr, PTHREAD_PRIO_INHERIT))
-    {
+    if (pthread_mutexattr_setprotocol(&attr, PTHREAD_PRIO_INHERIT)) {
         Logger::Log(LOG_LEVEL_WARN, "failed to set mutex priority protocol");
         pthread_mutexattr_destroy(&attr);
         return MBError::MUTEX_ERROR;
     }
-    if(pthread_mutexattr_setrobust(&attr, PTHREAD_MUTEX_ROBUST))
-    {
+    if (pthread_mutexattr_setrobust(&attr, PTHREAD_MUTEX_ROBUST)) {
         Logger::Log(LOG_LEVEL_WARN, "failed to set mutex to robust");
         pthread_mutexattr_destroy(&attr);
         return MBError::MUTEX_ERROR;
     }
 #endif
-    if(pthread_mutexattr_setpshared(&attr, PTHREAD_PROCESS_SHARED))
-    {
+    if (pthread_mutexattr_setpshared(&attr, PTHREAD_PROCESS_SHARED)) {
         Logger::Log(LOG_LEVEL_WARN, "failed to set mutex/PTHREAD_PROCESS_SHARED");
         pthread_mutexattr_destroy(&attr);
         return MBError::MUTEX_ERROR;
     }
 
-    if(pthread_mutex_init(mutex, &attr))
-    {
+    if (pthread_mutex_init(mutex, &attr)) {
         Logger::Log(LOG_LEVEL_WARN, "pthread_mutex_init failed");
         pthread_mutexattr_destroy(&attr);
         return MBError::MUTEX_ERROR;

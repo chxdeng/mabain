@@ -21,7 +21,7 @@
 #include "../db.h"
 #define MB_DIR "/var/tmp/mabain_test/"
 
-GTEST_API_ int main(int argc, char **argv)
+GTEST_API_ int main(int argc, char** argv)
 {
     testing::InitGoogleTest(&argc, argv);
 
@@ -34,4 +34,3 @@ GTEST_API_ int main(int argc, char **argv)
     mabain::DB::CloseLogFile();
     return rval;
 }
-

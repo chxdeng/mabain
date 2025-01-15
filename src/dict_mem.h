@@ -118,6 +118,10 @@ private:
         int& str_size_rel);
     int ReadNode(size_t& offset, EdgePtrs& edge_ptrs, uint8_t* node_buff,
         MBData& mbdata, int& nt) const;
+    void reserveDataFL(const uint8_t* key, int size, size_t& offset, bool map_new_sliding);
+    bool reserveNodeFL(int nt, size_t& offset, uint8_t*& ptr);
+    void releaseNodeFL(size_t offset, int nt);
+    void releaseBufferFL(size_t offset, int size);
 
     int* node_size;
     bool is_valid;

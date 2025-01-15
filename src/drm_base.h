@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2017 Cisco Inc.
+ * Copyright (C) 2025 Cisco Inc.
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU General Public License, version 2,
@@ -18,8 +18,12 @@
 
 #ifndef __DRM_BASE_H__
 #define __DRM_BASE_H__
+#ifdef __DEBUG__
+#include <unordered_map>
+#endif
 
 #include "free_list.h"
+#include "mb_mm.h"
 #include "rollable_file.h"
 
 #define DATA_BUFFER_ALIGNMENT 1
@@ -47,6 +51,11 @@
 #define EXCEP_STATUS_RC_DATA 8
 #define EXCEP_STATUS_RC_TREE 9
 #define MB_EXCEPTION_BUFF_SIZE 16
+
+#define MAX_BUFFER_RESERVE_SIZE 8192
+#define NUM_BUFFER_RESERVE MAX_BUFFER_RESERVE_SIZE / BUFFER_ALIGNMENT
+#define MAX_DATA_BUFFER_RESERVE_SIZE 0xFFFF
+#define NUM_DATA_BUFFER_RESERVE MAX_DATA_BUFFER_RESERVE_SIZE / DATA_BUFFER_ALIGNMENT
 
 namespace mabain {
 
@@ -105,11 +114,25 @@ typedef struct _IndexHeader {
 // An abstract interface class for Dict and DictMem
 class DRMBase {
 public:
-    DRMBase()
+    DRMBase(const std::string& mbdir, int opts, bool index, bool je)
+        : jemm(je)
     {
-        // Derived classes will initialize these objects.
-        kv_file = NULL;
-        free_lists = NULL;
+        // derived class will initialize header and kv_file
+        header = nullptr;
+        kv_file = nullptr;
+        free_lists = nullptr;
+        memManager = nullptr;
+        if (opts & CONSTS::ACCESS_MODE_WRITER) {
+            if (jemm) {
+                memManager = new MemoryManager();
+            } else {
+                if (index) {
+                    free_lists = new FreeList(mbdir + "_ibfl", BUFFER_ALIGNMENT, NUM_BUFFER_RESERVE);
+                } else {
+                    free_lists = new FreeList(mbdir + "_dbfl", BUFFER_ALIGNMENT, NUM_BUFFER_RESERVE);
+                }
+            }
+        }
     }
 
     ~DRMBase()
@@ -146,7 +169,39 @@ protected:
 
     IndexHeader* header;
     RollableFile* kv_file;
+    // free_lists is the old way of managing memory. It will be replacde by jemalloc.
+    bool jemm; // use jemmaloc if set
     FreeList* free_lists;
+    MemoryManager* memManager; // memory manager using jemalloc
+
+#ifdef __DEBUG__
+#define __BUFFER_TRACKER_IN_USE 1
+#define __BUFFER_TRACKER_RELEASED 2
+#define __BUFFER_TRACKER_INVALID 3
+    void add_tracking_buffer(size_t offset, int size = 0)
+    {
+        if (buffer_map.find(offset) == buffer_map.end()) {
+            buffer_map[offset] = __BUFFER_TRACKER_IN_USE;
+        } else {
+            buffer_map[offset] = __BUFFER_TRACKER_INVALID;
+        }
+    }
+    void remove_tracking_buffer(size_t offset, int size = 0)
+    {
+        if (buffer_map.find(offset) == buffer_map.end()) {
+            buffer_map[offset] = __BUFFER_TRACKER_INVALID;
+        } else {
+            if (buffer_map[offset] != __BUFFER_TRACKER_IN_USE) {
+                buffer_map[offset] = __BUFFER_TRACKER_INVALID;
+            } else {
+                buffer_map.erase(offset); // remove from tracking
+            }
+        }
+        buffer_map.erase(offset);
+    }
+    // buffer tracker
+    std::unordered_map<size_t, int> buffer_map;
+#endif
 };
 
 inline void DRMBase::WriteData(const uint8_t* buff, unsigned len, size_t offset) const

@@ -1,13 +1,13 @@
+#include <fstream>
+#include <iostream>
 #include <string>
 #include <thread>
-#include <iostream>
-#include <fstream>
 
 #include <gtest/gtest.h>
 
 #include "../db.h"
-#include "../resource_pool.h"
 #include "../drm_base.h"
+#include "../resource_pool.h"
 #include "../version.h"
 
 using namespace mabain;
@@ -16,24 +16,28 @@ namespace {
 
 #define MB_DIR "/var/tmp/mabain_test/"
 
-class CorruptHeaderTest : public ::testing::Test
-{
+class CorruptHeaderTest : public ::testing::Test {
 public:
-    CorruptHeaderTest() {
+    CorruptHeaderTest()
+    {
     }
-    virtual ~CorruptHeaderTest() {
+    virtual ~CorruptHeaderTest()
+    {
     }
-    virtual void SetUp() {
+    virtual void SetUp()
+    {
         std::string cmd = std::string("rm ") + MB_DIR + "_*";
-        if(system(cmd.c_str()) != 0) {
+        if (system(cmd.c_str()) != 0) {
         }
     }
-    virtual void TearDown() {
+    virtual void TearDown()
+    {
         ResourcePool::getInstance().RemoveAll();
     }
-    void CreateZeroHeaderFile(bool set_ver) {
+    void CreateZeroHeaderFile(bool set_ver)
+    {
         char hdr[RollableFile::page_size];
-        IndexHeader *ptr = reinterpret_cast<IndexHeader*>(hdr);
+        IndexHeader* ptr = reinterpret_cast<IndexHeader*>(hdr);
         memset(hdr, 0, sizeof(hdr));
         if (set_ver) {
             ptr->version[0] = version[0];
@@ -45,13 +49,14 @@ public:
         hdrf.write(hdr, sizeof(hdr));
         hdrf.close();
     }
-    void CreateInvalidHeaderFile(bool set_ver) {
+    void CreateInvalidHeaderFile(bool set_ver)
+    {
         char hdr[RollableFile::page_size];
         for (auto i = 0; i < RollableFile::page_size; i++) {
-            hdr[i] = (char) (i % 256);
-        } 
+            hdr[i] = (char)(i % 256);
+        }
         if (set_ver) {
-            IndexHeader *ptr = reinterpret_cast<IndexHeader*>(hdr);
+            IndexHeader* ptr = reinterpret_cast<IndexHeader*>(hdr);
             ptr->version[0] = version[0];
             ptr->version[1] = version[1];
             ptr->version[2] = version[2];
@@ -61,14 +66,15 @@ public:
         hdrf.write(hdr, sizeof(hdr));
         hdrf.close();
     }
-    void CreateRandomHeaderFile(bool set_ver) {
+    void CreateRandomHeaderFile(bool set_ver)
+    {
         srand(time(NULL));
         char hdr[RollableFile::page_size];
         for (auto i = 0; i < RollableFile::page_size; i++) {
             hdr[i] = rand() % 256;
         }
         if (set_ver) {
-            IndexHeader *ptr = reinterpret_cast<IndexHeader*>(hdr);
+            IndexHeader* ptr = reinterpret_cast<IndexHeader*>(hdr);
             ptr->version[0] = version[0];
             ptr->version[1] = version[1];
             ptr->version[2] = version[2];
@@ -78,6 +84,7 @@ public:
         hdrf.write(hdr, sizeof(hdr));
         hdrf.close();
     }
+
 protected:
 };
 

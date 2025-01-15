@@ -20,31 +20,34 @@
 
 #include <gtest/gtest.h>
 
+#include "../drm_base.h"
+#include "../error.h"
 #include "../lock_free.h"
 #include "../mabain_consts.h"
-#include "../error.h"
-#include "../drm_base.h"
 
 using namespace mabain;
 
 namespace {
 
-class LockFreeTest : public ::testing::Test
-{
+class LockFreeTest : public ::testing::Test {
 public:
-    LockFreeTest() {
+    LockFreeTest()
+    {
         int size = sizeof(lock_free_data);
-        memset((char*) &lock_free_data, 0, size);
+        memset((char*)&lock_free_data, 0, size);
         size = sizeof(header);
-        memset((char*) &header, 0, size);
+        memset((char*)&header, 0, size);
         lfree.LockFreeInit(&lock_free_data, &header, CONSTS::ACCESS_MODE_WRITER);
     }
-    virtual ~LockFreeTest() {
+    virtual ~LockFreeTest()
+    {
     }
 
-    virtual void SetUp() {
+    virtual void SetUp()
+    {
     }
-    virtual void TearDown() {
+    virtual void TearDown()
+    {
     }
 
 protected:
@@ -73,8 +76,8 @@ TEST_F(LockFreeTest, ReaderLockFreeStart_test)
 {
     lock_free_data.counter = 99;
     lock_free_data.offset = 12345;
-    for(int i = 0; i < MAX_OFFSET_CACHE; i++) {
-        lock_free_data.offset_cache[i] = i*100 + 3;
+    for (int i = 0; i < MAX_OFFSET_CACHE; i++) {
+        lock_free_data.offset_cache[i] = i * 100 + 3;
     }
 
     LockFreeData snapshot;
@@ -86,8 +89,8 @@ TEST_F(LockFreeTest, ReaderLockFreeStop_test)
 {
     lock_free_data.counter = 99;
     lock_free_data.offset = 12345;
-    for(int i = 0; i < MAX_OFFSET_CACHE; i++) {
-        lock_free_data.offset_cache[i] = (i + 1)*1000 + 233;
+    for (int i = 0; i < MAX_OFFSET_CACHE; i++) {
+        lock_free_data.offset_cache[i] = (i + 1) * 1000 + 233;
     }
 
     size_t offset;
@@ -101,7 +104,7 @@ TEST_F(LockFreeTest, ReaderLockFreeStop_test)
     lfree.ReaderLockFreeStart(snapshot);
     rval = lfree.ReaderLockFreeStop(snapshot, offset, mbd);
     EXPECT_EQ(rval, MBError::SUCCESS);
-    rval = lfree.ReaderLockFreeStop(snapshot, offset+1000, mbd);
+    rval = lfree.ReaderLockFreeStop(snapshot, offset + 1000, mbd);
     EXPECT_EQ(rval, MBError::SUCCESS);
 }
 
@@ -109,8 +112,8 @@ TEST_F(LockFreeTest, ReaderLockFreeStop_test_1)
 {
     lock_free_data.counter = 999;
     lock_free_data.offset = 12345;
-    for(int i = 0; i < MAX_OFFSET_CACHE; i++) {
-        lock_free_data.offset_cache[i] = (i + 1)*1000 + 48213;
+    for (int i = 0; i < MAX_OFFSET_CACHE; i++) {
+        lock_free_data.offset_cache[i] = (i + 1) * 1000 + 48213;
     }
 
     size_t offset;
@@ -123,7 +126,7 @@ TEST_F(LockFreeTest, ReaderLockFreeStop_test_1)
     lfree.ReaderLockFreeStart(snapshot);
     rval = lfree.ReaderLockFreeStop(snapshot, offset, mbd);
     EXPECT_EQ(rval, MBError::TRY_AGAIN);
-    rval = lfree.ReaderLockFreeStop(snapshot, offset+1000, mbd);
+    rval = lfree.ReaderLockFreeStop(snapshot, offset + 1000, mbd);
     EXPECT_EQ(rval, MBError::SUCCESS);
     lfree.WriterLockFreeStop();
 }
@@ -132,8 +135,8 @@ TEST_F(LockFreeTest, ReaderLockFreeStop_test_2)
 {
     lock_free_data.counter = 999;
     lock_free_data.offset = 12345;
-    for(int i = 0; i < MAX_OFFSET_CACHE; i++) {
-        lock_free_data.offset_cache[i] = (i + 1)*1000 + 48213;
+    for (int i = 0; i < MAX_OFFSET_CACHE; i++) {
+        lock_free_data.offset_cache[i] = (i + 1) * 1000 + 48213;
     }
 
     size_t offset;
@@ -144,9 +147,9 @@ TEST_F(LockFreeTest, ReaderLockFreeStop_test_2)
     LockFreeData snapshot;
     lfree.ReaderLockFreeStart(snapshot);
     lfree.WriterLockFreeStart(offset);
-    rval = lfree.ReaderLockFreeStop(snapshot, offset,mbd);
+    rval = lfree.ReaderLockFreeStop(snapshot, offset, mbd);
     EXPECT_EQ(rval, MBError::TRY_AGAIN);
-    rval = lfree.ReaderLockFreeStop(snapshot, offset+1000, mbd);
+    rval = lfree.ReaderLockFreeStop(snapshot, offset + 1000, mbd);
     EXPECT_EQ(rval, MBError::SUCCESS);
     lfree.WriterLockFreeStop();
 }
@@ -155,8 +158,8 @@ TEST_F(LockFreeTest, ReaderLockFreeStop_test_3)
 {
     lock_free_data.counter = 999;
     lock_free_data.offset = 12345;
-    for(int i = 0; i < MAX_OFFSET_CACHE; i++) {
-        lock_free_data.offset_cache[i] = (i + 1)*1000 + 48213;
+    for (int i = 0; i < MAX_OFFSET_CACHE; i++) {
+        lock_free_data.offset_cache[i] = (i + 1) * 1000 + 48213;
     }
 
     size_t offset;
@@ -168,12 +171,12 @@ TEST_F(LockFreeTest, ReaderLockFreeStop_test_3)
     lfree.ReaderLockFreeStart(snapshot);
     lfree.WriterLockFreeStart(offset);
     lfree.WriterLockFreeStop();
-    lfree.WriterLockFreeStart(offset+1000);
+    lfree.WriterLockFreeStart(offset + 1000);
     rval = lfree.ReaderLockFreeStop(snapshot, offset, mbd);
     EXPECT_EQ(rval, MBError::TRY_AGAIN);
-    rval = lfree.ReaderLockFreeStop(snapshot, offset+1000, mbd);
+    rval = lfree.ReaderLockFreeStop(snapshot, offset + 1000, mbd);
     EXPECT_EQ(rval, MBError::TRY_AGAIN);
-    rval = lfree.ReaderLockFreeStop(snapshot, offset+2000, mbd);
+    rval = lfree.ReaderLockFreeStop(snapshot, offset + 2000, mbd);
     EXPECT_EQ(rval, MBError::SUCCESS);
     lfree.WriterLockFreeStop();
 }
@@ -182,8 +185,8 @@ TEST_F(LockFreeTest, ReaderLockFreeStop_test_4)
 {
     lock_free_data.counter = 999;
     lock_free_data.offset = 12345;
-    for(int i = 0; i < MAX_OFFSET_CACHE; i++) {
-        lock_free_data.offset_cache[i] = (i + 1)*1000 + 48213;
+    for (int i = 0; i < MAX_OFFSET_CACHE; i++) {
+        lock_free_data.offset_cache[i] = (i + 1) * 1000 + 48213;
     }
 
     size_t offset;
@@ -194,14 +197,14 @@ TEST_F(LockFreeTest, ReaderLockFreeStop_test_4)
     LockFreeData snapshot;
     lfree.ReaderLockFreeStart(snapshot);
 
-    for(int i = 0; i < MAX_OFFSET_CACHE; i++) {
-        lfree.WriterLockFreeStart(offset + i*1000);
-        if(i < MAX_OFFSET_CACHE-1) {
+    for (int i = 0; i < MAX_OFFSET_CACHE; i++) {
+        lfree.WriterLockFreeStart(offset + i * 1000);
+        if (i < MAX_OFFSET_CACHE - 1) {
             lfree.WriterLockFreeStop();
         }
     }
-    for(int i = 0; i < MAX_OFFSET_CACHE; i++) {
-        rval = lfree.ReaderLockFreeStop(snapshot, offset + i*1000, mbd);
+    for (int i = 0; i < MAX_OFFSET_CACHE; i++) {
+        rval = lfree.ReaderLockFreeStop(snapshot, offset + i * 1000, mbd);
         EXPECT_EQ(rval, MBError::TRY_AGAIN);
     }
     rval = lfree.ReaderLockFreeStop(snapshot, offset + 1100, mbd);
@@ -213,8 +216,8 @@ TEST_F(LockFreeTest, ReaderLockFreeStop_test_5)
 {
     lock_free_data.counter = 999;
     lock_free_data.offset = 12345;
-    for(int i = 0; i < MAX_OFFSET_CACHE; i++) {
-        lock_free_data.offset_cache[i] = (i + 1)*1000 + 48213;
+    for (int i = 0; i < MAX_OFFSET_CACHE; i++) {
+        lock_free_data.offset_cache[i] = (i + 1) * 1000 + 48213;
     }
 
     size_t offset;
@@ -225,12 +228,12 @@ TEST_F(LockFreeTest, ReaderLockFreeStop_test_5)
     LockFreeData snapshot;
     lfree.ReaderLockFreeStart(snapshot);
 
-    for(int i = 0; i < MAX_OFFSET_CACHE; i++) {
-        lfree.WriterLockFreeStart(offset + i*1000);
+    for (int i = 0; i < MAX_OFFSET_CACHE; i++) {
+        lfree.WriterLockFreeStart(offset + i * 1000);
         lfree.WriterLockFreeStop();
     }
-    for(int i = 0; i < MAX_OFFSET_CACHE; i++) {
-        rval = lfree.ReaderLockFreeStop(snapshot, offset + i*1000, mbd);
+    for (int i = 0; i < MAX_OFFSET_CACHE; i++) {
+        rval = lfree.ReaderLockFreeStop(snapshot, offset + i * 1000, mbd);
         EXPECT_EQ(rval, MBError::TRY_AGAIN);
     }
     rval = lfree.ReaderLockFreeStop(snapshot, offset + 1100, mbd);
@@ -243,8 +246,8 @@ TEST_F(LockFreeTest, ReaderLockFreeStop_test_6)
 {
     lock_free_data.counter = 232811;
     lock_free_data.offset = 54321;
-    for(int i = 0; i < MAX_OFFSET_CACHE; i++) {
-        lock_free_data.offset_cache[i] = (i + 1)*1000 + 148213;
+    for (int i = 0; i < MAX_OFFSET_CACHE; i++) {
+        lock_free_data.offset_cache[i] = (i + 1) * 1000 + 148213;
     }
 
     size_t offset;

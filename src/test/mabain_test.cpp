@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2017 Cisco Inc.
+ * Copyright (C) 2025 Cisco Inc.
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU General Public License, version 2,
@@ -19,9 +19,11 @@
 #include <assert.h>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <sys/time.h>
 #include <unistd.h>
+#include <vector>
 
 #include "../db.h"
 #include "../dict.h"
@@ -514,6 +516,48 @@ static void backup_test(std::string& backup_dir, std::string& list_file, MBConfi
     db.Close();
 }
 
+static void tracking_buffer_test(std::string& list_file, MBConfig& mbconf, int64_t expected_count)
+{
+    std::cout << "Tracking buffer test: " << list_file << "\n";
+    mbconf.options = CONSTS::ACCESS_MODE_WRITER;
+    DB db(mbconf);
+    assert(db.is_open());
+
+    std::ifstream in(list_file.c_str());
+    std::string line;
+    std::vector<std::string> keys;
+    std::cout << "Loading " << list_file << "\n";
+    while (std::getline(in, line)) {
+        if (line.length() > (unsigned)CONSTS::MAX_KEY_LENGHTH) {
+            continue;
+        }
+        db.Add(line, line);
+        keys.push_back(line);
+    }
+    in.close();
+    std::cout << "Removing " << list_file << "\n";
+    for (size_t i = 0; i < keys.size(); i++) {
+        db.Remove(keys[i]);
+    }
+
+    std::ostringstream oss;
+    db.PrintStats(oss);
+    std::string stats = oss.str();
+    std::cout << stats;
+    if (stats.find("Size of tracking buffer: 0") == std::string::npos) {
+        std::cerr << "Tracking buffer size is not 0\n";
+        exit(1);
+    }
+    // Note root index node is never removed
+    if (stats.find("Size of index tracking buffer: 1") == std::string::npos) {
+        std::cerr << "Size of tracking buffer is not 0\n";
+        exit(1);
+    }
+
+    db.Close();
+    std::cout << "Tracking buffer test passed: " << list_file << "\n";
+}
+
 static void SetTestStatus(bool success)
 {
     std::string cmd;
@@ -563,7 +607,7 @@ int main(int argc, char* argv[])
     mbconf.num_entry_per_bucket = 512;
     while (test_in >> file >> mode >> memcap >> remove >> expected_count) {
         if (file[0] == '#') {
-            std::cout << file << "\n";
+            // comment line
             continue;
         }
         std::cout << "============================================\n";
@@ -612,6 +656,8 @@ int main(int argc, char* argv[])
         } else if (mode.compare("backup") == 0) {
             mbconf.options = CONSTS::ACCESS_MODE_WRITER;
             backup_test(backup_dir, file, mbconf, expected_count);
+        } else if (mode.compare("tracking_buffer") == 0) {
+            tracking_buffer_test(file, mbconf, expected_count);
         } else {
             std::cerr << "Unknown test\n";
             abort();

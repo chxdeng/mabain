@@ -30,71 +30,78 @@ using namespace mabain;
 namespace {
 
 #define DICT_TEST_DIR "/var/tmp/mabain_test/"
-#define ONE_MEGA 1024*1024
+#define ONE_MEGA 1024 * 1024
 #define FAKE_KEY "test-key-129ksjkjdjdkfjdkfjkdjfkdfjkdjkkdsalslsdlkflsdfsd"
 #define FAKE_DATA "This is a test; fake data; sdkll vlksaflksafdlfsadflkdkvkvkv  ldlsldklkdsk4930 90234924894388438348348348878&^&^YYYYYY"
 
-class DictTest : public ::testing::Test
-{
+class DictTest : public ::testing::Test {
 public:
-    DictTest() {
+    DictTest()
+    {
         dict = NULL;
         header = NULL;
     }
-    virtual ~DictTest() {
+    virtual ~DictTest()
+    {
         DestroyDict();
     }
 
-    virtual void SetUp() {
+    virtual void SetUp()
+    {
         std::string cmd = std::string("mkdir -p ") + DICT_TEST_DIR;
-        if(system(cmd.c_str()) != 0) {
+        if (system(cmd.c_str()) != 0) {
         }
     }
-    virtual void TearDown() {
+    virtual void TearDown()
+    {
         ResourcePool::getInstance().RemoveAll();
         std::string cmd = std::string("rm -rf ") + DICT_TEST_DIR + "/_*";
-        if(system(cmd.c_str()) != 0) {
+        if (system(cmd.c_str()) != 0) {
         }
     }
 
-    void InitDict(bool init_header, int opts, int blk_size, int bucket_sz) {
+    void InitDict(bool init_header, int opts, int blk_size, int bucket_sz)
+    {
         dict = new Dict(std::string(DICT_TEST_DIR), init_header, 0,
-                        opts, 256LL*ONE_MEGA, 256LL*ONE_MEGA,
-                        32*ONE_MEGA, blk_size, 100, 150, bucket_sz, 0, NULL);
-        if(init_header) {
+            opts, 256LL * ONE_MEGA, 256LL * ONE_MEGA,
+            32 * ONE_MEGA, blk_size, 100, 150, bucket_sz, 0, NULL);
+        if (init_header) {
             EXPECT_EQ(dict->Init(0), MBError::SUCCESS);
         }
-        if(init_header) {
+        if (init_header) {
             EXPECT_EQ(dict->Status(), MBError::SUCCESS);
         }
         header = dict->GetHeaderPtr();
         EXPECT_EQ(header != NULL, true);
     }
 
-    int AddKV(int key_len, int data_len, bool overwrite) {
+    int AddKV(int key_len, int data_len, bool overwrite)
+    {
         MBData mbd;
-        mbd.data_len = data_len; 
-        mbd.buff = (uint8_t *) FAKE_DATA;
-        int rval = dict->Add((const uint8_t *)FAKE_KEY, key_len, mbd, overwrite);
+        mbd.data_len = data_len;
+        mbd.buff = (uint8_t*)FAKE_DATA;
+        int rval = dict->Add((const uint8_t*)FAKE_KEY, key_len, mbd, overwrite);
         mbd.buff = NULL;
         return rval;
     }
 
-    int GetNodeOffset(const uint8_t *node_key, int key_len, size_t &node_offset) {
-        if(dict == NULL)
+    int GetNodeOffset(const uint8_t* node_key, int key_len, size_t& node_offset)
+    {
+        if (dict == NULL)
             return MBError::INVALID_ARG;
         MBData mbd;
         node_offset = 0;
         mbd.options = CONSTS::OPTION_FIND_AND_STORE_PARENT;
         int rval = dict->Find(node_key, key_len, mbd);
-        if(rval == MBError::IN_DICT) {
+        if (rval == MBError::IN_DICT) {
             node_offset = Get6BInteger(mbd.edge_ptrs.offset_ptr);
-        } 
+        }
         return rval;
     }
 
-    void DestroyDict() {
-        if(dict != NULL) {
+    void DestroyDict()
+    {
+        if (dict != NULL) {
             dict->Destroy();
             delete dict;
             dict = NULL;
@@ -102,19 +109,19 @@ public:
     }
 
 protected:
-    Dict *dict;
-    IndexHeader *header;
+    Dict* dict;
+    IndexHeader* header;
 };
 
 TEST_F(DictTest, Constructor_test)
 {
     int opts = CONSTS::ACCESS_MODE_WRITER | CONSTS::USE_SLIDING_WINDOW;
-    InitDict(true, opts, 32*ONE_MEGA, 100);
+    InitDict(true, opts, 32 * ONE_MEGA, 100);
     DestroyDict();
 
     int rval = MBError::SUCCESS;
     try {
-        InitDict(false, CONSTS::ACCESS_MODE_READER, 16*ONE_MEGA, 100);
+        InitDict(false, CONSTS::ACCESS_MODE_READER, 16 * ONE_MEGA, 100);
     } catch (int err) {
         rval = err;
     }
@@ -123,29 +130,29 @@ TEST_F(DictTest, Constructor_test)
 
     rval = MBError::SUCCESS;
     try {
-        InitDict(false, CONSTS::ACCESS_MODE_WRITER, 32*ONE_MEGA, 111);
+        InitDict(false, CONSTS::ACCESS_MODE_WRITER, 32 * ONE_MEGA, 111);
     } catch (int err) {
         rval = err;
     }
 
-    InitDict(false, CONSTS::ACCESS_MODE_READER, 32*ONE_MEGA, 100);
+    InitDict(false, CONSTS::ACCESS_MODE_READER, 32 * ONE_MEGA, 100);
 }
 
 TEST_F(DictTest, PrintHeader_test)
 {
-    InitDict(true, CONSTS::ACCESS_MODE_WRITER, 32*ONE_MEGA, 128);
+    InitDict(true, CONSTS::ACCESS_MODE_WRITER, 32 * ONE_MEGA, 128);
     dict->PrintHeader(std::cout);
 }
 
 TEST_F(DictTest, Add_test)
 {
-    InitDict(true, CONSTS::ACCESS_MODE_WRITER, 4*ONE_MEGA, 10);
+    InitDict(true, CONSTS::ACCESS_MODE_WRITER, 4 * ONE_MEGA, 10);
 
     uint8_t key[256];
     int key_len;
     MBData mbd;
     int rval;
-    uint8_t *shm_ptr;
+    uint8_t* shm_ptr;
 
     key_len = 10;
     memcpy(key, "test-key-1", key_len);
@@ -157,8 +164,8 @@ TEST_F(DictTest, Add_test)
     rval = dict->Add(key, key_len, mbd, false);
     EXPECT_EQ(rval, MBError::IN_DICT);
     EXPECT_EQ(dict->Count(), 1);
-    shm_ptr = dict->GetShmPtr(header->m_data_offset-mbd.data_len, mbd.data_len);
-    EXPECT_EQ(shm_ptr!=NULL, true);
+    shm_ptr = dict->GetShmPtr(header->m_data_offset - mbd.data_len, mbd.data_len);
+    EXPECT_EQ(shm_ptr != NULL, true);
     EXPECT_EQ(memcmp(shm_ptr, FAKE_DATA, mbd.data_len), 0);
 
     key_len = 10;
@@ -169,8 +176,8 @@ TEST_F(DictTest, Add_test)
     rval = dict->Add(key, key_len, mbd, false);
     EXPECT_EQ(rval, MBError::SUCCESS);
     EXPECT_EQ(dict->Count(), 2);
-    shm_ptr = dict->GetShmPtr(header->m_data_offset-mbd.data_len, mbd.data_len);
-    EXPECT_EQ(shm_ptr!=NULL, true);
+    shm_ptr = dict->GetShmPtr(header->m_data_offset - mbd.data_len, mbd.data_len);
+    EXPECT_EQ(shm_ptr != NULL, true);
     EXPECT_EQ(memcmp(shm_ptr, FAKE_DATA, mbd.data_len), 0);
 
     key_len = 10;
@@ -181,8 +188,8 @@ TEST_F(DictTest, Add_test)
     rval = dict->Add(key, key_len, mbd, false);
     EXPECT_EQ(rval, MBError::SUCCESS);
     EXPECT_EQ(dict->Count(), 3);
-    shm_ptr = dict->GetShmPtr(header->m_data_offset-mbd.data_len, mbd.data_len);
-    EXPECT_EQ(shm_ptr!=NULL, true);
+    shm_ptr = dict->GetShmPtr(header->m_data_offset - mbd.data_len, mbd.data_len);
+    EXPECT_EQ(shm_ptr != NULL, true);
     EXPECT_EQ(memcmp(shm_ptr, FAKE_DATA, mbd.data_len), 0);
 
     key_len = 10;
@@ -193,21 +200,21 @@ TEST_F(DictTest, Add_test)
     rval = dict->Add(key, key_len, mbd, true);
     EXPECT_EQ(rval, MBError::SUCCESS);
     EXPECT_EQ(dict->Count(), 3);
-    shm_ptr = dict->GetShmPtr(header->m_data_offset-mbd.data_len, mbd.data_len);
-    EXPECT_EQ(shm_ptr!=NULL, true);
+    shm_ptr = dict->GetShmPtr(header->m_data_offset - mbd.data_len, mbd.data_len);
+    EXPECT_EQ(shm_ptr != NULL, true);
     EXPECT_EQ(memcmp(shm_ptr, FAKE_DATA, mbd.data_len), 0);
 }
 
 TEST_F(DictTest, Find_test)
 {
-    InitDict(true, CONSTS::ACCESS_MODE_WRITER, 4*ONE_MEGA, 10);
+    InitDict(true, CONSTS::ACCESS_MODE_WRITER, 4 * ONE_MEGA, 10);
     int key_len;
     int data_len;
     MBData mbd;
     int rval;
 
     key_len = 10;
-    rval = dict->Find((const uint8_t *)FAKE_KEY, key_len, mbd);
+    rval = dict->Find((const uint8_t*)FAKE_KEY, key_len, mbd);
     EXPECT_EQ(rval, MBError::NOT_EXIST);
 
     data_len = 32;
@@ -222,7 +229,7 @@ TEST_F(DictTest, Find_test)
 
 TEST_F(DictTest, FindPrefix_test)
 {
-    InitDict(true, CONSTS::ACCESS_MODE_WRITER, 4*ONE_MEGA, 10);
+    InitDict(true, CONSTS::ACCESS_MODE_WRITER, 4 * ONE_MEGA, 10);
     int key_len;
     int data_len;
     MBData mbd;
@@ -233,7 +240,7 @@ TEST_F(DictTest, FindPrefix_test)
     rval = AddKV(key_len, data_len, false);
     EXPECT_EQ(rval, MBError::SUCCESS);
     key_len = 15;
-    rval = dict->FindPrefix((const uint8_t *)FAKE_KEY, key_len, mbd);
+    rval = dict->FindPrefix((const uint8_t*)FAKE_KEY, key_len, mbd);
     EXPECT_EQ(MBError::SUCCESS, rval);
     EXPECT_EQ(mbd.data_len, 32);
     EXPECT_EQ(memcmp(mbd.buff, FAKE_DATA, mbd.data_len), 0);
@@ -241,27 +248,27 @@ TEST_F(DictTest, FindPrefix_test)
 
 TEST_F(DictTest, Remove_test)
 {
-    InitDict(true, CONSTS::ACCESS_MODE_WRITER, 4*ONE_MEGA, 10);
+    InitDict(true, CONSTS::ACCESS_MODE_WRITER, 4 * ONE_MEGA, 10);
     int key_len;
     int data_len;
     int rval;
 
     key_len = 10;
-    rval = dict->Remove((const uint8_t *)FAKE_KEY, key_len);
+    rval = dict->Remove((const uint8_t*)FAKE_KEY, key_len);
     EXPECT_EQ(rval, MBError::NOT_EXIST);
 
     key_len = 13;
     data_len = 28;
     rval = AddKV(key_len, data_len, true);
     EXPECT_EQ(rval, MBError::SUCCESS);
-    rval = dict->Remove((const uint8_t *)FAKE_KEY, key_len);
+    rval = dict->Remove((const uint8_t*)FAKE_KEY, key_len);
     EXPECT_EQ(rval, MBError::SUCCESS);
     EXPECT_EQ(dict->Count(), 0);
 }
 
 TEST_F(DictTest, RemoveAll_test)
 {
-    InitDict(true, CONSTS::ACCESS_MODE_WRITER, 8*ONE_MEGA, 12);
+    InitDict(true, CONSTS::ACCESS_MODE_WRITER, 8 * ONE_MEGA, 12);
     int rval;
 
     rval = AddKV(10, 50, true);
@@ -285,19 +292,19 @@ TEST_F(DictTest, RemoveAll_test)
 
 TEST_F(DictTest, ReserveData_test)
 {
-    InitDict(true, CONSTS::ACCESS_MODE_WRITER, 8*ONE_MEGA, 12);
+    InitDict(true, CONSTS::ACCESS_MODE_WRITER, 8 * ONE_MEGA, 12);
     int data_size;
     size_t offset;
-    uint8_t *shm_ptr;
-    
+    uint8_t* shm_ptr;
+
     data_size = 1;
-    dict->ReserveData((const uint8_t *)FAKE_DATA, data_size, offset);
+    dict->ReserveData((const uint8_t*)FAKE_DATA, data_size, offset);
     offset += DATA_HDR_BYTE;
     shm_ptr = dict->GetShmPtr(offset, data_size);
     EXPECT_EQ(memcmp(shm_ptr, FAKE_DATA, data_size), 0);
 
     data_size = 19;
-    dict->ReserveData((const uint8_t *)FAKE_DATA, data_size, offset);
+    dict->ReserveData((const uint8_t*)FAKE_DATA, data_size, offset);
     offset += DATA_HDR_BYTE;
     shm_ptr = dict->GetShmPtr(offset, data_size);
     EXPECT_EQ(memcmp(shm_ptr, FAKE_DATA, data_size), 0);
@@ -305,36 +312,36 @@ TEST_F(DictTest, ReserveData_test)
 
 TEST_F(DictTest, WriteData_test)
 {
-    InitDict(true, CONSTS::ACCESS_MODE_WRITER, 8*ONE_MEGA, 12);
+    InitDict(true, CONSTS::ACCESS_MODE_WRITER, 8 * ONE_MEGA, 12);
     int data_size;
     size_t offset;
-    uint8_t *shm_ptr;
+    uint8_t* shm_ptr;
 
     data_size = 14;
     offset = 111;
     header->m_data_offset = offset + data_size;
     dict->Reserve(offset, data_size, shm_ptr);
-    dict->WriteData((const uint8_t *)FAKE_DATA, data_size, offset);
-    shm_ptr = dict->GetShmPtr(offset, data_size); 
+    dict->WriteData((const uint8_t*)FAKE_DATA, data_size, offset);
+    shm_ptr = dict->GetShmPtr(offset, data_size);
     EXPECT_EQ(memcmp(shm_ptr, FAKE_DATA, data_size), 0);
 
     data_size = 33;
     offset = 1234;
     header->m_data_offset = offset + data_size;
-    dict->WriteData((const uint8_t *)FAKE_DATA, data_size, offset);
-    shm_ptr = dict->GetShmPtr(offset, data_size); 
+    dict->WriteData((const uint8_t*)FAKE_DATA, data_size, offset);
+    shm_ptr = dict->GetShmPtr(offset, data_size);
     EXPECT_EQ(memcmp(shm_ptr, FAKE_DATA, data_size), 0);
 }
 
 TEST_F(DictTest, PrintStats_test)
 {
-    InitDict(true, CONSTS::ACCESS_MODE_WRITER, 8*ONE_MEGA, 12);
+    InitDict(true, CONSTS::ACCESS_MODE_WRITER, 8 * ONE_MEGA, 12);
     dict->PrintStats(std::cout);
 }
 
 TEST_F(DictTest, ReadRootNode_test)
 {
-    InitDict(true, CONSTS::ACCESS_MODE_WRITER, 8*ONE_MEGA, 12);
+    InitDict(true, CONSTS::ACCESS_MODE_WRITER, 8 * ONE_MEGA, 12);
     AddKV(10, 15, true);
     AddKV(12, 50, true);
     AddKV(15, 34, true);
@@ -355,7 +362,7 @@ TEST_F(DictTest, ReadRootNode_test)
 
 TEST_F(DictTest, ReadNode_test)
 {
-    InitDict(true, CONSTS::ACCESS_MODE_WRITER, 8*ONE_MEGA, 12);
+    InitDict(true, CONSTS::ACCESS_MODE_WRITER, 8 * ONE_MEGA, 12);
     AddKV(8, 22, true);
     AddKV(10, 15, true);
     AddKV(12, 50, true);
@@ -368,7 +375,7 @@ TEST_F(DictTest, ReadNode_test)
     MBData mbd;
     int match;
 
-    rval = GetNodeOffset((const uint8_t *)FAKE_KEY, 8, offset);
+    rval = GetNodeOffset((const uint8_t*)FAKE_KEY, 8, offset);
     EXPECT_EQ(rval, MBError::IN_DICT);
     rval = dict->ReadNode(offset, buff, edge_ptrs, match, mbd, true);
     EXPECT_EQ(rval, MBError::SUCCESS);
@@ -379,7 +386,7 @@ TEST_F(DictTest, ReadNode_test)
 
 TEST_F(DictTest, ReadNextEdge_test)
 {
-    InitDict(true, CONSTS::ACCESS_MODE_WRITER, 8*ONE_MEGA, 12);
+    InitDict(true, CONSTS::ACCESS_MODE_WRITER, 8 * ONE_MEGA, 12);
     AddKV(10, 15, true);
     AddKV(12, 50, true);
     AddKV(15, 34, true);
@@ -411,17 +418,17 @@ TEST_F(DictTest, ReadNextEdge_test)
 
 TEST_F(DictTest, ReadNodeHeader_test)
 {
-    InitDict(true, CONSTS::ACCESS_MODE_WRITER, 4*ONE_MEGA, 28);
+    InitDict(true, CONSTS::ACCESS_MODE_WRITER, 4 * ONE_MEGA, 28);
     AddKV(10, 15, true);
     AddKV(12, 50, true);
     AddKV(15, 34, true);
     AddKV(8, 22, true);
 
     int rval;
-    size_t offset=0, data_offset, data_link_offset;
+    size_t offset = 0, data_offset, data_link_offset;
     int node_size;
     int match;
-    rval = GetNodeOffset((const uint8_t *)FAKE_KEY, 8, offset);
+    rval = GetNodeOffset((const uint8_t*)FAKE_KEY, 8, offset);
     EXPECT_EQ(rval, MBError::IN_DICT);
     dict->ReadNodeHeader(offset, node_size, match, data_offset, data_link_offset);
     EXPECT_EQ(node_size, 22);

@@ -25,19 +25,22 @@ using namespace mabain;
 
 namespace {
 
-class MemoryOnlyTest : public ::testing::Test
-{
+class MemoryOnlyTest : public ::testing::Test {
 public:
-    MemoryOnlyTest() {
+    MemoryOnlyTest()
+    {
     }
-    virtual ~MemoryOnlyTest() {
+    virtual ~MemoryOnlyTest()
+    {
     }
 
-    virtual void SetUp() {
+    virtual void SetUp()
+    {
         db = nullptr;
     }
-    virtual void TearDown() {
-        if(db != nullptr) {
+    virtual void TearDown()
+    {
+        if (db != nullptr) {
             db->Close();
             delete db;
         }
@@ -45,7 +48,7 @@ public:
     }
 
 protected:
-    DB *db;
+    DB* db;
 };
 
 TEST_F(MemoryOnlyTest, MemoryOnlyTest_test_constructor_1)
@@ -69,7 +72,7 @@ TEST_F(MemoryOnlyTest, MemoryOnlyTest_test_add)
 
     int num = 10000;
     std::string key;
-    for(int i = 0; i < num; i++) {
+    for (int i = 0; i < num; i++) {
         key = std::string("test_add_") + std::to_string(i);
         db->Add(key, key);
     }
@@ -77,11 +80,11 @@ TEST_F(MemoryOnlyTest, MemoryOnlyTest_test_add)
     MBData mbd;
     int rval;
     std::string value;
-    for(int i = 0; i < num; i++) {
+    for (int i = 0; i < num; i++) {
         key = std::string("test_add_") + std::to_string(i);
         rval = db->Find(key, mbd);
-        EXPECT_EQ(MBError::SUCCESS, rval); 
-        value = std::string((char *)mbd.buff, mbd.data_len);
+        EXPECT_EQ(MBError::SUCCESS, rval);
+        value = std::string((char*)mbd.buff, mbd.data_len);
         EXPECT_EQ(key, value);
     }
 }

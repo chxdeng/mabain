@@ -1,7 +1,7 @@
 CPP=g++
 
 CPPFLAGS = -I. -I.. -I../util -Wall -Werror -g -O2 -c -std=c++17
-LDFLAGS  = -lpthread -lcrypto
+LDFLAGS  = -lpthread -lcrypto -ljemalloc
 
 TESTSOURCES=$(wildcard *.cpp)
 
