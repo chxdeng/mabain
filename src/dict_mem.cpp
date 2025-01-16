@@ -128,7 +128,6 @@ DictMem::DictMem(const std::string& mbdir, bool init_header, size_t memsize,
     ////////////////////////////////////
     // Writor only initialization below
     ////////////////////////////////////
-    header->writer_options = options;
 
     node_size = new int[NUM_ALPHABET];
     for (int i = 0; i < NUM_ALPHABET; i++) {
@@ -139,6 +138,8 @@ DictMem::DictMem(const std::string& mbdir, bool init_header, size_t memsize,
     node_ptr = new uint8_t[node_size[NUM_ALPHABET - 1]];
 
     if (init_header) {
+        // set writer options
+        header->writer_options = options;
         // Set up DB version
         header->version[0] = version[0];
         header->version[1] = version[1];

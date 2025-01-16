@@ -62,14 +62,25 @@ Dict::Dict(const std::string& mbdir, bool init_header, int datasize,
         throw(int) MBError::MMAP_FAILED;
     }
 
-    // confirm block size is the same
     if (!init_header) {
+        // confirm block size is the same
         if (block_sz_data != 0 && header->data_block_size != block_sz_data) {
             std::cerr << "mabain data block size not match " << block_sz_data << ": "
                       << header->data_block_size << std::endl;
             PrintHeader(std::cout);
             Destroy();
             throw(int) MBError::INVALID_SIZE;
+        }
+        // Check if jemalloc option is conststent
+        if ((options & CONSTS::OPTION_JEMALLOC) && !(header->writer_options & CONSTS::OPTION_JEMALLOC)) {
+            std::cerr << "mabain jemalloc option not match\n";
+            Destroy();
+            throw(int) MBError::INVALID_ARG;
+        }
+        if (!(options & CONSTS::OPTION_JEMALLOC) && (header->writer_options & CONSTS::OPTION_JEMALLOC)) {
+            std::cerr << "mabain jemalloc option not match\n";
+            Destroy();
+            throw(int) MBError::INVALID_ARG;
         }
     } else {
         header->data_block_size = block_sz_data;
@@ -106,15 +117,6 @@ Dict::Dict(const std::string& mbdir, bool init_header, int datasize,
             if (header->entry_per_bucket != entry_per_bucket) {
                 std::cerr << "mabain count per bucket not match\n";
             }
-
-            if (mm.IsValid()) {
-                int rval = ExceptionRecovery();
-                if (rval == MBError::SUCCESS) {
-                    header->excep_lf_offset = 0;
-                    header->excep_offset = 0;
-                    status = MBError::SUCCESS;
-                }
-            }
         } else {
             if (mm.IsValid())
                 status = MBError::SUCCESS;
@@ -129,6 +131,7 @@ Dict::~Dict()
 // This function only needs to be called by writer.
 int Dict::Init(uint32_t id)
 {
+    Logger::Log(LOG_LEVEL_DEBUG, "connector %u initializing db", id);
     if (!(options & CONSTS::ACCESS_MODE_WRITER)) {
         Logger::Log(LOG_LEVEL_ERROR, "dict initialization not allowed for non-writer");
         return MBError::NOT_ALLOWED;
@@ -977,17 +980,17 @@ int Dict::Remove(const uint8_t* key, int len, MBData& data)
 int Dict::RemoveAll()
 {
     int rval = MBError::SUCCESS;
-    // clear root node to avoid reader race condition
-    for (int c = 0; c < NUM_ALPHABET; c++) {
-        rval = mm.ClearRootEdge(c);
-        if (rval != MBError::SUCCESS)
-            break;
-    }
-    mm.ClearMem();
+
+    mm.ClearMem(); // clear memory will re-initialize jemalloc
     if (options & CONSTS::OPTION_JEMALLOC) {
         mm.InitRootNode();
         kv_file->Reset(); // reset jemalloc
     } else {
+        for (int c = 0; c < NUM_ALPHABET; c++) {
+            rval = mm.ClearRootEdge(c);
+            if (rval != MBError::SUCCESS)
+                break;
+        }
         header->m_data_offset = GetStartDataOffset();
         free_lists->Empty();
         header->pending_data_buff_size = 0;

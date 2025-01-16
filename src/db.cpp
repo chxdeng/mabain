@@ -145,6 +145,17 @@ int DB::ValidateConfig(MBConfig& config)
             std::cerr << "count in eviction bucket must be greater than 7\n";
             return MBError::INVALID_ARG;
         }
+
+        if (config.options & CONSTS::OPTION_JEMALLOC) {
+            if (config.max_num_index_block != 1 || config.max_num_data_block != 1) {
+                std::cout << "jemalloc option only supports single block\n";
+                return MBError::INVALID_ARG;
+            }
+            if (config.memcap_index != config.block_size_index || config.memcap_data != config.block_size_data) {
+                std::cout << "memcap must be equal to block size when using jemalloc\n";
+                return MBError::INVALID_ARG;
+            }
+        }
     }
     if (config.options & CONSTS::USE_SLIDING_WINDOW) {
         std::cout << "sliding window option is deprecated\n";
@@ -283,15 +294,31 @@ void DB::PostDBUpdate(const MBConfig& config, bool init_header, bool update_head
     }
 
     Logger::Log(LOG_LEVEL_DEBUG, "connector %u successfully opened DB %s for %s",
-        identifier, mb_dir.c_str(),
-        (config.options & CONSTS::ACCESS_MODE_WRITER) ? "writing" : "reading");
+        identifier, mb_dir.c_str(), (config.options & CONSTS::ACCESS_MODE_WRITER) ? "writing" : "reading");
     status = MBError::SUCCESS;
 
-    if (!(config.options & CONSTS::OPTION_JEMALLOC) && (config.options & CONSTS::ACCESS_MODE_WRITER)) {
-        if (!(config.options & CONSTS::ASYNC_WRITER_MODE)) {
-            // Run rc exception recovery
-            ResourceCollection rc(*this);
-            rc.ExceptionRecovery();
+    if (config.options & CONSTS::ACCESS_MODE_WRITER) {
+        if (config.options & CONSTS::OPTION_JEMALLOC) {
+            Logger::Log(LOG_LEVEL_INFO, "reset db in jemalloc mode");
+            int rval = dict->RemoveAll();
+            if (rval != MBError::SUCCESS) {
+                Logger::Log(LOG_LEVEL_ERROR, "failed to reset db: %s", MBError::get_error_str(rval));
+                status = rval;
+            }
+        } else {
+            if (!(config.options & CONSTS::ASYNC_WRITER_MODE)) {
+                // Run rc exception recovery
+                ResourceCollection rc(*this);
+                int rval = rc.ExceptionRecovery();
+                if (rval == MBError::SUCCESS) {
+                    IndexHeader* header = dict->GetHeaderPtr();
+                    header->excep_lf_offset = 0;
+                    header->excep_offset = 0;
+                    Logger::Log(LOG_LEVEL_DEBUG, "rc exception recovery successful");
+                } else {
+                    Logger::Log(LOG_LEVEL_WARN, "rc exception recovery failed: %s", MBError::get_error_str(rval));
+                }
+            }
         }
     }
 }

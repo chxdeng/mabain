@@ -124,7 +124,7 @@ int RollableFile::OpenAndMapBlockFile(size_t block_order, bool create_file)
         int level = LOG_LEVEL_DEBUG;
         if (mode & CONSTS::ACCESS_MODE_WRITER)
             level = LOG_LEVEL_WARN;
-        Logger::Log(level, "block number %d ovferflow", block_order);
+        Logger::Log(level, "block number %d overflow", block_order);
         return MBError::NO_RESOURCE;
     }
 
