@@ -48,6 +48,7 @@ public:
     inline void Free(size_t offset) const;
     inline size_t Allocated() const;
     inline void Purge() const;
+    inline int Reset();
 
     uint8_t* MapFile(size_t size, off_t offset, bool sliding = false);
     bool IsMapped() const;
@@ -116,6 +117,13 @@ inline void MmapFileIO::Purge() const
     if (mem_mgr == nullptr)
         return;
     mem_mgr->mb_purge();
+}
+
+inline int MmapFileIO::Reset()
+{
+    if (mem_mgr != nullptr)
+        delete mem_mgr;
+    return InitMemoryManager();
 }
 
 }

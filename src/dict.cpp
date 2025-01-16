@@ -759,12 +759,15 @@ void Dict::PrintStats(std::ostream& out_stream) const
     if (status != MBError::SUCCESS)
         return;
 
+#ifdef __DEBUG__
     if (options & CONSTS::OPTION_JEMALLOC) {
         kv_file->Purge();
         out_stream << "Number of arenas: " << MemoryManager::mb_get_num_arenas() << std::endl;
         out_stream << "Total allocated size: " << MemoryManager::mb_total_allocated() << std::endl;
     }
+#endif
     out_stream << "DB stats:\n";
+    out_stream << "\tWriter option: " << header->writer_options << std::endl;
     out_stream << "\tNumber of DB writer: " << header->num_writer << std::endl;
     out_stream << "\tNumber of DB reader: " << header->num_reader << std::endl;
     out_stream << "\tEntry count in DB: " << header->count << std::endl;
@@ -772,7 +775,9 @@ void Dict::PrintStats(std::ostream& out_stream) const
     out_stream << "\tEviction bucket index: " << header->eviction_bucket_index << std::endl;
     out_stream << "\tData block size: " << header->data_block_size << std::endl;
     if (options & CONSTS::OPTION_JEMALLOC) {
+#ifdef __DEBUG__
         out_stream << "\tAllocated buffer size: " << kv_file->Allocated() << std::endl;
+#endif
     } else if (free_lists != nullptr) {
         out_stream << "\tData size: " << header->m_data_offset << std::endl;
         out_stream << "\tPending buffer size: " << header->pending_data_buff_size << std::endl;
@@ -964,9 +969,6 @@ int Dict::Remove(const uint8_t* key, int len, MBData& data)
 
     if (rval == MBError::SUCCESS) {
         header->count--;
-        if (header->count == 0) {
-            RemoveAll();
-        }
     }
 
     return rval;
@@ -974,28 +976,23 @@ int Dict::Remove(const uint8_t* key, int len, MBData& data)
 
 int Dict::RemoveAll()
 {
-    if (options & CONSTS::OPTION_JEMALLOC) {
-        // TODO
-        return MBError::SUCCESS;
-    }
     int rval = MBError::SUCCESS;
+    // clear root node to avoid reader race condition
     for (int c = 0; c < NUM_ALPHABET; c++) {
         rval = mm.ClearRootEdge(c);
         if (rval != MBError::SUCCESS)
             break;
     }
-
     mm.ClearMem();
-
-    header->count = 0;
-    header->m_data_offset = GetStartDataOffset();
     if (options & CONSTS::OPTION_JEMALLOC) {
-        //TODO implement this
+        mm.InitRootNode();
+        kv_file->Reset(); // reset jemalloc
     } else {
+        header->m_data_offset = GetStartDataOffset();
         free_lists->Empty();
+        header->pending_data_buff_size = 0;
     }
-    header->pending_data_buff_size = 0;
-
+    header->count = 0;
     header->eviction_bucket_index = 0;
     header->num_update = 0;
     return rval;
@@ -1242,6 +1239,8 @@ DictMem* Dict::GetMM() const
 
 size_t Dict::GetStartDataOffset() const
 {
+    // TODO: handle data header allocation in jemalloc mode.
+    // Note this header is not used currently
     return DATA_HEADER_SIZE;
 }
 

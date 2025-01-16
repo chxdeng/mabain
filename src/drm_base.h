@@ -73,7 +73,8 @@ typedef struct _IndexHeader {
     int num_writer;
     int num_reader;
     int64_t shm_queue_id;
-    int64_t dummy;
+    int writer_options;
+    int dummy;
 
     // Lock-free data structure
     LockFreeShmData lock_free;

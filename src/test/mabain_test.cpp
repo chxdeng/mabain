@@ -558,6 +558,53 @@ static void tracking_buffer_test(std::string& list_file, MBConfig& mbconf, int64
     std::cout << "Tracking buffer test passed: " << list_file << "\n";
 }
 
+static void jemalloc_remove_all_test(std::string& list_file, const MBConfig& mbconf, int64_t expected_count)
+{
+    MBConfig conf;
+    memcpy(&conf, &mbconf, sizeof(conf));
+    std::cout << "jemalloc remove all test: " << list_file << "\n";
+    conf.options = CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC;
+    conf.block_size_data = 128 * 1024 * 1024LL;
+    conf.block_size_index = 128 * 1024 * 1024LL;
+    conf.max_num_data_block = 1;
+    conf.max_num_index_block = 1;
+    conf.memcap_index = mbconf.block_size_index;
+    conf.memcap_data = mbconf.block_size_data;
+
+    DB db(conf);
+    std::cout << db.StatusStr() << "\n";
+    assert(db.is_open());
+
+    std::ifstream in(list_file.c_str());
+    std::string line;
+    std::vector<std::string> keys;
+    std::cout << "Loading " << list_file << "\n";
+    while (std::getline(in, line)) {
+        if (line.length() > (unsigned)CONSTS::MAX_KEY_LENGHTH) {
+            continue;
+        }
+        db.Add(line, line);
+        keys.push_back(line);
+    }
+    in.close();
+
+    std::cout << "test RemoveAll API\n";
+    db.RemoveAll();
+
+    conf.options = CONSTS::ACCESS_MODE_READER;
+    lookup_test(list_file, conf, 0);
+    iterator_test(conf, 0);
+
+    for (size_t i = 0; i < keys.size(); i++) {
+        db.Add(keys[i], keys[i]);
+    }
+    db.PrintStats();
+    lookup_test(list_file, conf, keys.size());
+    iterator_test(conf, keys.size());
+
+    std::cout << "remove all test passed: " << list_file << "\n";
+}
+
 static void jemalloc_test(std::string& list_file, const MBConfig& mbconf, int64_t expected_count)
 {
     MBConfig conf;
@@ -587,6 +634,12 @@ static void jemalloc_test(std::string& list_file, const MBConfig& mbconf, int64_
         keys.push_back(line);
     }
     in.close();
+
+    std::cout << "iterating test with jemalloc loading " << list_file << "\n";
+    conf.options = CONSTS::ACCESS_MODE_READER;
+    lookup_test(list_file, conf, keys.size());
+    iterator_test(conf, keys.size());
+
     std::cout << "Removing " << list_file << "\n";
     for (size_t i = 0; i < keys.size(); i++) {
         db.Remove(keys[i]);
@@ -628,7 +681,7 @@ int main(int argc, char* argv[])
     }
 
     DB::SetLogFile(std::string(MB_DIR) + "/mabain.log");
-    //DB::LogDebug();
+    DB::LogDebug();
     std::ifstream test_in(test_list_file);
     assert(test_in.is_open());
     std::string file;
@@ -701,6 +754,8 @@ int main(int argc, char* argv[])
             tracking_buffer_test(file, mbconf, expected_count);
         } else if (mode.compare("jemalloc") == 0) {
             jemalloc_test(file, mbconf, expected_count);
+        } else if (mode.compare("remove_all") == 0) {
+            jemalloc_remove_all_test(file, mbconf, expected_count);
         } else {
             std::cerr << "Unknown test\n";
             abort();

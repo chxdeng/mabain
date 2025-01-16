@@ -453,4 +453,14 @@ void RollableFile::Purge() const
     }
 }
 
+// Reset jemalloc
+void RollableFile::Reset()
+{
+    for (unsigned i = 0; i < files.size(); i++) {
+        if (files[i] != nullptr) {
+            files[i]->Reset();
+        }
+    }
+}
+
 }

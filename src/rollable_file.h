@@ -46,6 +46,7 @@ public:
     void Free(size_t offset) const;
     size_t Allocated() const;
     void Purge() const;
+    void Reset(); // reset jemalloc
 
     size_t RandomWrite(const void* data, size_t size, off_t offset);
     size_t RandomRead(void* buff, size_t size, off_t offset);

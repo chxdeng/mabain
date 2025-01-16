@@ -117,6 +117,10 @@ DictMem::DictMem(const std::string& mbdir, bool init_header, size_t memsize,
             std::cerr << "async_queue_size not set yet in header\n";
             return;
         }
+        // load root offset from header in jemalloc mode
+        if (header->writer_options & CONSTS::OPTION_JEMALLOC) {
+            root_offset = header->m_index_offset;
+        }
         is_valid = true;
         return;
     }
@@ -124,9 +128,9 @@ DictMem::DictMem(const std::string& mbdir, bool init_header, size_t memsize,
     ////////////////////////////////////
     // Writor only initialization below
     ////////////////////////////////////
+    header->writer_options = options;
 
     node_size = new int[NUM_ALPHABET];
-
     for (int i = 0; i < NUM_ALPHABET; i++) {
         int nt = i + 1;
         node_size[i] = 1 + 1 + OFFSET_SIZE + nt + nt * EDGE_SIZE;
@@ -169,6 +173,10 @@ void DictMem::InitRootNode()
     assert(root_offset == 0);
 #endif
 
+    // In jemalloc mode, store the root node offset in the header.
+    if (options & CONSTS::OPTION_JEMALLOC) {
+        header->m_index_offset = root_offset;
+    }
     root_node[0] = FLAG_NODE_NONE;
     root_node[1] = NUM_ALPHABET - 1;
     for (int i = 0; i < NUM_ALPHABET; i++) {
@@ -663,7 +671,7 @@ void DictMem::ReserveData(const uint8_t* key, int size, size_t& offset, bool map
     if (options & CONSTS::OPTION_JEMALLOC) {
         void* ptr = kv_file->Malloc(size, offset);
         if (ptr == nullptr) {
-            Logger::Log(LOG_LEVEL_ERROR, "failed to allocate buffer");
+            Logger::Log(LOG_LEVEL_DEBUG, "failed to allocate buffer with size %zu", size);
             throw MBError::NO_MEMORY;
         }
         memcpy(ptr, key, size);
@@ -871,14 +879,20 @@ int DictMem::ClearRootEdges_RC() const
 
 void DictMem::ClearMem() const
 {
-    // TODO handle jemalloc case
-    int root_node_size = free_lists->GetAlignmentSize(node_size[NUM_ALPHABET - 1]);
-    header->m_index_offset = root_offset + root_node_size;
-    header->n_states = 1; // Keep the root node
-    header->n_edges = 0;
-    header->edge_str_size = 0;
-    free_lists->Empty();
-    header->pending_index_buff_size = 0;
+    if (options & CONSTS::OPTION_JEMALLOC) {
+        kv_file->Reset(); // reset jemalloc
+        header->n_states = 0;
+        header->n_edges = 0;
+        header->edge_str_size = 0;
+    } else {
+        int root_node_size = free_lists->GetAlignmentSize(node_size[NUM_ALPHABET - 1]);
+        header->m_index_offset = root_offset + root_node_size;
+        header->n_states = 1; // Keep the root node
+        header->n_edges = 0;
+        header->edge_str_size = 0;
+        free_lists->Empty();
+        header->pending_index_buff_size = 0;
+    }
 }
 
 int DictMem::ReadNode(size_t& node_off, EdgePtrs& edge_ptrs,
@@ -1202,8 +1216,11 @@ void DictMem::PrintStats(std::ostream& out_stream) const
     out_stream << "\tEdge size: " << header->n_edges * EDGE_SIZE << std::endl;
     out_stream << "\tException flag: " << header->excep_updating_status << std::endl;
     if (options & CONSTS::OPTION_JEMALLOC) {
+#ifdef __DEBUG__
         kv_file->Purge();
+        // The allocated size can only be obtained when jemalloc is built with stats.
         out_stream << "\tAllocated buffer size: " << kv_file->Allocated() << std::endl;
+#endif
     } else if (free_lists != nullptr) {
         out_stream << "\tPending buffer size: " << header->pending_index_buff_size << std::endl;
         out_stream << "\tTrackable buffer size: " << free_lists->GetTotSize() << std::endl;

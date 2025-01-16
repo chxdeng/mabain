@@ -109,6 +109,8 @@ void ResourceCollection::ReclaimResource(int64_t min_index_size,
     int64_t max_dbcnt,
     AsyncWriter* awr)
 {
+    if (db_ref.GetDBOptions() & CONSTS::OPTION_JEMALLOC)
+        return;
     if (!db_ref.is_open())
         throw db_ref.Status();
 

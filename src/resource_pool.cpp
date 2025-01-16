@@ -19,6 +19,7 @@
 #include <string.h>
 
 #include "error.h"
+#include "logger.h"
 #include "mabain_consts.h"
 #include "mmap_file.h"
 #include "resource_pool.h"
@@ -54,6 +55,7 @@ bool ResourcePool::CheckExistence(const std::string& header_path)
 
 void ResourcePool::RemoveResourceByPath(const std::string& path)
 {
+    Logger::Log(LOG_LEVEL_DEBUG, "remove resource %s", path.c_str());
     pthread_mutex_lock(&pool_mutex);
     file_pool.erase(path);
     pthread_mutex_unlock(&pool_mutex);
@@ -85,6 +87,7 @@ std::shared_ptr<MmapFileIO> ResourcePool::OpenFile(const std::string& fpath,
 
     auto search = file_pool.find(fpath);
     if (search == file_pool.end()) {
+        Logger::Log(LOG_LEVEL_DEBUG, "create resource %s", fpath.c_str());
         int flags = O_RDWR;
         if (create_file)
             flags |= O_CREAT;
@@ -106,6 +109,7 @@ std::shared_ptr<MmapFileIO> ResourcePool::OpenFile(const std::string& fpath,
                     }
                 }
             } else {
+                Logger::Log(LOG_LEVEL_DEBUG, "failed to map file %s", fpath.c_str());
                 map_file = false;
             }
         }
