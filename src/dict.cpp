@@ -71,17 +71,6 @@ Dict::Dict(const std::string& mbdir, bool init_header, int datasize,
             Destroy();
             throw(int) MBError::INVALID_SIZE;
         }
-        // Check if jemalloc option is conststent
-        if ((options & CONSTS::OPTION_JEMALLOC) && !(header->writer_options & CONSTS::OPTION_JEMALLOC)) {
-            std::cerr << "mabain jemalloc option not match\n";
-            Destroy();
-            throw(int) MBError::INVALID_ARG;
-        }
-        if (!(options & CONSTS::OPTION_JEMALLOC) && (header->writer_options & CONSTS::OPTION_JEMALLOC)) {
-            std::cerr << "mabain jemalloc option not match\n";
-            Destroy();
-            throw(int) MBError::INVALID_ARG;
-        }
     } else {
         header->data_block_size = block_sz_data;
     }
@@ -117,11 +106,21 @@ Dict::Dict(const std::string& mbdir, bool init_header, int datasize,
             if (header->entry_per_bucket != entry_per_bucket) {
                 std::cerr << "mabain count per bucket not match\n";
             }
-        } else {
-            if (mm.IsValid())
-                status = MBError::SUCCESS;
+            // Check if jemalloc option is conststent
+            if ((options & CONSTS::OPTION_JEMALLOC) && !(header->writer_options & CONSTS::OPTION_JEMALLOC)) {
+                std::cerr << "mabain jemalloc option not match\n";
+                Destroy();
+                throw(int) MBError::INVALID_ARG;
+            }
+            if (!(options & CONSTS::OPTION_JEMALLOC) && (header->writer_options & CONSTS::OPTION_JEMALLOC)) {
+                std::cerr << "mabain jemalloc option not match header\n";
+                Destroy();
+                throw(int) MBError::INVALID_ARG;
+            }
         }
     }
+    if (mm.IsValid())
+        status = MBError::SUCCESS;
 }
 
 Dict::~Dict()
@@ -985,6 +984,11 @@ int Dict::RemoveAll()
     if (options & CONSTS::OPTION_JEMALLOC) {
         mm.InitRootNode();
         kv_file->Reset(); // reset jemalloc
+        for (int c = 0; c < NUM_ALPHABET; c++) {
+            rval = mm.ClearRootEdge(c);
+            if (rval != MBError::SUCCESS)
+                break;
+        }
     } else {
         for (int c = 0; c < NUM_ALPHABET; c++) {
             rval = mm.ClearRootEdge(c);

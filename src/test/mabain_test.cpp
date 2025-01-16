@@ -376,6 +376,7 @@ static void iterator_test(MBConfig& mbconf, int64_t expected_count)
     db.Close();
     int64_t tmdiff = (stop.tv_sec - start.tv_sec) * 1000000 + (stop.tv_usec - start.tv_usec);
     std::cout << "count: " << count << "   time: " << 1.0 * tmdiff / count << "\n";
+    std::cout << "db_cnt: " << db_cnt << "  expected_count: " << expected_count << "\n";
     assert(count == db_cnt);
     assert(expected_count == count);
 }
@@ -568,8 +569,8 @@ static void jemalloc_remove_all_test(std::string& list_file, const MBConfig& mbc
     conf.block_size_index = 128 * 1024 * 1024LL;
     conf.max_num_data_block = 1;
     conf.max_num_index_block = 1;
-    conf.memcap_index = mbconf.block_size_index;
-    conf.memcap_data = mbconf.block_size_data;
+    conf.memcap_index = conf.block_size_index;
+    conf.memcap_data = conf.block_size_data;
 
     DB db(conf);
     std::cout << db.StatusStr() << "\n";
@@ -589,7 +590,8 @@ static void jemalloc_remove_all_test(std::string& list_file, const MBConfig& mbc
     in.close();
 
     std::cout << "test RemoveAll API\n";
-    db.RemoveAll();
+    int rval = db.RemoveAll();
+    assert(rval == MBError::SUCCESS);
 
     conf.options = CONSTS::ACCESS_MODE_READER;
     lookup_test(list_file, conf, 0);
@@ -615,8 +617,8 @@ static void jemalloc_test(std::string& list_file, const MBConfig& mbconf, int64_
     conf.block_size_index = 128 * 1024 * 1024LL;
     conf.max_num_data_block = 1;
     conf.max_num_index_block = 1;
-    conf.memcap_index = mbconf.block_size_index;
-    conf.memcap_data = mbconf.block_size_data;
+    conf.memcap_index = conf.block_size_index;
+    conf.memcap_data = conf.block_size_data;
 
     DB db(conf);
     std::cout << db.StatusStr() << "\n";
