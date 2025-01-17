@@ -124,7 +124,7 @@ void MemoryManager::configure_jemalloc()
     extent_hooks->purge_forced = custom_extent_purge_forced;
     extent_hooks->split = custom_extent_split;
     // use default merge function
-    extent_hooks->merge = nullptr;
+    extent_hooks->merge = custom_extent_merge;
 
     size_t hooks_sz = sizeof(extent_hooks);
     unsigned arena_ind;
@@ -155,75 +155,66 @@ void* MemoryManager::custom_extent_alloc(void* new_addr, size_t size, size_t ali
 
     void* ptr = nullptr;
     size_t aligned_offset;
-
     if (new_addr != nullptr) {
         ptr = new_addr;
         aligned_offset = manager->get_shm_offset(ptr);
         if (aligned_offset + size > manager->shm_size) {
-            Logger::Log(LOG_LEVEL_DEBUG, "custom_extent_alloc: failed to extend new "
-                                         "memory (offset: %zu, size: %zu, shm_size: %zu)",
-                aligned_offset, size, manager->shm_size);
+            Logger::Log(LOG_LEVEL_DEBUG, "custom_extent_alloc: arena %u failed to extend"
+                                         " new memory (offset: %zu, size: %zu, shm_size: %zu)",
+                arena_ind, aligned_offset, size, manager->shm_size);
             return nullptr; // Return nullptr to indicate allocation failure
         }
     } else {
-        // Align the offset
+
+        // If no suitable extent is found, allocate new memory
         aligned_offset = (manager->shm_offset + alignment - 1) & ~(alignment - 1);
-        // Check if the allocation fits within the shared memory size
         if (aligned_offset + size > manager->shm_size) {
-            Logger::Log(LOG_LEVEL_DEBUG, "custom_extent_alloc: failed to extend memory "
-                                         "(offset: %zu, size: %zu, shm_size: %zu)",
-                aligned_offset, size, manager->shm_size);
-            return nullptr; // Return nullptr to indicate allocation failure
+            Logger::Log(LOG_LEVEL_DEBUG, "custom_extent_alloc: arena %u failed to extend"
+                                         " memory (offset: %zu, size: %zu, shm_size: %zu)",
+                arena_ind, aligned_offset, size, manager->shm_size);
+            return nullptr;
         }
 
         ptr = static_cast<char*>(manager->shm_addr) + aligned_offset;
         manager->shm_offset = aligned_offset + size;
-        Logger::Log(LOG_LEVEL_DEBUG, "custom_extent_alloc: allocated %zu bytes at %p "
-                                     "(offset: %zu)",
-            size, ptr, aligned_offset);
+        Logger::Log(LOG_LEVEL_DEBUG, "custom_extent_alloc: allocated %zu bytes at offset %zu",
+            size, aligned_offset);
     }
+
     // Set zero and commit flags
     if (*zero) {
         memset(ptr, 0, size);
     }
-
     // Ensure the memory is committed if *commit is true
     if (*commit) {
         if (madvise(ptr, size, MADV_WILLNEED) != 0) {
             Logger::Log(LOG_LEVEL_DEBUG, "custom_extent_alloc: failed to commit "
                                          "memory: %d %s",
                 errno, strerror(errno));
-            return nullptr; // Return nullptr to indicate allocation failure
+            return nullptr;
         }
     }
 
+    Logger::Log(LOG_LEVEL_DEBUG, "custom_extent_alloc: arena %u, current shm_offset %zu,",
+        arena_ind, manager->shm_offset);
     return ptr;
 }
 
 bool MemoryManager::custom_extent_dalloc(extent_hooks_t* extent_hooks, void* addr,
     size_t size, bool committed, unsigned arena_ind)
 {
-    Logger::Log(LOG_LEVEL_DEBUG, "custom_extent_dalloc: arena index %u size %zu at "
-                                 "address %p",
-        arena_ind, size, addr);
     return true;
 }
 
 bool MemoryManager::custom_extent_commit(extent_hooks_t* extent_hooks, void* addr,
     size_t size, size_t offset, size_t length, unsigned arena_ind)
 {
-    Logger::Log(LOG_LEVEL_DEBUG, "custom_extent_commit: arena index %u committed %zu "
-                                 "bytes at %p",
-        arena_ind, length, addr);
     return false;
 }
 
 bool MemoryManager::custom_extent_decommit(extent_hooks_t* extent_hooks, void* addr,
     size_t size, size_t offset, size_t length, unsigned arena_ind)
 {
-    Logger::Log(LOG_LEVEL_DEBUG, "custom_extent_decommit: arena index %u decommitted "
-                                 "%zu bytes at %p",
-        arena_ind, length, addr);
     if (madvise((char*)addr + offset, length, MADV_DONTNEED) != 0) {
         Logger::Log(LOG_LEVEL_DEBUG, "failed to decommit memory: %d %s",
             errno, strerror(errno));
@@ -235,45 +226,40 @@ bool MemoryManager::custom_extent_decommit(extent_hooks_t* extent_hooks, void* a
 bool MemoryManager::custom_extent_purge_lazy(extent_hooks_t* extent_hooks, void* addr,
     size_t size, size_t offset, size_t length, unsigned arena_ind)
 {
-    Logger::Log(LOG_LEVEL_DEBUG, "custom_extent_purge_lazy: arena index %u purged (lazy)"
-                                 " %zu bytes at %p",
-        arena_ind, length, addr);
     if (madvise(static_cast<char*>(addr) + offset, length, MADV_DONTNEED) != 0) {
         Logger::Log(LOG_LEVEL_DEBUG, "failed to purge(lazy) memory: %d %s",
             errno, strerror(errno));
-        return true; // indicate failure
+        return true;
     }
-    return false; // indicate success
+    return false;
 }
 
 bool MemoryManager::custom_extent_purge_forced(extent_hooks_t* extent_hooks, void* addr,
     size_t size, size_t offset, size_t length, unsigned arena_ind)
 {
-    Logger::Log(LOG_LEVEL_DEBUG, "custom_extent_purge_forced: arena index %u purged "
-                                 "(forced) %zu bytes at %p",
-        arena_ind, length, addr);
     if (madvise(static_cast<char*>(addr) + offset, length, MADV_FREE) != 0) {
         Logger::Log(LOG_LEVEL_DEBUG, "failed to purge(forced) memory: %d %s",
             errno, strerror(errno));
-        return true; // indicate failure
+        return true;
     }
-    return false; // indicate success
+    return false;
 }
 
 bool MemoryManager::custom_extent_split(extent_hooks_t* extent_hooks, void* addr, size_t size,
     size_t size_a, size_t size_b, bool committed, unsigned arena_ind)
 {
-    Logger::Log(LOG_LEVEL_DEBUG, "custom_extent_split: arena index %u split %zu bytes at %p",
-        arena_ind, size, addr);
     return false;
 }
 
 bool MemoryManager::custom_extent_merge(extent_hooks_t* extent_hooks, void* addr_a, size_t size_a,
     void* addr_b, size_t size_b, bool committed, unsigned arena_ind)
 {
-    Logger::Log(LOG_LEVEL_DEBUG, "custom_extent_merge: arena index %u merge %zu bytes at %p and %p",
-        arena_ind, size_a, addr_a, addr_b);
-    return true; // merge not performed
+    // Check if the two extents are adjacent
+    if ((char*)addr_a + size_a != addr_b) {
+        Logger::Log(LOG_LEVEL_DEBUG, "Extents are not adjacent and cannot be merged");
+        return true;
+    }
+    return false;
 }
 
 }
