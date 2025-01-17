@@ -123,7 +123,6 @@ void MemoryManager::configure_jemalloc()
     extent_hooks->purge_lazy = custom_extent_purge_lazy;
     extent_hooks->purge_forced = custom_extent_purge_forced;
     extent_hooks->split = custom_extent_split;
-    // use default merge function
     extent_hooks->merge = custom_extent_merge;
 
     size_t hooks_sz = sizeof(extent_hooks);
@@ -177,8 +176,6 @@ void* MemoryManager::custom_extent_alloc(void* new_addr, size_t size, size_t ali
 
         ptr = static_cast<char*>(manager->shm_addr) + aligned_offset;
         manager->shm_offset = aligned_offset + size;
-        Logger::Log(LOG_LEVEL_DEBUG, "custom_extent_alloc: allocated %zu bytes at offset %zu",
-            size, aligned_offset);
     }
 
     // Set zero and commit flags
@@ -245,14 +242,14 @@ bool MemoryManager::custom_extent_purge_forced(extent_hooks_t* extent_hooks, voi
     return false;
 }
 
-bool MemoryManager::custom_extent_split(extent_hooks_t* extent_hooks, void* addr, size_t size,
-    size_t size_a, size_t size_b, bool committed, unsigned arena_ind)
+bool MemoryManager::custom_extent_split(extent_hooks_t* extent_hooks, void* addr,
+    size_t size, size_t size_a, size_t size_b, bool committed, unsigned arena_ind)
 {
     return false;
 }
 
-bool MemoryManager::custom_extent_merge(extent_hooks_t* extent_hooks, void* addr_a, size_t size_a,
-    void* addr_b, size_t size_b, bool committed, unsigned arena_ind)
+bool MemoryManager::custom_extent_merge(extent_hooks_t* extent_hooks, void* addr_a,
+    size_t size_a, void* addr_b, size_t size_b, bool committed, unsigned arena_ind)
 {
     // Check if the two extents are adjacent
     if ((char*)addr_a + size_a != addr_b) {
