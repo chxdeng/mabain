@@ -761,13 +761,6 @@ void Dict::PrintStats(std::ostream& out_stream) const
     if (status != MBError::SUCCESS)
         return;
 
-#ifdef __DEBUG__
-    if (options & CONSTS::OPTION_JEMALLOC) {
-        kv_file->Purge();
-        out_stream << "Number of arenas: " << MemoryManager::mb_get_num_arenas() << std::endl;
-        out_stream << "Total allocated size: " << MemoryManager::mb_total_allocated() << std::endl;
-    }
-#endif
     out_stream << "DB stats:\n";
     out_stream << "\tWriter option: " << header->writer_options << std::endl;
     out_stream << "\tNumber of DB writer: " << header->num_writer << std::endl;
@@ -778,7 +771,6 @@ void Dict::PrintStats(std::ostream& out_stream) const
     out_stream << "\tData block size: " << header->data_block_size << std::endl;
     if (options & CONSTS::OPTION_JEMALLOC) {
 #ifdef __DEBUG__
-        out_stream << "\tAllocated buffer size: " << kv_file->Allocated() << std::endl;
 #endif
     } else if (free_lists != nullptr) {
         out_stream << "\tData size: " << header->m_data_offset << std::endl;
@@ -1264,6 +1256,15 @@ void Dict::Flush() const
     if (kv_file != NULL)
         kv_file->Flush();
     mm.Flush();
+}
+
+void Dict::Purge() const
+{
+    if ((options & CONSTS::ACCESS_MODE_WRITER) && (options & CONSTS::OPTION_JEMALLOC)) {
+        if (kv_file != nullptr)
+            kv_file->Purge();
+        mm.Purge();
+    }
 }
 
 // Recovery from abnormal writer terminations (segfault, kill -9 etc)

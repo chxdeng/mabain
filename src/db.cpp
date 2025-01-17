@@ -299,11 +299,14 @@ void DB::PostDBUpdate(const MBConfig& config, bool init_header, bool update_head
 
     if (config.options & CONSTS::ACCESS_MODE_WRITER) {
         if (config.options & CONSTS::OPTION_JEMALLOC) {
-            Logger::Log(LOG_LEVEL_INFO, "reset db in jemalloc mode");
-            int rval = dict->RemoveAll();
-            if (rval != MBError::SUCCESS) {
-                Logger::Log(LOG_LEVEL_ERROR, "failed to reset db: %s", MBError::get_error_str(rval));
-                status = rval;
+            if (!init_header) {
+                // reset db in jemalloc mode if header already exists
+                Logger::Log(LOG_LEVEL_INFO, "reset db in jemalloc mode");
+                int rval = dict->RemoveAll();
+                if (rval != MBError::SUCCESS) {
+                    Logger::Log(LOG_LEVEL_ERROR, "failed to reset db: %s", MBError::get_error_str(rval));
+                    status = rval;
+                }
             }
         } else {
             if (!(config.options & CONSTS::ASYNC_WRITER_MODE)) {
@@ -707,6 +710,14 @@ void DB::Flush() const
         return;
 
     dict->Flush();
+}
+
+void DB::Purge() const
+{
+    if (status != MBError::SUCCESS)
+        return;
+
+    dict->Purge();
 }
 
 int DB::CollectResource(int64_t min_index_rc_size, int64_t min_data_rc_size,

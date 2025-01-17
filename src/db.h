@@ -147,6 +147,7 @@ public:
     // Close the DB handle
     int Close();
     void Flush() const;
+    void Purge() const;
     static void ClearResources(const std::string& path);
 
     // Garbage collection

@@ -403,54 +403,63 @@ void RollableFile::RemoveUnused(size_t max_size, bool writer_mode)
 
 ////////////////////////////////////
 // memory management using jemalloc
+// order 0 is used for jemalloc
 ////////////////////////////////////
+
+// Initialize memory manager and set the initial offset
+void* RollableFile::PreAlloc(size_t init_off)
+{
+    int rval = CheckAndOpenFile(0, true);
+    if (rval != MBError::SUCCESS)
+        return nullptr;
+    if (!files[0]->IsMapped())
+        return nullptr;
+    return files[0]->PreAlloc(init_off);
+}
 
 void* RollableFile::Malloc(size_t size, size_t& offset)
 {
-    int rval = CheckAndOpenFile(0, true); // order 0 is used for jemalloc
-    if (rval != MBError::SUCCESS)
-        return nullptr;
-    if (files[0]->IsMapped()) {
-        return files[0]->Malloc(size, offset);
+    if (files[0] == nullptr) {
+        int rval = CheckAndOpenFile(0, true);
+        if (rval != MBError::SUCCESS)
+            return nullptr;
     }
-    return nullptr;
+    if (!files[0]->IsMapped()) {
+        return nullptr;
+    }
+    return files[0]->Malloc(size, offset);
 }
 
 int RollableFile::Memcpy(const void* src, size_t size, size_t offset)
 {
-    if (files[0]->IsMapped()) {
-        return files[0]->Memcpy(src, size, offset);
+    if (!files[0]->IsMapped()) {
+        return MBError::MMAP_FAILED;
     }
-    return MBError::MMAP_FAILED;
+    return files[0]->Memcpy(src, size, offset);
 }
 
 void RollableFile::Free(void* ptr) const
 {
-    // order 0 is used for jemalloc
+    if (!files[0]->IsMapped()) {
+        return;
+    }
     files[0]->Free(ptr);
 }
 
 void RollableFile::Free(size_t offset) const
 {
-    // order 0 is used for jemalloc
-    files[0]->Free(offset);
-}
-
-size_t RollableFile::Allocated() const
-{
-    if (files.size() > 0 && files[0] != nullptr) {
-        // order 0 is used for jemalloc
-        return files[0]->Allocated();
+    if (!files[0]->IsMapped()) {
+        return;
     }
-    return 0;
+    files[0]->Free(offset);
 }
 
 void RollableFile::Purge() const
 {
-    if (files.size() > 0 && files[0] != nullptr) {
-        // order 0 is used for jemalloc
-        files[0]->Purge();
+    if (files[0] == nullptr) {
+        return;
     }
+    files[0]->Purge();
 }
 
 // Reset jemalloc

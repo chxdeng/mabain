@@ -114,6 +114,7 @@ public:
     int UpdateNumWriter(int delta) const;
 
     void Flush() const;
+    void Purge() const;
     int ExceptionRecovery();
 
 private:

@@ -40,11 +40,11 @@ public:
     ~RollableFile();
 
     // memory management using jemalloc
+    void* PreAlloc(size_t init_offset);
     void* Malloc(size_t size, size_t& offset);
     int Memcpy(const void* src, size_t size, size_t offset);
     void Free(void* ptr) const;
     void Free(size_t offset) const;
-    size_t Allocated() const;
     void Purge() const;
     void Reset(); // reset jemalloc
 

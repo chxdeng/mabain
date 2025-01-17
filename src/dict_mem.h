@@ -91,6 +91,7 @@ public:
     void InitLockFreePtr(LockFree* lf);
 
     void Flush() const;
+    void Purge() const;
 
     // Updates in RC mode
     size_t InitRootNode_RC();

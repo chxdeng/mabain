@@ -117,10 +117,6 @@ DictMem::DictMem(const std::string& mbdir, bool init_header, size_t memsize,
             std::cerr << "async_queue_size not set yet in header\n";
             return;
         }
-        // load root offset from header in jemalloc mode
-        if (header->writer_options & CONSTS::OPTION_JEMALLOC) {
-            root_offset = header->m_index_offset;
-        }
         is_valid = true;
         return;
     }
@@ -161,23 +157,19 @@ const uint8_t DictMem::empty_edge[] = { 0 };
 
 void DictMem::InitRootNode()
 {
-#ifdef __DEBUG__
-    assert(header != NULL);
-#endif
-    header->m_index_offset = 0;
-
-    bool node_move;
+    bool node_move = false;
     uint8_t* root_node;
 
-    node_move = ReserveNode(NUM_ALPHABET - 1, root_offset, root_node);
-#ifdef __DEBUG__
-    assert(root_offset == 0);
-#endif
-
-    // In jemalloc mode, store the root node offset in the header.
     if (options & CONSTS::OPTION_JEMALLOC) {
-        header->m_index_offset = root_offset;
+        // Initialize the memory manager and set the initial offset to account for the root node.
+        // This will guranatee that the root node is always at offset 0.
+        root_node = (uint8_t*)kv_file->PreAlloc(node_size[NUM_ALPHABET - 1]);
+    } else {
+        header->m_index_offset = 0;
+        node_move = ReserveNode(NUM_ALPHABET - 1, root_offset, root_node);
     }
+    assert(root_offset == 0);
+
     root_node[0] = FLAG_NODE_NONE;
     root_node[1] = NUM_ALPHABET - 1;
     for (int i = 0; i < NUM_ALPHABET; i++) {
@@ -1218,15 +1210,13 @@ void DictMem::PrintStats(std::ostream& out_stream) const
     out_stream << "\tException flag: " << header->excep_updating_status << std::endl;
     if (options & CONSTS::OPTION_JEMALLOC) {
 #ifdef __DEBUG__
-        kv_file->Purge();
-        // The allocated size can only be obtained when jemalloc is built with stats.
-        out_stream << "\tAllocated buffer size: " << kv_file->Allocated() << std::endl;
 #endif
     } else if (free_lists != nullptr) {
         out_stream << "\tPending buffer size: " << header->pending_index_buff_size << std::endl;
         out_stream << "\tTrackable buffer size: " << free_lists->GetTotSize() << std::endl;
     }
     kv_file->PrintStats(out_stream);
+
 #ifdef __DEBUG__
     out_stream << "Size of index tracking buffer: " << buffer_map.size() << std::endl;
 #endif
@@ -1244,10 +1234,16 @@ void DictMem::InitLockFreePtr(LockFree* lf)
 
 void DictMem::Flush() const
 {
-    if (kv_file != NULL)
+    if (kv_file != nullptr)
         kv_file->Flush();
-    if (header_file != NULL)
+    if (header_file != nullptr)
         header_file->Flush();
+}
+
+void DictMem::Purge() const
+{
+    if (kv_file != nullptr)
+        kv_file->Purge();
 }
 
 void DictMem::WriteData(const uint8_t* buff, unsigned len, size_t offset) const

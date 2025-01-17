@@ -10,35 +10,35 @@ all: mb_test mb_test1 mb_test2 mb_test_mp multi_writer_bug_test mb_bound_test mb
 
 mb_mm_test: mb_mm_test.cpp
 	$(CPP) $(CPPFLAGS) mb_mm_test.cpp
-	$(CPP) mb_mm_test.o -o mb_mm_test -L../ -lmabain $(LDFLAGS)
+	$(CPP) mb_mm_test.o -o mb_mm_test -lmabain $(LDFLAGS)
 
-mb_test: mabain_test.cpp ../libmabain.so
+mb_test: mabain_test.cpp
 	$(CPP) $(CPPFLAGS) mabain_test.cpp
-	$(CPP) mabain_test.o -o mb_test -L../ -lmabain $(LDFLAGS)
+	$(CPP) mabain_test.o -o mb_test -lmabain $(LDFLAGS)
 
-mb_test1: mbtest1.cpp ../libmabain.so
+mb_test1: mbtest1.cpp
 	$(CPP) $(CPPFLAGS) mbtest1.cpp 
-	$(CPP) mbtest1.o -o mb_test1 -L../ -lmabain $(LDFLAGS)
+	$(CPP) mbtest1.o -o mb_test1 -lmabain $(LDFLAGS)
 
-mb_test2: mbtest2.cpp ../libmabain.so
+mb_test2: mbtest2.cpp
 	$(CPP) $(CPPFLAGS) mbtest2.cpp 
-	$(CPP) mbtest2.o -o mb_test2 -L../ -lmabain $(LDFLAGS)
+	$(CPP) mbtest2.o -o mb_test2 -lmabain $(LDFLAGS)
 
-mb_test_mp: mbtest_mp.cpp ../libmabain.so
+mb_test_mp: mbtest_mp.cpp
 	$(CPP) $(CPPFLAGS) mbtest_mp.cpp
-	$(CPP) mbtest_mp.o -o mb_test_mp -L../ -lmabain $(LDFLAGS)
+	$(CPP) mbtest_mp.o -o mb_test_mp -lmabain $(LDFLAGS)
 
-multi_writer_bug_test: multi_writer_bug.cpp ../libmabain.so
+multi_writer_bug_test: multi_writer_bug.cpp
 	$(CPP) $(CPPFLAGS) multi_writer_bug.cpp
-	$(CPP) multi_writer_bug.o -o multi_writer_bug_test -L../ -lmabain $(LDFLAGS)
+	$(CPP) multi_writer_bug.o -o multi_writer_bug_test -lmabain $(LDFLAGS)
 
-mb_bound_test: mb_bound_test.cpp ../libmabain.so
+mb_bound_test: mb_bound_test.cpp
 	$(CPP) $(CPPFLAGS) mb_bound_test.cpp
-	$(CPP) mb_bound_test.o -o mb_bound_test -L../ -lmabain $(LDFLAGS)
+	$(CPP) mb_bound_test.o -o mb_bound_test -lmabain $(LDFLAGS)
 
-mb_header_test: mb_header_test.cpp ../libmabain.so
+mb_header_test: mb_header_test.cpp
 	$(CPP) $(CPPFLAGS) mb_header_test.cpp
-	$(CPP) mb_header_test.o -o mb_header_test -L../ -lmabain $(LDFLAGS)
+	$(CPP) mb_header_test.o -o mb_header_test -lmabain $(LDFLAGS)
 
 
 clean:

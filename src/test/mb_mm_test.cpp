@@ -61,6 +61,7 @@ int main(int argc, char* argv[])
         }
     }
 
+    //mabain::DB::LogDebug();
     // Create a Mabain DB instance
     mabain::MBConfig config;
     memset(&config, 0, sizeof(config));
@@ -79,6 +80,8 @@ int main(int argc, char* argv[])
     for (int i = 0; i < iter; ++i) {
         std::cout << "test iteration: " << i << std::endl;
         add_random_key_value_pairs(db, num_pairs, key_type);
+        if ((i + 1) % 10 == 0)
+            db.Purge();
     }
     db.PrintStats();
 

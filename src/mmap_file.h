@@ -42,11 +42,11 @@ public:
 
     // Initialize memory manager (jemalloc)
     int InitMemoryManager();
+    inline void* PreAlloc(size_t offset);
     inline void* Malloc(size_t size, size_t& offset);
     inline int Memcpy(const void* src, size_t size, size_t offset) const;
     inline void Free(void* ptr) const;
     inline void Free(size_t offset) const;
-    inline size_t Allocated() const;
     inline void Purge() const;
     inline int Reset();
 
@@ -78,6 +78,11 @@ private:
 // jemalloc interface
 //////////////////////////////
 
+inline void* MmapFileIO::PreAlloc(size_t offset)
+{
+    return mem_mgr->mb_prealloc(offset);
+}
+
 inline void* MmapFileIO::Malloc(size_t size, size_t& offset)
 {
     void* ptr = mem_mgr->mb_malloc(size);
@@ -88,7 +93,8 @@ inline void* MmapFileIO::Malloc(size_t size, size_t& offset)
 inline int MmapFileIO::Memcpy(const void* src, size_t size, size_t offset) const
 {
     if (offset + size > mmap_size) {
-        Logger::Log(LOG_LEVEL_ERROR, "memcpy out of bound: %lu %lu %lu", offset, size, mmap_size);
+        Logger::Log(LOG_LEVEL_ERROR, "memcpy out of bound: %lu %lu %lu",
+            offset, size, mmap_size);
         throw(int) MBError::OUT_OF_BOUND;
     }
     memcpy(static_cast<uint8_t*>(addr) + offset, src, size);
@@ -103,13 +109,6 @@ inline void MmapFileIO::Free(void* ptr) const
 inline void MmapFileIO::Free(size_t offset) const
 {
     mem_mgr->mb_free(offset);
-}
-
-inline size_t MmapFileIO::Allocated() const
-{
-    if (mem_mgr == nullptr)
-        return 0;
-    return mem_mgr->mb_allocated();
 }
 
 inline void MmapFileIO::Purge() const
