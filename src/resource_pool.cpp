@@ -104,7 +104,8 @@ std::shared_ptr<MmapFileIO> ResourcePool::OpenFile(const std::string& fpath,
                 if (!(mode & CONSTS::MEMORY_ONLY_MODE))
                     mmap_file->Close();
                 if (mode & CONSTS::OPTION_JEMALLOC) {
-                    if (fpath.find("_mabain_h") == std::string::npos) { // no need to init MemoryManager for header file
+                    // no need to init MemoryManager for header file
+                    if (fpath.find("_mabain_h") == std::string::npos) {
                         mmap_file->InitMemoryManager();
                     }
                 }

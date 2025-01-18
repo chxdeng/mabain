@@ -98,6 +98,7 @@ void MemoryManager::mb_free(size_t offset)
     dallocx(ptr, MALLOCX_ARENA(arena_index) | MALLOCX_TCACHE_NONE);
 }
 
+// Purge all unused dirty pages for arena
 int MemoryManager::mb_purge()
 {
     std::string arena_purge = "arena." + std::to_string(arena_index) + ".purge";
@@ -161,10 +162,9 @@ void* MemoryManager::custom_extent_alloc(void* new_addr, size_t size, size_t ali
             Logger::Log(LOG_LEVEL_DEBUG, "custom_extent_alloc: arena %u failed to extend"
                                          " new memory (offset: %zu, size: %zu, shm_size: %zu)",
                 arena_ind, aligned_offset, size, manager->shm_size);
-            return nullptr; // Return nullptr to indicate allocation failure
+            return nullptr;
         }
     } else {
-
         // If no suitable extent is found, allocate new memory
         aligned_offset = (manager->shm_offset + alignment - 1) & ~(alignment - 1);
         if (aligned_offset + size > manager->shm_size) {
@@ -253,7 +253,6 @@ bool MemoryManager::custom_extent_merge(extent_hooks_t* extent_hooks, void* addr
 {
     // Check if the two extents are adjacent
     if ((char*)addr_a + size_a != addr_b) {
-        Logger::Log(LOG_LEVEL_DEBUG, "Extents are not adjacent and cannot be merged");
         return true;
     }
     return false;

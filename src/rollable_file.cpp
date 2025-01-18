@@ -454,6 +454,7 @@ void RollableFile::Free(size_t offset) const
     files[0]->Free(offset);
 }
 
+// Purge all unused dirty pages for the arena
 void RollableFile::Purge() const
 {
     if (files[0] == nullptr) {
