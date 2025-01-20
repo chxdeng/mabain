@@ -27,7 +27,6 @@
 #include "error.h"
 #include "integer_4b_5b.h"
 #include "mabain_consts.h"
-#include "mb_mm.h"
 
 #define DATA_HEADER_SIZE 32
 
@@ -975,7 +974,7 @@ int Dict::RemoveAll()
     mm.ClearMem(); // clear memory will re-initialize jemalloc
     if (options & CONSTS::OPTION_JEMALLOC) {
         mm.InitRootNode();
-        kv_file->Reset(); // reset jemalloc
+        kv_file->ResetJemalloc();
         for (int c = 0; c < NUM_ALPHABET; c++) {
             rval = mm.ClearRootEdge(c);
             if (rval != MBError::SUCCESS)
@@ -1364,7 +1363,7 @@ int Dict::ExceptionRecovery()
 void Dict::WriteData(const uint8_t* buff, unsigned len, size_t offset) const
 {
     if (options & CONSTS::OPTION_JEMALLOC) {
-        kv_file->Memcpy(buff, len, offset);
+        kv_file->MemWrite(buff, len, offset);
     } else {
         if (offset + len > header->m_data_offset) {
             std::cerr << "invalid dict write: " << offset << " " << len << " "

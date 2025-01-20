@@ -147,11 +147,8 @@ int DB::ValidateConfig(MBConfig& config)
         }
 
         if (config.options & CONSTS::OPTION_JEMALLOC) {
-            if (config.max_num_index_block != 1 || config.max_num_data_block != 1) {
-                std::cout << "jemalloc option only supports single block\n";
-                return MBError::INVALID_ARG;
-            }
-            if (config.memcap_index != config.block_size_index || config.memcap_data != config.block_size_data) {
+            if (config.memcap_index != config.block_size_index * config.max_num_index_block
+                || config.memcap_data != config.block_size_data * config.max_num_data_block) {
                 std::cout << "memcap must be equal to block size when using jemalloc\n";
                 return MBError::INVALID_ARG;
             }

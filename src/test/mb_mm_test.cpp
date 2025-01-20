@@ -66,12 +66,12 @@ int main(int argc, char* argv[])
     memset(&config, 0, sizeof(config));
     config.mbdir = "/var/tmp/mabain_test";
     config.options = mabain::CONSTS::ACCESS_MODE_WRITER | mabain::CONSTS::OPTION_JEMALLOC;
-    config.memcap_index = 128 * 1024 * 1024;
-    config.memcap_data = 128 * 1024 * 1024;
-    config.block_size_index = config.memcap_index;
-    config.block_size_data = config.memcap_data;
-    config.max_num_data_block = 1;
-    config.max_num_index_block = 1;
+    config.block_size_index = 32 * 1024 * 1024;
+    config.block_size_data = 32 * 1024 * 1024;
+    config.max_num_data_block = 10;
+    config.max_num_index_block = 10;
+    config.memcap_index = config.block_size_index * config.max_num_index_block;
+    config.memcap_data = config.block_size_data * config.max_num_data_block;
     mabain::DB db(config);
     assert(db.Status() == mabain::MBError::SUCCESS);
 

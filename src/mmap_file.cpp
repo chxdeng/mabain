@@ -39,7 +39,7 @@ MmapFileIO::MmapFileIO(const std::string& fpath, int mode, off_t filesize, bool 
     mmap_start = 0xFFFFFFFFFFFFFFFF;
     mmap_end = 0;
     addr = nullptr;
-    mem_mgr = nullptr;
+    mm_meta = nullptr;
 
     max_offset = 0;
     curr_offset = 0;
@@ -72,18 +72,15 @@ MmapFileIO::MmapFileIO(const std::string& fpath, int mode, off_t filesize, bool 
 
 MmapFileIO::~MmapFileIO()
 {
-    if (mem_mgr != nullptr) {
-        delete mem_mgr;
+    if (mm_meta != nullptr) {
+        delete mm_meta;
     }
     UnMapFile();
 }
 
 int MmapFileIO::InitMemoryManager()
 {
-    if (addr == nullptr || addr == MAP_FAILED) {
-        return MBError::MMAP_FAILED;
-    }
-    mem_mgr = new MemoryManager(addr, mmap_size);
+    mm_meta = new MemoryManagerMetadata();
     return MBError::SUCCESS;
 }
 

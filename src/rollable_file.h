@@ -25,6 +25,7 @@
 #include <stdint.h>
 #include <string>
 #include <sys/mman.h>
+#include <unordered_map>
 #include <vector>
 
 #include "logger.h"
@@ -40,13 +41,15 @@ public:
     ~RollableFile();
 
     // memory management using jemalloc
+    int ConfigureJemalloc(MemoryManagerMetadata* mm_meta);
     void* PreAlloc(size_t init_offset);
     void* Malloc(size_t size, size_t& offset);
-    int Memcpy(const void* src, size_t size, size_t offset);
+    size_t MemWrite(const void* src, size_t size, size_t offset);
+    size_t MemRead(void* dst, size_t size, size_t offset);
     void Free(void* ptr) const;
     void Free(size_t offset) const;
     void Purge() const;
-    void Reset(); // reset jemalloc
+    int ResetJemalloc();
 
     size_t RandomWrite(const void* data, size_t size, off_t offset);
     size_t RandomRead(void* buff, size_t size, off_t offset);
@@ -71,6 +74,27 @@ private:
     uint8_t* NewSlidingMapAddr(size_t offset, int size);
     void* NewReaderSlidingMap(size_t order);
 
+    // jemalloc hooks
+    inline int find_block_index(void* ptr) const;
+    inline size_t get_shm_offset(void* ptr) const;
+    inline size_t get_aligned_offset(void* ptr) const;
+    void* custom_extent_alloc(void* new_addr, size_t size, size_t alignment, bool* zero,
+        bool* commit, unsigned arena_ind);
+    static bool custom_extent_dalloc(extent_hooks_t* extent_hooks, void* addr, size_t size,
+        bool committed, unsigned arena_ind);
+    static bool custom_extent_commit(extent_hooks_t* extent_hooks, void* addr, size_t size,
+        size_t offset, size_t length, unsigned arena_ind);
+    static bool custom_extent_decommit(extent_hooks_t* extent_hooks, void* addr, size_t size,
+        size_t offset, size_t length, unsigned arena_ind);
+    static bool custom_extent_purge_lazy(extent_hooks_t* extent_hooks, void* addr, size_t size,
+        size_t offset, size_t length, unsigned arena_ind);
+    static bool custom_extent_purge_forced(extent_hooks_t* extent_hooks, void* addr, size_t size,
+        size_t offset, size_t length, unsigned arena_ind);
+    static bool custom_extent_split(extent_hooks_t* extent_hooks, void* addr, size_t size,
+        size_t size_a, size_t size_b, bool committed, unsigned arena_ind);
+    static bool custom_extent_merge(extent_hooks_t* extent_hooks, void* addr_a, size_t size_a,
+        void* addr_b, size_t size_b, bool committed, unsigned arena_ind);
+
     std::string path;
     size_t block_size;
     size_t mmap_mem;
@@ -93,7 +117,59 @@ private:
 
     int rc_offset_percentage;
     size_t mem_used;
+
+    // jemalloc only
+    static std::unordered_map<unsigned, RollableFile*> arena_manager_map;
 };
+
+// Find the block index that contains the given pointer
+inline int RollableFile::find_block_index(void* ptr) const
+{
+    for (auto i = 0; i < (int)files.size(); i++) {
+        if (files[i] != nullptr && files[i]->IsMapped()) {
+            uint8_t* base_ptr = files[i]->GetMapAddr();
+            if (ptr >= base_ptr && ptr < (uint8_t*)base_ptr + block_size) {
+                return i;
+            }
+        }
+    }
+    // should not reach here
+    Logger::Log(LOG_LEVEL_ERROR, "failed to find block index for %p", ptr);
+    assert(false);
+}
+
+// Get the shared memory offset of the given pointer
+// Note that this is the total offset from the beginning of the first file
+inline size_t RollableFile::get_shm_offset(void* ptr) const
+{
+    for (auto i = 0; i < (int)files.size(); i++) {
+        if (files[i] != nullptr && files[i]->IsMapped()) {
+            uint8_t* base_ptr = files[i]->GetMapAddr();
+            if (ptr >= base_ptr && ptr < base_ptr + block_size) {
+                return i * block_size + (uint8_t*)ptr - base_ptr;
+            }
+        }
+    }
+    // should not reach here
+    Logger::Log(LOG_LEVEL_ERROR, "failed to get shm offset for %p", ptr);
+    assert(false);
+}
+
+// Get the aligned offset of the given pointer relative to the beginning of the block
+inline size_t RollableFile::get_aligned_offset(void* ptr) const
+{
+    for (auto i = 0; i < (int)files.size(); i++) {
+        if (files[i] != nullptr && files[i]->IsMapped()) {
+            uint8_t* base_ptr = files[i]->GetMapAddr();
+            if (ptr >= base_ptr && ptr < base_ptr + block_size) {
+                return (uint8_t*)ptr - base_ptr;
+            }
+        }
+    }
+    // should not reach here
+    Logger::Log(LOG_LEVEL_ERROR, "failed to get aligned offset for %p", ptr);
+    assert(false);
+}
 
 }
 

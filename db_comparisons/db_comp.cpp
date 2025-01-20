@@ -165,10 +165,10 @@ static void InitDB(bool writer_mode = true)
         mconf.options |= mabain::CONSTS::OPTION_JEMALLOC;
         mconf.block_size_index = 128LL * 1024 * 1024;
         mconf.block_size_data = 128LL * 1024 * 1024;
-        mconf.memcap_index = mconf.block_size_index;
-        mconf.memcap_data = mconf.block_size_data;
-        mconf.max_num_index_block = 1;
-        mconf.max_num_data_block = 1;
+        mconf.memcap_index = 10*mconf.block_size_index;
+        mconf.memcap_data = 10*mconf.block_size_data;
+        mconf.max_num_index_block = 10;
+        mconf.max_num_data_block = 10;
     } else {
         mconf.block_size_index = 67LL * 1024 * 1024;
         mconf.block_size_data = 67LL * 1024 * 1024;
@@ -584,7 +584,6 @@ int main(int argc, char* argv[])
 {
 #ifdef MABAIN
     mabain::DB::SetLogFile("/var/tmp/mabain_test/mabain.log");
-    // mabain::DB::SetLogLevel(2);
 #endif
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-n") == 0) {

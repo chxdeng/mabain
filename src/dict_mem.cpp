@@ -148,7 +148,7 @@ DictMem::DictMem(const std::string& mbdir, bool init_header, size_t memsize,
     } else {
         is_valid = true;
     }
-    Logger::Log(LOG_LEVEL_INFO, "set mabain db version to %u.%u.%u",
+    Logger::Log(LOG_LEVEL_DEBUG, "set mabain db version to %u.%u.%u",
         header->version[0], header->version[1], header->version[2]);
 }
 
@@ -873,7 +873,7 @@ int DictMem::ClearRootEdges_RC() const
 void DictMem::ClearMem() const
 {
     if (options & CONSTS::OPTION_JEMALLOC) {
-        kv_file->Reset(); // reset jemalloc
+        kv_file->ResetJemalloc();
         header->n_states = 0;
         header->n_edges = 0;
         header->edge_str_size = 0;
@@ -1249,7 +1249,7 @@ void DictMem::Purge() const
 void DictMem::WriteData(const uint8_t* buff, unsigned len, size_t offset) const
 {
     if (options & CONSTS::OPTION_JEMALLOC) {
-        kv_file->Memcpy(buff, len, offset);
+        kv_file->MemWrite(buff, len, offset);
     } else {
         if (offset + len > header->m_index_offset) {
             std::cerr << "invalid dmm write: " << offset << " " << len << " "

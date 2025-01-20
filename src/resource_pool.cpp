@@ -104,8 +104,8 @@ std::shared_ptr<MmapFileIO> ResourcePool::OpenFile(const std::string& fpath,
                 if (!(mode & CONSTS::MEMORY_ONLY_MODE))
                     mmap_file->Close();
                 if (mode & CONSTS::OPTION_JEMALLOC) {
-                    // no need to init MemoryManager for header file
-                    if (fpath.find("_mabain_h") == std::string::npos) {
+                    // only initialize memory manager for _mabain_i0 and _mabain_d0
+                    if (fpath.find("_mabain_i0") != std::string::npos || fpath.find("_mabain_d0") != std::string::npos) {
                         mmap_file->InitMemoryManager();
                     }
                 }
@@ -137,6 +137,20 @@ int ResourcePool::AddResourceByPath(const std::string& path, std::shared_ptr<Mma
     pthread_mutex_unlock(&pool_mutex);
 
     return rval;
+}
+
+MmapFileIO* ResourcePool::GetResourceByPath(const std::string& path)
+{
+    MmapFileIO* resource = nullptr;
+
+    pthread_mutex_lock(&pool_mutex);
+    auto search = file_pool.find(path);
+    if (search != file_pool.end()) {
+        resource = search->second.get();
+    }
+    pthread_mutex_unlock(&pool_mutex);
+
+    return resource;
 }
 
 }

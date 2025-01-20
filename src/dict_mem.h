@@ -142,7 +142,7 @@ private:
 inline void DictMem::WriteEdge(const EdgePtrs& edge_ptrs) const
 {
     if (options & CONSTS::OPTION_JEMALLOC) {
-        kv_file->Memcpy(edge_ptrs.ptr, EDGE_SIZE, edge_ptrs.offset);
+        kv_file->MemWrite(edge_ptrs.ptr, EDGE_SIZE, edge_ptrs.offset);
     } else {
         if (edge_ptrs.offset + EDGE_SIZE > header->m_index_offset) {
             std::cerr << "invalid edge write: " << edge_ptrs.offset << " " << EDGE_SIZE

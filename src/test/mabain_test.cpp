@@ -565,12 +565,12 @@ static void jemalloc_remove_all_test(std::string& list_file, const MBConfig& mbc
     memcpy(&conf, &mbconf, sizeof(conf));
     std::cout << "jemalloc remove all test: " << list_file << "\n";
     conf.options = CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC;
-    conf.block_size_data = 128 * 1024 * 1024LL;
-    conf.block_size_index = 128 * 1024 * 1024LL;
+    conf.block_size_data = 64 * 1024 * 1024LL;
+    conf.block_size_index = 64 * 1024 * 1024LL;
     conf.max_num_data_block = 1;
     conf.max_num_index_block = 1;
-    conf.memcap_index = conf.block_size_index;
-    conf.memcap_data = conf.block_size_data;
+    conf.memcap_index = conf.block_size_index * conf.max_num_index_block;
+    conf.memcap_data = conf.block_size_data * conf.max_num_data_block;
 
     DB db(conf);
     std::cout << db.StatusStr() << "\n";
@@ -613,12 +613,12 @@ static void jemalloc_test(std::string& list_file, const MBConfig& mbconf, int64_
     memcpy(&conf, &mbconf, sizeof(conf));
     std::cout << "Jemalloc test: " << list_file << "\n";
     conf.options = CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC;
-    conf.block_size_data = 128 * 1024 * 1024LL;
-    conf.block_size_index = 128 * 1024 * 1024LL;
-    conf.max_num_data_block = 1;
-    conf.max_num_index_block = 1;
-    conf.memcap_index = conf.block_size_index;
-    conf.memcap_data = conf.block_size_data;
+    conf.block_size_data = 32 * 1024 * 1024LL;
+    conf.block_size_index = 32 * 1024 * 1024LL;
+    conf.max_num_data_block = 30;
+    conf.max_num_index_block = 30;
+    conf.memcap_index = conf.block_size_index * conf.max_num_index_block;
+    conf.memcap_data = conf.block_size_data * conf.max_num_data_block;
 
     DB db(conf);
     std::cout << db.StatusStr() << "\n";

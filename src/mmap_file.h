@@ -40,16 +40,6 @@ public:
     MmapFileIO(const std::string& fpath, int mode, off_t filesize, bool sync = false);
     ~MmapFileIO();
 
-    // Initialize memory manager (jemalloc)
-    int InitMemoryManager();
-    inline void* PreAlloc(size_t offset);
-    inline void* Malloc(size_t size, size_t& offset);
-    inline int Memcpy(const void* src, size_t size, size_t offset) const;
-    inline void Free(void* ptr) const;
-    inline void Free(size_t offset) const;
-    inline void Purge() const;
-    inline int Reset();
-
     uint8_t* MapFile(size_t size, off_t offset, bool sliding = false);
     bool IsMapped() const;
     size_t SeqWrite(const void* data, size_t size);
@@ -59,6 +49,10 @@ public:
     void UnMapFile();
     uint8_t* GetMapAddr() const;
     void Flush();
+
+    // for jemalloc
+    int InitMemoryManager();
+    MemoryManagerMetadata* mm_meta;
 
 private:
     bool mmap_file;
@@ -70,61 +64,7 @@ private:
     size_t max_offset;
     // Current offset for sequential reading of writing only
     off_t curr_offset;
-
-    MemoryManager* mem_mgr;
 };
 
-//////////////////////////////
-// jemalloc interface
-//////////////////////////////
-
-inline void* MmapFileIO::PreAlloc(size_t offset)
-{
-    return mem_mgr->mb_prealloc(offset);
 }
-
-inline void* MmapFileIO::Malloc(size_t size, size_t& offset)
-{
-    void* ptr = mem_mgr->mb_malloc(size);
-    offset = mem_mgr->get_shm_offset(ptr);
-    return ptr;
-}
-
-inline int MmapFileIO::Memcpy(const void* src, size_t size, size_t offset) const
-{
-    if (offset + size > mmap_size) {
-        Logger::Log(LOG_LEVEL_ERROR, "memcpy out of bound: %lu %lu %lu",
-            offset, size, mmap_size);
-        throw(int) MBError::OUT_OF_BOUND;
-    }
-    memcpy(static_cast<uint8_t*>(addr) + offset, src, size);
-    return MBError::SUCCESS;
-}
-
-inline void MmapFileIO::Free(void* ptr) const
-{
-    mem_mgr->mb_free(ptr);
-}
-
-inline void MmapFileIO::Free(size_t offset) const
-{
-    mem_mgr->mb_free(offset);
-}
-
-inline void MmapFileIO::Purge() const
-{
-    if (mem_mgr == nullptr)
-        return;
-    mem_mgr->mb_purge();
-}
-
-inline int MmapFileIO::Reset()
-{
-    if (mem_mgr != nullptr)
-        delete mem_mgr;
-    return InitMemoryManager();
-}
-
-}
-
 #endif

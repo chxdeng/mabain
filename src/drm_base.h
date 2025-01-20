@@ -203,7 +203,7 @@ protected:
 inline void DRMBase::WriteData(const uint8_t* buff, unsigned len, size_t offset) const
 {
     if (options & CONSTS::OPTION_JEMALLOC) {
-        kv_file->Memcpy(buff, len, offset);
+        kv_file->MemWrite(buff, len, offset);
     } else {
         if (kv_file->RandomWrite(buff, len, offset) != len)
             throw(int) MBError::WRITE_ERROR;
@@ -225,8 +225,12 @@ inline size_t DRMBase::CheckAlignment(size_t offset, int size) const
     return kv_file->CheckAlignment(offset, size);
 }
 
+// API for both jemalloc and non-jemalloc
 inline int DRMBase::ReadData(uint8_t* buff, unsigned len, size_t offset) const
 {
+    if (options & CONSTS::OPTION_JEMALLOC) {
+        return kv_file->MemRead(buff, len, offset);
+    }
     return kv_file->RandomRead(buff, len, offset);
 }
 
