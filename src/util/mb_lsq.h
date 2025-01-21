@@ -25,38 +25,35 @@
 
 namespace mabain {
 
-typedef union _LSQ_Data
-{
-    void *data_ptr;
+typedef union _LSQ_Data {
+    void* data_ptr;
     int64_t value;
 } LSQ_Data;
-typedef struct _LSQ_Node
-{
+typedef struct _LSQ_Node {
     LSQ_Data data;
-    struct _LSQ_Node *next;
+    struct _LSQ_Node* next;
 } LSQ_Node;
 
 // mabain list/stack/queue class
-class MBlsq
-{
+class MBlsq {
 public:
-    MBlsq(void (*free_fn)(void *));
+    MBlsq(void (*free_fn)(void*));
     ~MBlsq();
 
-    int      AddToHead(void *ptr); // Stack
-    int      AddToTail(void *ptr); // Queue
-    void    *RemoveFromHead();
-    int      AddIntToHead(int64_t value);
-    int      AddIntToTail(int64_t value);
-    int64_t  RemoveIntFromHead();
-    void     Clear();
+    int AddToHead(void* ptr); // Stack
+    int AddToTail(void* ptr); // Queue
+    void* RemoveFromHead();
+    int AddIntToHead(int64_t value);
+    int AddIntToTail(int64_t value);
+    int64_t RemoveIntFromHead();
+    void Clear();
     uint64_t Count() const;
 
 private:
-    LSQ_Node *head;
-    LSQ_Node *tail;
+    LSQ_Node* head;
+    LSQ_Node* tail;
     uint64_t count;
-    void (*FreeFunc)(void *);
+    void (*FreeFunc)(void*);
 };
 
 }

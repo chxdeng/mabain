@@ -44,6 +44,7 @@ public:
     void RemoveAll();
     bool CheckExistence(const std::string& header_path);
     int AddResourceByPath(const std::string& path, std::shared_ptr<MmapFileIO> resource);
+    MmapFileIO* GetResourceByPath(const std::string& path);
 
     static ResourcePool& getInstance()
     {

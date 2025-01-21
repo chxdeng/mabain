@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2017 Cisco Inc.
+ * Copyright (C) 2025 Cisco Inc.
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU General Public License, version 2,
@@ -18,6 +18,9 @@
 
 #ifndef __DRM_BASE_H__
 #define __DRM_BASE_H__
+#ifdef __DEBUG__
+#include <unordered_map>
+#endif
 
 #include "free_list.h"
 #include "rollable_file.h"
@@ -48,6 +51,13 @@
 #define EXCEP_STATUS_RC_TREE 9
 #define MB_EXCEPTION_BUFF_SIZE 16
 
+#define MAX_BUFFER_RESERVE_SIZE 8192
+#define NUM_BUFFER_RESERVE MAX_BUFFER_RESERVE_SIZE / BUFFER_ALIGNMENT
+#define MAX_DATA_BUFFER_RESERVE_SIZE 0xFFFF
+#define NUM_DATA_BUFFER_RESERVE MAX_DATA_BUFFER_RESERVE_SIZE / DATA_BUFFER_ALIGNMENT
+
+#define JEMALLOC_ALIGNMENT 8
+
 namespace mabain {
 
 // Mabain DB header
@@ -65,7 +75,8 @@ typedef struct _IndexHeader {
     int num_writer;
     int num_reader;
     int64_t shm_queue_id;
-    int64_t dummy;
+    int writer_options;
+    int dummy;
 
     // Lock-free data structure
     LockFreeShmData lock_free;
@@ -105,11 +116,22 @@ typedef struct _IndexHeader {
 // An abstract interface class for Dict and DictMem
 class DRMBase {
 public:
-    DRMBase()
+    DRMBase(const std::string& mbdir, int opts, bool index)
+        : options(opts)
     {
-        // Derived classes will initialize these objects.
-        kv_file = NULL;
-        free_lists = NULL;
+        // derived class will initialize header and kv_file
+        header = nullptr;
+        kv_file = nullptr;
+        free_lists = nullptr;
+        if (opts & CONSTS::ACCESS_MODE_WRITER) {
+            if (!(opts & CONSTS::OPTION_JEMALLOC)) {
+                if (index) {
+                    free_lists = new FreeList(mbdir + "_ibfl", BUFFER_ALIGNMENT, NUM_BUFFER_RESERVE);
+                } else {
+                    free_lists = new FreeList(mbdir + "_dbfl", BUFFER_ALIGNMENT, NUM_BUFFER_RESERVE);
+                }
+            }
+        }
     }
 
     ~DRMBase()
@@ -144,15 +166,50 @@ protected:
     static void ReadHeader(const std::string& header_path, uint8_t* buff, int buf_size);
     static void WriteHeader(const std::string& header_path, uint8_t* buff);
 
+    int options;
     IndexHeader* header;
     RollableFile* kv_file;
+    // free_lists is the old way of managing memory. It will be replaced by jemalloc.
     FreeList* free_lists;
+
+#ifdef __DEBUG__
+#define __BUFFER_TRACKER_IN_USE 1
+#define __BUFFER_TRACKER_RELEASED 2
+#define __BUFFER_TRACKER_INVALID 3
+    void add_tracking_buffer(size_t offset, int size = 0)
+    {
+        if (buffer_map.find(offset) == buffer_map.end()) {
+            buffer_map[offset] = __BUFFER_TRACKER_IN_USE;
+        } else {
+            buffer_map[offset] = __BUFFER_TRACKER_INVALID;
+        }
+    }
+    void remove_tracking_buffer(size_t offset, int size = 0)
+    {
+        if (buffer_map.find(offset) == buffer_map.end()) {
+            buffer_map[offset] = __BUFFER_TRACKER_INVALID;
+        } else {
+            if (buffer_map[offset] != __BUFFER_TRACKER_IN_USE) {
+                buffer_map[offset] = __BUFFER_TRACKER_INVALID;
+            } else {
+                buffer_map.erase(offset); // remove from tracking
+            }
+        }
+        buffer_map.erase(offset);
+    }
+    // buffer tracker
+    std::unordered_map<size_t, int> buffer_map;
+#endif
 };
 
 inline void DRMBase::WriteData(const uint8_t* buff, unsigned len, size_t offset) const
 {
-    if (kv_file->RandomWrite(buff, len, offset) != len)
-        throw(int) MBError::WRITE_ERROR;
+    if (options & CONSTS::OPTION_JEMALLOC) {
+        kv_file->MemWrite(buff, len, offset);
+    } else {
+        if (kv_file->RandomWrite(buff, len, offset) != len)
+            throw(int) MBError::WRITE_ERROR;
+    }
 }
 
 inline int DRMBase::Reserve(size_t& offset, int size, uint8_t*& ptr)
@@ -170,8 +227,12 @@ inline size_t DRMBase::CheckAlignment(size_t offset, int size) const
     return kv_file->CheckAlignment(offset, size);
 }
 
+// API for both jemalloc and non-jemalloc
 inline int DRMBase::ReadData(uint8_t* buff, unsigned len, size_t offset) const
 {
+    if (options & CONSTS::OPTION_JEMALLOC) {
+        return kv_file->MemRead(buff, len, offset);
+    }
     return kv_file->RandomRead(buff, len, offset);
 }
 

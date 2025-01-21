@@ -91,6 +91,7 @@ public:
     void InitLockFreePtr(LockFree* lf);
 
     void Flush() const;
+    void Purge() const;
 
     // Updates in RC mode
     size_t InitRootNode_RC();
@@ -118,6 +119,10 @@ private:
         int& str_size_rel);
     int ReadNode(size_t& offset, EdgePtrs& edge_ptrs, uint8_t* node_buff,
         MBData& mbdata, int& nt) const;
+    void reserveDataFL(const uint8_t* key, int size, size_t& offset, bool map_new_sliding);
+    bool reserveNodeFL(int nt, size_t& offset, uint8_t*& ptr);
+    void releaseNodeFL(size_t offset, int nt);
+    void releaseBufferFL(size_t offset, int size);
 
     int* node_size;
     bool is_valid;
@@ -136,14 +141,18 @@ private:
 
 inline void DictMem::WriteEdge(const EdgePtrs& edge_ptrs) const
 {
-    if (edge_ptrs.offset + EDGE_SIZE > header->m_index_offset) {
-        std::cerr << "invalid edge write: " << edge_ptrs.offset << " " << EDGE_SIZE
-                  << " " << header->m_index_offset << "\n";
-        throw(int) MBError::OUT_OF_BOUND;
-    }
+    if (options & CONSTS::OPTION_JEMALLOC) {
+        kv_file->MemWrite(edge_ptrs.ptr, EDGE_SIZE, edge_ptrs.offset);
+    } else {
+        if (edge_ptrs.offset + EDGE_SIZE > header->m_index_offset) {
+            std::cerr << "invalid edge write: " << edge_ptrs.offset << " " << EDGE_SIZE
+                      << " " << header->m_index_offset << "\n";
+            throw(int) MBError::OUT_OF_BOUND;
+        }
 
-    if (kv_file->RandomWrite(edge_ptrs.ptr, EDGE_SIZE, edge_ptrs.offset) != EDGE_SIZE)
-        throw(int) MBError::WRITE_ERROR;
+        if (kv_file->RandomWrite(edge_ptrs.ptr, EDGE_SIZE, edge_ptrs.offset) != EDGE_SIZE)
+            throw(int) MBError::WRITE_ERROR;
+    }
 }
 
 inline size_t DictMem::GetRootOffset() const
@@ -179,7 +188,6 @@ inline void DictMem::InitNodePtrs(uint8_t* ptr, int nt, NodePtrs& node_ptrs)
     node_ptrs.edge_key_ptr = ptr + NODE_EDGE_KEY_FIRST;
     node_ptrs.edge_ptr = node_ptrs.edge_key_ptr + nt;
 }
-
 }
 
 #endif

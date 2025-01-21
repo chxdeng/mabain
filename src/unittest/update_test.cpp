@@ -1,7 +1,7 @@
-#include <unistd.h>
-#include <stdlib.h>
-#include <list>
 #include <cstdlib>
+#include <list>
+#include <stdlib.h>
+#include <unistd.h>
 
 #include <gtest/gtest.h>
 
@@ -16,32 +16,35 @@ using namespace mabain;
 
 namespace {
 
-class UpdateTest : public ::testing::Test
-{
+class UpdateTest : public ::testing::Test {
 public:
-    UpdateTest() {
+    UpdateTest()
+    {
         db = NULL;
     }
-    virtual ~UpdateTest() {
-        if(db != NULL)
+    virtual ~UpdateTest()
+    {
+        if (db != NULL)
             delete db;
     }
-    virtual void SetUp() {
+    virtual void SetUp()
+    {
         std::string cmd = std::string("mkdir -p ") + MB_DIR;
-        if(system(cmd.c_str()) != 0) {
+        if (system(cmd.c_str()) != 0) {
         }
         cmd = std::string("rm ") + MB_DIR + "_*";
-        if(system(cmd.c_str()) != 0) {
+        if (system(cmd.c_str()) != 0) {
         }
         db = new DB(MB_DIR, CONSTS::WriterOptions());
     }
-    virtual void TearDown() {
+    virtual void TearDown()
+    {
         db->Close();
         ResourcePool::getInstance().RemoveAll();
     }
 
 protected:
-    DB *db;
+    DB* db;
 };
 
 TEST_F(UpdateTest, Update_all)
@@ -51,7 +54,7 @@ TEST_F(UpdateTest, Update_all)
     int num = 1000;
     std::string key;
     int rval;
-    for(int i = 0; i < num; i++) {
+    for (int i = 0; i < num; i++) {
         key = tkey.get_key(i);
         rval = db->Add(key, key);
         EXPECT_EQ(rval, MBError::SUCCESS);
@@ -59,7 +62,7 @@ TEST_F(UpdateTest, Update_all)
         rval = db->Add(key, key);
         EXPECT_EQ(rval, MBError::SUCCESS);
     }
-    for(int i = 0; i < num; i++) {
+    for (int i = 0; i < num; i++) {
         key = tkey.get_key(i);
         rval = db->Add(key, key);
         EXPECT_EQ(rval, MBError::IN_DICT);
@@ -68,23 +71,23 @@ TEST_F(UpdateTest, Update_all)
         EXPECT_EQ(rval, MBError::IN_DICT);
 
         key = tkey.get_key(i);
-        rval = db->Add(key, key+"_new", true);
+        rval = db->Add(key, key + "_new", true);
         EXPECT_EQ(rval, MBError::SUCCESS);
         key = tkey1.get_key(i);
-        rval = db->Add(key, key+"_new", true);
+        rval = db->Add(key, key + "_new", true);
         EXPECT_EQ(rval, MBError::SUCCESS);
     }
 
     MBData mbd;
-    for(int i = 0; i < num; i++) {
+    for (int i = 0; i < num; i++) {
         key = tkey.get_key(i);
         rval = db->Find(key, mbd);
         EXPECT_EQ(rval, MBError::SUCCESS);
-        EXPECT_EQ(std::string((const char*)mbd.buff, mbd.data_len)==key+"_new", true);
+        EXPECT_EQ(std::string((const char*)mbd.buff, mbd.data_len) == key + "_new", true);
         key = tkey1.get_key(i);
         rval = db->Find(key, mbd);
         EXPECT_EQ(rval, MBError::SUCCESS);
-        EXPECT_EQ(std::string((const char*)mbd.buff, mbd.data_len)==key+"_new", true);
+        EXPECT_EQ(std::string((const char*)mbd.buff, mbd.data_len) == key + "_new", true);
     }
 }
 
@@ -96,15 +99,15 @@ TEST_F(UpdateTest, Update_random)
     int num = 3456;
     std::string key;
     int rval;
-    bool *added;
+    bool* added;
 
     added = new bool[num];
-    for(int i = 0; i < num; i++) {
+    for (int i = 0; i < num; i++) {
         added[i] = false;
     }
-    
-    for(int i = 0; i < num; i++) {
-        if(rand() % 100 < 21)
+
+    for (int i = 0; i < num; i++) {
+        if (rand() % 100 < 21)
             continue;
 
         key = tkey.get_key(i);
@@ -115,8 +118,8 @@ TEST_F(UpdateTest, Update_random)
         EXPECT_EQ(rval, MBError::SUCCESS);
         added[i] = true;
     }
-    for(int i = 0; i < num; i++) {
-        if(added[i]) {
+    for (int i = 0; i < num; i++) {
+        if (added[i]) {
             key = tkey.get_key(i);
             rval = db->Add(key, key);
             EXPECT_EQ(rval, MBError::IN_DICT);
@@ -125,10 +128,10 @@ TEST_F(UpdateTest, Update_random)
             EXPECT_EQ(rval, MBError::IN_DICT);
 
             key = tkey.get_key(i);
-            rval = db->Add(key, key+"_new", true);
+            rval = db->Add(key, key + "_new", true);
             EXPECT_EQ(rval, MBError::SUCCESS);
             key = tkey1.get_key(i);
-            rval = db->Add(key, key+"_new", true);
+            rval = db->Add(key, key + "_new", true);
             EXPECT_EQ(rval, MBError::SUCCESS);
         } else {
             key = tkey.get_key(i);
@@ -142,24 +145,24 @@ TEST_F(UpdateTest, Update_random)
 
     MBData mbd;
     std::string value;
-    for(int i = 0; i < num; i++) {
+    for (int i = 0; i < num; i++) {
         key = tkey.get_key(i);
         rval = db->Find(key, mbd);
         EXPECT_EQ(rval, MBError::SUCCESS);
         value = key;
-        if(added[i])
+        if (added[i])
             value += "_new";
-        EXPECT_EQ(std::string((const char*)mbd.buff, mbd.data_len)==value, true);
+        EXPECT_EQ(std::string((const char*)mbd.buff, mbd.data_len) == value, true);
         key = tkey1.get_key(i);
         rval = db->Find(key, mbd);
         value = key;
-        if(added[i])
+        if (added[i])
             value += "_new";
         EXPECT_EQ(rval, MBError::SUCCESS);
-        EXPECT_EQ(std::string((const char*)mbd.buff, mbd.data_len)==value, true);
+        EXPECT_EQ(std::string((const char*)mbd.buff, mbd.data_len) == value, true);
     }
 
-    delete [] added;
+    delete[] added;
 }
 
 }

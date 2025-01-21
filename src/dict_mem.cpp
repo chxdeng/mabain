@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2017 Cisco Inc.
+ * Copyright (C) 2025 Cisco Inc.
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU General Public License, version 2,
@@ -33,9 +33,6 @@
 
 #define OFFSET_SIZE_P1 7
 
-#define MAX_BUFFER_RESERVE_SIZE 8192
-#define NUM_BUFFER_RESERVE MAX_BUFFER_RESERVE_SIZE / BUFFER_ALIGNMENT
-
 namespace mabain {
 
 /////////////////////////////////////////////////////////////////////////////////////
@@ -67,12 +64,12 @@ namespace mabain {
 
 DictMem::DictMem(const std::string& mbdir, bool init_header, size_t memsize,
     int mode, uint32_t block_size, int max_num_blk, uint32_t queue_size)
-    : is_valid(false)
+    : DRMBase(mbdir, mode, true)
+    , is_valid(false)
 {
     root_offset = 0;
     root_offset_rc = 0;
     node_ptr = NULL;
-    kv_file = NULL;
     node_size = NULL;
 
     assert(sizeof(IndexHeader) <= (unsigned)RollableFile::page_size);
@@ -129,16 +126,16 @@ DictMem::DictMem(const std::string& mbdir, bool init_header, size_t memsize,
     ////////////////////////////////////
 
     node_size = new int[NUM_ALPHABET];
-
     for (int i = 0; i < NUM_ALPHABET; i++) {
         int nt = i + 1;
         node_size[i] = 1 + 1 + OFFSET_SIZE + nt + nt * EDGE_SIZE;
     }
 
     node_ptr = new uint8_t[node_size[NUM_ALPHABET - 1]];
-    free_lists = new FreeList(mbdir + "_ibfl", BUFFER_ALIGNMENT, NUM_BUFFER_RESERVE);
 
     if (init_header) {
+        // set writer options
+        header->writer_options = options;
         // Set up DB version
         header->version[0] = version[0];
         header->version[1] = version[1];
@@ -151,7 +148,7 @@ DictMem::DictMem(const std::string& mbdir, bool init_header, size_t memsize,
     } else {
         is_valid = true;
     }
-    Logger::Log(LOG_LEVEL_INFO, "set mabain db version to %u.%u.%u",
+    Logger::Log(LOG_LEVEL_DEBUG, "set mabain db version to %u.%u.%u",
         header->version[0], header->version[1], header->version[2]);
 }
 
@@ -160,18 +157,18 @@ const uint8_t DictMem::empty_edge[] = { 0 };
 
 void DictMem::InitRootNode()
 {
-#ifdef __DEBUG__
-    assert(header != NULL);
-#endif
-    header->m_index_offset = 0;
-
-    bool node_move;
+    bool node_move = false;
     uint8_t* root_node;
 
-    node_move = ReserveNode(NUM_ALPHABET - 1, root_offset, root_node);
-#ifdef __DEBUG__
+    if (options & CONSTS::OPTION_JEMALLOC) {
+        // Initialize the memory manager and set the initial offset to account for the root node.
+        // This will guranatee that the root node is always at offset 0.
+        root_node = (uint8_t*)kv_file->PreAlloc(node_size[NUM_ALPHABET - 1]);
+    } else {
+        header->m_index_offset = 0;
+        node_move = ReserveNode(NUM_ALPHABET - 1, root_offset, root_node);
+    }
     assert(root_offset == 0);
-#endif
 
     root_node[0] = FLAG_NODE_NONE;
     root_node[1] = NUM_ALPHABET - 1;
@@ -590,6 +587,31 @@ bool DictMem::FindNext(const unsigned char* key, int keylen, int& match_len,
 // The allocated in-memory buffer must be initialized to zero.
 bool DictMem::ReserveNode(int nt, size_t& offset, uint8_t*& ptr)
 {
+    bool ret;
+    if (options & CONSTS::OPTION_JEMALLOC) {
+        size_t buf_size = node_size[nt];
+        ptr = (uint8_t*)kv_file->Malloc(buf_size, offset);
+        if (ptr == nullptr) {
+            Logger::Log(LOG_LEVEL_ERROR, "failed to allocate node buffer");
+            throw MBError::NO_MEMORY;
+        }
+        ret = false;
+        size_t rel_size = ((size_t)buf_size + JEMALLOC_ALIGNMENT - 1) & ~(JEMALLOC_ALIGNMENT - 1);
+        header->pending_index_buff_size += (int64_t)rel_size;
+    } else {
+        ret = reserveNodeFL(nt, offset, ptr);
+    }
+
+#ifdef __DEBUG__
+    // offset is allocated, add it to the tracking map
+    // note if reserve failed, an exception will be thrown before this point
+    add_tracking_buffer(offset);
+#endif
+    return ret;
+}
+
+bool DictMem::reserveNodeFL(int nt, size_t& offset, uint8_t*& ptr)
+{
 #ifdef __DEBUG__
     assert(nt >= 0 && nt < 256);
 #endif
@@ -639,8 +661,28 @@ bool DictMem::ReserveNode(int nt, size_t& offset, uint8_t*& ptr)
 }
 
 // Reserve buffer for a new key
-void DictMem::ReserveData(const uint8_t* key, int size, size_t& offset,
-    bool map_new_sliding)
+void DictMem::ReserveData(const uint8_t* key, int size, size_t& offset, bool map_new_sliding)
+{
+    if (options & CONSTS::OPTION_JEMALLOC) {
+        void* ptr = kv_file->Malloc(size, offset);
+        if (ptr == nullptr) {
+            Logger::Log(LOG_LEVEL_DEBUG, "failed to allocate buffer with size %zu", size);
+            throw MBError::NO_MEMORY;
+        }
+        memcpy(ptr, key, size);
+        size_t rel_size = ((size_t)size + JEMALLOC_ALIGNMENT - 1) & ~(JEMALLOC_ALIGNMENT - 1);
+        header->pending_index_buff_size += (int64_t)rel_size;
+    } else {
+        reserveDataFL(key, size, offset, map_new_sliding);
+    }
+#ifdef __DEBUG__
+    // offset is allocated, add it to the tracking map
+    // note if reserve failed, an exception will be thrown before this point
+    add_tracking_buffer(offset, size);
+#endif
+}
+
+void DictMem::reserveDataFL(const uint8_t* key, int size, size_t& offset, bool map_new_sliding)
 {
     int buf_index = free_lists->GetBufferIndex(size);
     int buf_size = free_lists->GetAlignmentSize(size);
@@ -686,6 +728,20 @@ void DictMem::ReserveData(const uint8_t* key, int size, size_t& offset,
 // Release node buffer
 void DictMem::ReleaseNode(size_t offset, int nt)
 {
+#ifdef __DEBUG__
+    remove_tracking_buffer(offset);
+#endif
+    if (options & CONSTS::OPTION_JEMALLOC) {
+        kv_file->Free(offset);
+        size_t rel_size = ((size_t)node_size[nt] + JEMALLOC_ALIGNMENT - 1) & ~(JEMALLOC_ALIGNMENT - 1);
+        header->pending_index_buff_size -= (int64_t)rel_size;
+    } else {
+        releaseNodeFL(offset, nt);
+    }
+}
+
+void DictMem::releaseNodeFL(size_t offset, int nt)
+{
     if (nt < 0)
         return;
 
@@ -700,6 +756,20 @@ void DictMem::ReleaseNode(size_t offset, int nt)
 
 // Release edge string buffer
 void DictMem::ReleaseBuffer(size_t offset, int size)
+{
+#ifdef __DEBUG__
+    remove_tracking_buffer(offset, size);
+#endif
+    if (options & CONSTS::OPTION_JEMALLOC) {
+        kv_file->Free(offset);
+        size_t rel_size = ((size_t)size + JEMALLOC_ALIGNMENT - 1) & ~(JEMALLOC_ALIGNMENT - 1);
+        header->pending_index_buff_size -= (int64_t)rel_size;
+    } else {
+        releaseBufferFL(offset, size);
+    }
+}
+
+void DictMem::releaseBufferFL(size_t offset, int size)
 {
     int rval = free_lists->ReleaseBuffer(offset, size);
     if (rval != MBError::SUCCESS)
@@ -810,12 +880,17 @@ int DictMem::ClearRootEdges_RC() const
 
 void DictMem::ClearMem() const
 {
-    int root_node_size = free_lists->GetAlignmentSize(node_size[NUM_ALPHABET - 1]);
-    header->m_index_offset = root_offset + root_node_size;
-    header->n_states = 1; // Keep the root node
+    if (options & CONSTS::OPTION_JEMALLOC) {
+        kv_file->ResetJemalloc();
+        header->n_states = 0;
+    } else {
+        int root_node_size = free_lists->GetAlignmentSize(node_size[NUM_ALPHABET - 1]);
+        header->m_index_offset = root_offset + root_node_size;
+        header->n_states = 1; // Keep the root node
+        free_lists->Empty();
+    }
     header->n_edges = 0;
     header->edge_str_size = 0;
-    free_lists->Empty();
     header->pending_index_buff_size = 0;
 }
 
@@ -1139,10 +1214,17 @@ void DictMem::PrintStats(std::ostream& out_stream) const
     out_stream << "\tEdge string size: " << header->edge_str_size << std::endl;
     out_stream << "\tEdge size: " << header->n_edges * EDGE_SIZE << std::endl;
     out_stream << "\tException flag: " << header->excep_updating_status << std::endl;
-    out_stream << "\tPending Buffer Size: " << header->pending_index_buff_size << std::endl;
-    if (free_lists != NULL)
-        out_stream << "\tTrackable Buffer Size: " << free_lists->GetTotSize() << std::endl;
+    if (options & CONSTS::OPTION_JEMALLOC) {
+        out_stream << "\tAllocated index memory size: " << header->pending_index_buff_size << std::endl;
+    } else if (free_lists != nullptr) {
+        out_stream << "\tPending buffer size: " << header->pending_index_buff_size << std::endl;
+        out_stream << "\tTrackable buffer size: " << free_lists->GetTotSize() << std::endl;
+    }
     kv_file->PrintStats(out_stream);
+
+#ifdef __DEBUG__
+    out_stream << "Size of index tracking buffer: " << buffer_map.size() << std::endl;
+#endif
 }
 
 const int* DictMem::GetNodeSizePtr() const
@@ -1157,22 +1239,32 @@ void DictMem::InitLockFreePtr(LockFree* lf)
 
 void DictMem::Flush() const
 {
-    if (kv_file != NULL)
+    if (kv_file != nullptr)
         kv_file->Flush();
-    if (header_file != NULL)
+    if (header_file != nullptr)
         header_file->Flush();
+}
+
+void DictMem::Purge() const
+{
+    if (kv_file != nullptr)
+        kv_file->Purge();
 }
 
 void DictMem::WriteData(const uint8_t* buff, unsigned len, size_t offset) const
 {
-    if (offset + len > header->m_index_offset) {
-        std::cerr << "invalid dmm write: " << offset << " " << len << " "
-                  << header->m_index_offset << "\n";
-        throw(int) MBError::OUT_OF_BOUND;
-    }
+    if (options & CONSTS::OPTION_JEMALLOC) {
+        kv_file->MemWrite(buff, len, offset);
+    } else {
+        if (offset + len > header->m_index_offset) {
+            std::cerr << "invalid dmm write: " << offset << " " << len << " "
+                      << header->m_index_offset << "\n";
+            throw(int) MBError::OUT_OF_BOUND;
+        }
 
-    if (kv_file->RandomWrite(buff, len, offset) != len)
-        throw(int) MBError::WRITE_ERROR;
+        if (kv_file->RandomWrite(buff, len, offset) != len)
+            throw(int) MBError::WRITE_ERROR;
+    }
 }
 
 }

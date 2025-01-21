@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2018 Cisco Inc.
+ * Copyright (C) 2025 Cisco Inc.
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU General Public License, version 2,
@@ -19,6 +19,7 @@
 #include <string.h>
 
 #include "error.h"
+#include "logger.h"
 #include "mabain_consts.h"
 #include "mmap_file.h"
 #include "resource_pool.h"
@@ -54,6 +55,7 @@ bool ResourcePool::CheckExistence(const std::string& header_path)
 
 void ResourcePool::RemoveResourceByPath(const std::string& path)
 {
+    Logger::Log(LOG_LEVEL_DEBUG, "remove resource %s", path.c_str());
     pthread_mutex_lock(&pool_mutex);
     file_pool.erase(path);
     pthread_mutex_unlock(&pool_mutex);
@@ -85,6 +87,7 @@ std::shared_ptr<MmapFileIO> ResourcePool::OpenFile(const std::string& fpath,
 
     auto search = file_pool.find(fpath);
     if (search == file_pool.end()) {
+        Logger::Log(LOG_LEVEL_DEBUG, "create resource %s", fpath.c_str());
         int flags = O_RDWR;
         if (create_file)
             flags |= O_CREAT;
@@ -100,7 +103,14 @@ std::shared_ptr<MmapFileIO> ResourcePool::OpenFile(const std::string& fpath,
             if (mmap_file->MapFile(file_size, 0) != NULL) {
                 if (!(mode & CONSTS::MEMORY_ONLY_MODE))
                     mmap_file->Close();
+                if (mode & CONSTS::OPTION_JEMALLOC) {
+                    // only initialize memory manager for _mabain_i0 and _mabain_d0
+                    if (fpath.find("_mabain_i0") != std::string::npos || fpath.find("_mabain_d0") != std::string::npos) {
+                        mmap_file->InitMemoryManager();
+                    }
+                }
             } else {
+                Logger::Log(LOG_LEVEL_DEBUG, "failed to map file %s", fpath.c_str());
                 map_file = false;
             }
         }
@@ -127,6 +137,20 @@ int ResourcePool::AddResourceByPath(const std::string& path, std::shared_ptr<Mma
     pthread_mutex_unlock(&pool_mutex);
 
     return rval;
+}
+
+MmapFileIO* ResourcePool::GetResourceByPath(const std::string& path)
+{
+    MmapFileIO* resource = nullptr;
+
+    pthread_mutex_lock(&pool_mutex);
+    auto search = file_pool.find(path);
+    if (search != file_pool.end()) {
+        resource = search->second.get();
+    }
+    pthread_mutex_unlock(&pool_mutex);
+
+    return resource;
 }
 
 }

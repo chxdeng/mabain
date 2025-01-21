@@ -16,26 +16,25 @@
 
 // @author Changxue Deng <chadeng@cisco.com>
 
-#include <unistd.h>
-#include <stdlib.h>
 #include <list>
+#include <stdlib.h>
+#include <unistd.h>
 
 #include <gtest/gtest.h>
 
-#include "../free_list.h"
 #include "../error.h"
+#include "../free_list.h"
 
 using namespace mabain;
 
 namespace {
 
-class FreeListTest : public ::testing::Test
-{
+class FreeListTest : public ::testing::Test {
 public:
-    FreeListTest() {}
-    virtual ~FreeListTest() {}
-    virtual void SetUp() {}
-    virtual void TearDown() {}
+    FreeListTest() { }
+    virtual ~FreeListTest() { }
+    virtual void SetUp() { }
+    virtual void TearDown() { }
 
 protected:
 };
@@ -62,7 +61,6 @@ TEST_F(FreeListTest, RemoveBufferByIndex_test)
 
     flist.AddBufferByIndex(33, 72);
     EXPECT_EQ(flist.RemoveBufferByIndex(33), 72u);
-
 
     flist.AddBufferByIndex(44, 328);
     flist.AddBufferByIndex(44, 1024);
@@ -145,7 +143,7 @@ TEST_F(FreeListTest, AddBuffer_test)
     rval = flist.AddBuffer(40, 34);
     EXPECT_EQ(rval, MBError::SUCCESS);
     EXPECT_EQ(flist.GetBufferCountByIndex(flist.GetBufferIndex(34)), 1u);
-    rval =flist. AddBuffer(144, 34);
+    rval = flist.AddBuffer(144, 34);
     EXPECT_EQ(rval, MBError::SUCCESS);
     EXPECT_EQ(flist.GetBufferCountByIndex(flist.GetBufferIndex(34)), 2u);
     rval = flist.AddBuffer(196, 35);
@@ -249,14 +247,13 @@ TEST_F(FreeListTest, StoreLoadFullFilling_test)
     srand(time(NULL));
 
     offset = 0;
-    for(int i = 0; i < num_buff; i++)
-    {
+    for (int i = 0; i < num_buff; i++) {
         size = rand() % 111 + 2;
         flist.AddBuffer(offset, size);
         buff_list.push_back(offset);
         buff_list.push_back(size);
         offset += flist.GetAlignmentSize(size);
-    } 
+    }
 
     rval = flist.StoreListOnDisk();
     EXPECT_EQ(rval, MBError::SUCCESS);
@@ -269,8 +266,7 @@ TEST_F(FreeListTest, StoreLoadFullFilling_test)
     rval = access("./freelist", R_OK);
     EXPECT_EQ(rval, -1);
 
-    for (std::list<size_t>::iterator it = buff_list.begin(); it != buff_list.end(); ++it)
-    {
+    for (std::list<size_t>::iterator it = buff_list.begin(); it != buff_list.end(); ++it) {
         offset = *it;
         it++;
         size = *it;
@@ -294,17 +290,15 @@ TEST_F(FreeListTest, StoreLoadHalfFilling_test)
     srand(time(NULL));
 
     offset = 24;
-    for(int i = 0; i < num_buff; i++)
-    {
+    for (int i = 0; i < num_buff; i++) {
         size = rand() % 98 + 1;
-        if(i % 2  == 0)
-        {
+        if (i % 2 == 0) {
             flist.AddBuffer(offset, size);
             buff_list.push_back(offset);
             buff_list.push_back(size);
         }
         offset += flist.GetAlignmentSize(size);
-    } 
+    }
 
     rval = flist.StoreListOnDisk();
     EXPECT_EQ(rval, MBError::SUCCESS);
@@ -317,8 +311,7 @@ TEST_F(FreeListTest, StoreLoadHalfFilling_test)
     rval = access("./freelist", R_OK);
     EXPECT_EQ(rval, -1);
 
-    for (std::list<size_t>::iterator it = buff_list.begin(); it != buff_list.end(); ++it)
-    {
+    for (std::list<size_t>::iterator it = buff_list.begin(); it != buff_list.end(); ++it) {
         offset = *it;
         it++;
         size = *it;

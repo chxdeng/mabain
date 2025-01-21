@@ -41,6 +41,7 @@ static int n_reader = 7;
 static int key_type = 0;
 static bool sync_on_write = false;
 static unsigned long long memcap = 1024ULL * 1024 * 1024;
+static bool use_jemalloc = false;
 
 static void get_sha256_str(int key, char* sha256_str)
 {
@@ -155,15 +156,33 @@ static void InitDB(bool writer_mode = true)
     mdb_open(txn, NULL, 0, &db);
     mdb_txn_commit(txn);
 #elif MABAIN
-    std::string db_dir_tmp = std::string(db_dir) + "/mabain/";
-    int options = mabain::CONSTS::WriterOptions() | mabain::CONSTS::ASYNC_WRITER_MODE;
+    mabain::MBConfig mconf;
+    memset(&mconf, 0, sizeof(mconf));
+    std::string mbdir_tmp = std::string(db_dir) + "/mabain/";
+    mconf.mbdir = mbdir_tmp.c_str();
+    mconf.options = mabain::CONSTS::WriterOptions();
+    if (use_jemalloc) {
+        mconf.options |= mabain::CONSTS::OPTION_JEMALLOC;
+        mconf.block_size_index = 128LL * 1024 * 1024;
+        mconf.block_size_data = 128LL * 1024 * 1024;
+        mconf.memcap_index = 10*mconf.block_size_index;
+        mconf.memcap_data = 10*mconf.block_size_data;
+        mconf.max_num_index_block = 10;
+        mconf.max_num_data_block = 10;
+    } else {
+        mconf.block_size_index = 67LL * 1024 * 1024;
+        mconf.block_size_data = 67LL * 1024 * 1024;
+        mconf.memcap_index = (unsigned long long)(0.6666667 * memcap);
+        mconf.memcap_data = (unsigned long long)(0.3333333 * memcap);
+        mconf.max_num_index_block = 10;
+        mconf.max_num_data_block = 10;
+    }
     if (sync_on_write) {
-        options |= mabain::CONSTS::SYNC_ON_WRITE;
+        mconf.options |= mabain::CONSTS::SYNC_ON_WRITE;
     }
     if (!writer_mode)
-        options = mabain::CONSTS::ReaderOptions();
-    db = new mabain::DB(db_dir_tmp.c_str(), options, (unsigned long long)(0.6666667 * memcap),
-        (unsigned long long)(0.3333333 * memcap));
+        mconf.options = mabain::CONSTS::ReaderOptions();
+    db = new mabain::DB(mconf);
     assert(db->is_open());
 #endif
 }
@@ -399,9 +418,11 @@ static void* Writer(void* arg)
 #elif MABAIN
         db->Add(key.c_str(), key.length(), val.c_str(), val.length());
 #ifdef DEFRAG
-        if ((i + 1) % (2 * ONE_MILLION) == 0) {
-            std::cout << "\nRC SCHEDULED " << std::endl;
-            db->CollectResource(1, 1);
+        if (!use_jemalloc) {
+            if ((i + 1) % (2 * ONE_MILLION) == 0) {
+                std::cout << "\nRC SCHEDULED " << std::endl;
+                db->CollectResource(1, 1);
+            }
         }
 #endif
 #endif
@@ -411,6 +432,9 @@ static void* Writer(void* arg)
         }
     }
 
+#ifdef MABAIN
+    db->PrintStats();
+#endif
     return NULL;
 }
 static void* Reader(void* arg)
@@ -560,7 +584,6 @@ int main(int argc, char* argv[])
 {
 #ifdef MABAIN
     mabain::DB::SetLogFile("/var/tmp/mabain_test/mabain.log");
-    // mabain::DB::SetLogLevel(2);
 #endif
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-n") == 0) {
@@ -594,6 +617,8 @@ int main(int argc, char* argv[])
             if (++i >= argc)
                 abort();
             memcap = atoi(argv[i]);
+        } else if (strcmp(argv[i], "-j") == 0) {
+            use_jemalloc = true;
         } else {
             std::cerr << "invalid argument: " << argv[i] << "\n";
         }

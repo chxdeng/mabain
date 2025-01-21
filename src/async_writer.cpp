@@ -216,10 +216,12 @@ void* AsyncWriter::async_writer_thread()
     MBPipe mbp(db->GetDBDir(), CONSTS::ACCESS_MODE_WRITER);
 
     Logger::Log(LOG_LEVEL_DEBUG, "async writer started");
-    ResourceCollection rc(*db);
-    writer_lock.lock();
-    rc.ExceptionRecovery();
-    writer_lock.unlock();
+    if (!(db->GetDBOptions() & CONSTS::OPTION_JEMALLOC)) {
+        ResourceCollection rc(*db);
+        writer_lock.lock();
+        rc.ExceptionRecovery();
+        writer_lock.unlock();
+    }
 
     while (!stop_processing) {
         node_ptr = &queue[header->writer_index % header->async_queue_size];

@@ -20,6 +20,7 @@
 
 namespace mabain {
 
+// This class should obly be used in the non-jemalloc mode with free lists.
 DBTraverseBase::DBTraverseBase(const DB& db)
     : db_ref(db)
     , rw_buffer(NULL)

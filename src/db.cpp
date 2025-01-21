@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2023 Cisco Inc.
+ * Copyright (C) 2025 Cisco Inc.
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU General Public License, version 2,
@@ -25,7 +25,6 @@
 #include "async_writer.h"
 #include "db.h"
 #include "dict.h"
-#include "drm_base.h"
 #include "error.h"
 #include "integer_4b_5b.h"
 #include "logger.h"
@@ -39,8 +38,8 @@
 
 namespace mabain {
 
-// Current mabain version 1.4.1
-uint16_t version[4] = { 1, 4, 1, 0 };
+// Current mabain version 1.5.0
+uint16_t version[4] = { 1, 5, 0, 0 };
 
 DB::~DB()
 {
@@ -76,7 +75,8 @@ int DB::Close()
     status = MBError::DB_CLOSED;
     if (options & CONSTS::ACCESS_MODE_WRITER) {
         release_file_lock(writer_lock_fd);
-        ResourcePool::getInstance().RemoveResourceByDB(mb_dir);
+        std::string lock_file = mb_dir + "_lock";
+        ResourcePool::getInstance().RemoveResourceByPath(lock_file);
     }
     Logger::Log(LOG_LEVEL_DEBUG, "connector %u disconnected from DB", identifier);
     return rval;
@@ -143,6 +143,14 @@ int DB::ValidateConfig(MBConfig& config)
         if (config.num_entry_per_bucket < 8) {
             std::cerr << "count in eviction bucket must be greater than 7\n";
             return MBError::INVALID_ARG;
+        }
+
+        if (config.options & CONSTS::OPTION_JEMALLOC) {
+            if (config.memcap_index != config.block_size_index * config.max_num_index_block
+                || config.memcap_data != config.block_size_data * config.max_num_data_block) {
+                std::cout << "memcap must be equal to block size when using jemalloc\n";
+                return MBError::INVALID_ARG;
+            }
         }
     }
     if (config.options & CONSTS::USE_SLIDING_WINDOW) {
@@ -282,15 +290,34 @@ void DB::PostDBUpdate(const MBConfig& config, bool init_header, bool update_head
     }
 
     Logger::Log(LOG_LEVEL_DEBUG, "connector %u successfully opened DB %s for %s",
-        identifier, mb_dir.c_str(),
-        (config.options & CONSTS::ACCESS_MODE_WRITER) ? "writing" : "reading");
+        identifier, mb_dir.c_str(), (config.options & CONSTS::ACCESS_MODE_WRITER) ? "writing" : "reading");
     status = MBError::SUCCESS;
 
     if (config.options & CONSTS::ACCESS_MODE_WRITER) {
-        if (!(config.options & CONSTS::ASYNC_WRITER_MODE)) {
-            // Run rc exception recovery
-            ResourceCollection rc(*this);
-            rc.ExceptionRecovery();
+        if (config.options & CONSTS::OPTION_JEMALLOC) {
+            if (!init_header) {
+                // reset db in jemalloc mode if header already exists
+                Logger::Log(LOG_LEVEL_INFO, "reset db in jemalloc mode");
+                int rval = dict->RemoveAll();
+                if (rval != MBError::SUCCESS) {
+                    Logger::Log(LOG_LEVEL_ERROR, "failed to reset db: %s", MBError::get_error_str(rval));
+                    status = rval;
+                }
+            }
+        } else {
+            if (!(config.options & CONSTS::ASYNC_WRITER_MODE)) {
+                // Run rc exception recovery
+                ResourceCollection rc(*this);
+                int rval = rc.ExceptionRecovery();
+                if (rval == MBError::SUCCESS) {
+                    IndexHeader* header = dict->GetHeaderPtr();
+                    header->excep_lf_offset = 0;
+                    header->excep_offset = 0;
+                    Logger::Log(LOG_LEVEL_DEBUG, "rc exception recovery successful");
+                } else {
+                    Logger::Log(LOG_LEVEL_WARN, "rc exception recovery failed: %s", MBError::get_error_str(rval));
+                }
+            }
         }
     }
 }
@@ -504,6 +531,27 @@ int DB::FindLongestPrefix(const std::string& key, MBData& data) const
     return FindLongestPrefix(key.data(), key.size(), data);
 }
 
+int DB::ReadDataByOffset(size_t offset, MBData& data) const
+{
+    if (status != MBError::SUCCESS)
+        return MBError::NOT_INITIALIZED;
+
+    return dict->ReadDataByOffset(offset, data);
+}
+
+int DB::WriteDataByOffset(size_t offset, const char* data, int data_len) const
+{
+    if (status != MBError::SUCCESS)
+        return MBError::NOT_INITIALIZED;
+
+    try {
+        dict->WriteData(reinterpret_cast<const uint8_t*>(data), data_len, offset);
+    } catch (int error) {
+        return error;
+    }
+    return MBError::SUCCESS;
+}
+
 // Add a key-value pair
 int DB::Add(const char* key, int len, MBData& mbdata, bool overwrite)
 {
@@ -681,6 +729,14 @@ void DB::Flush() const
     dict->Flush();
 }
 
+void DB::Purge() const
+{
+    if (status != MBError::SUCCESS)
+        return;
+
+    dict->Purge();
+}
+
 int DB::CollectResource(int64_t min_index_rc_size, int64_t min_data_rc_size,
     int64_t max_dbsz, int64_t max_dbcnt)
 {
@@ -711,6 +767,21 @@ int64_t DB::Count() const
         return -1;
 
     return dict->Count();
+}
+
+int64_t DB::GetPendingDataBufferSize() const
+{
+    if (status != MBError::SUCCESS)
+        return -1;
+
+    return dict->GetHeaderPtr()->pending_data_buff_size;
+}
+
+int64_t DB::GetPendingIndexBufferSize() const
+{
+    if (status != MBError::SUCCESS)
+        return -1;
+    return dict->GetHeaderPtr()->pending_index_buff_size;
 }
 
 void DB::PrintStats(std::ostream& out_stream) const
@@ -757,6 +828,7 @@ void DB::LogDebug()
 
 Dict* DB::GetDictPtr() const
 {
+    // Only allow writer to access dict directly
     if (options & CONSTS::ACCESS_MODE_WRITER)
         return dict;
     return NULL;

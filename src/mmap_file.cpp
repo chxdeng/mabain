@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2017 Cisco Inc.
+ * Copyright (C) 2025 Cisco Inc.
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU General Public License, version 2,
@@ -38,7 +38,8 @@ MmapFileIO::MmapFileIO(const std::string& fpath, int mode, off_t filesize, bool 
     mmap_size = 0;
     mmap_start = 0xFFFFFFFFFFFFFFFF;
     mmap_end = 0;
-    addr = NULL;
+    addr = nullptr;
+    mm_meta = nullptr;
 
     max_offset = 0;
     curr_offset = 0;
@@ -71,7 +72,16 @@ MmapFileIO::MmapFileIO(const std::string& fpath, int mode, off_t filesize, bool 
 
 MmapFileIO::~MmapFileIO()
 {
+    if (mm_meta != nullptr) {
+        delete mm_meta;
+    }
     UnMapFile();
+}
+
+int MmapFileIO::InitMemoryManager()
+{
+    mm_meta = new MemoryManagerMetadata();
+    return MBError::SUCCESS;
 }
 
 uint8_t* MmapFileIO::MapFile(size_t size, off_t offset, bool sliding)

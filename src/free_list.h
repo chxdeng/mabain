@@ -19,6 +19,7 @@
 #ifndef __FREE_LIST_H__
 #define __FREE_LIST_H__
 
+#include <cassert>
 #include <cstdlib>
 #include <string>
 

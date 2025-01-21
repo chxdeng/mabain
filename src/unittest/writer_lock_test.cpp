@@ -1,6 +1,6 @@
+#include <iostream>
 #include <string>
 #include <thread>
-#include <iostream>
 
 #include <gtest/gtest.h>
 
@@ -13,19 +13,22 @@ namespace {
 
 #define MB_DIR "/var/tmp/mabain_test/"
 
-class WriterLockTest : public ::testing::Test
-{
+class WriterLockTest : public ::testing::Test {
 public:
-    WriterLockTest() {
+    WriterLockTest()
+    {
     }
-    virtual ~WriterLockTest() {
+    virtual ~WriterLockTest()
+    {
     }
-    virtual void SetUp() {
+    virtual void SetUp()
+    {
         std::string cmd = std::string("rm ") + MB_DIR + "_*";
-        if(system(cmd.c_str()) != 0) {
+        if (system(cmd.c_str()) != 0) {
         }
     }
-    virtual void TearDown() {
+    virtual void TearDown()
+    {
         ResourcePool::getInstance().RemoveAll();
     }
 

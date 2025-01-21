@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2017 Cisco Inc.
+ * Copyright (C) 2025 Cisco Inc.
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU General Public License, version 2,
@@ -16,21 +16,34 @@
 
 // @author Changxue Deng <chadeng@cisco.com>
 
-#include <gtest/gtest.h>
+#ifndef __MB_MM_H__
+#define __MB_MM_H__
 
-#include "../db.h"
-#define MB_DIR "/var/tmp/mabain_test/"
+#include <jemalloc/jemalloc.h>
 
-GTEST_API_ int main(int argc, char** argv)
-{
-    testing::InitGoogleTest(&argc, argv);
+namespace mabain {
 
-    mode_t mode = 0777;
-    mkdir(MB_DIR, mode);
+class MemoryManagerMetadata {
+public:
+    MemoryManagerMetadata()
+        : alloc_size(0)
+        , extent_hooks(nullptr)
+        , arena_index(0)
+    {
+        extent_hooks = new extent_hooks_t();
+    }
+    ~MemoryManagerMetadata()
+    {
+        if (extent_hooks != nullptr) {
+            delete extent_hooks;
+        }
+    }
 
-    mabain::DB::SetLogFile("/var/tmp/mabain_test/mabain.log");
-    int rval = RUN_ALL_TESTS();
+    size_t alloc_size;
+    extent_hooks_t* extent_hooks;
+    unsigned arena_index;
+};
 
-    mabain::DB::CloseLogFile();
-    return rval;
 }
+
+#endif

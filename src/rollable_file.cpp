@@ -41,6 +41,8 @@ namespace mabain {
 #define RC_OFFSET_PERCENTAGE 75 // default rc offset is placed at 75% of maximum size
 
 const long RollableFile::page_size = sysconf(_SC_PAGESIZE);
+std::unordered_map<unsigned, RollableFile*> RollableFile::arena_manager_map;
+
 int RollableFile::ShmSync(uint8_t* addr, int size)
 {
     off_t page_offset = ((off_t)addr) % RollableFile::page_size;
@@ -124,7 +126,7 @@ int RollableFile::OpenAndMapBlockFile(size_t block_order, bool create_file)
         int level = LOG_LEVEL_DEBUG;
         if (mode & CONSTS::ACCESS_MODE_WRITER)
             level = LOG_LEVEL_WARN;
-        Logger::Log(level, "block number %d ovferflow", block_order);
+        Logger::Log(level, "block number %d overflow", block_order);
         return MBError::NO_RESOURCE;
     }
 
@@ -140,18 +142,30 @@ int RollableFile::OpenAndMapBlockFile(size_t block_order, bool create_file)
         map_file = true;
     else
         map_file = false;
+
     if (!map_file && (mode & CONSTS::MEMORY_ONLY_MODE))
         return MBError::NO_MEMORY;
-
+    bool init_jem = false;
+    if (block_order == 0 && (mode & CONSTS::OPTION_JEMALLOC)) {
+        // Check if jemalloc is initialized already
+        if (ResourcePool::getInstance().GetResourceByPath(path + "0") == nullptr) {
+            // mm_meta is only initialized for the first block
+            init_jem = true;
+        }
+    }
     files[block_order] = ResourcePool::getInstance().OpenFile(path + ss.str(),
         mode,
         block_size,
         map_file,
         create_file);
-    if (map_file)
+    if (map_file) {
         mem_used += block_size;
-    else if (mode & CONSTS::MEMORY_ONLY_MODE)
+        if (init_jem) {
+            rval = ConfigureJemalloc(files[0]->mm_meta);
+        }
+    } else if ((mode & CONSTS::MEMORY_ONLY_MODE) || (mode & CONSTS::OPTION_JEMALLOC)) {
         rval = MBError::MMAP_FAILED;
+    }
     return rval;
 }
 
@@ -401,4 +415,312 @@ void RollableFile::RemoveUnused(size_t max_size, bool writer_mode)
     }
 }
 
+////////////////////////////////////
+// memory management using jemalloc
+////////////////////////////////////
+
+// Configure jemalloc hooks
+int RollableFile::ConfigureJemalloc(MemoryManagerMetadata* mm_meta)
+{
+    if (!(mode & CONSTS::OPTION_JEMALLOC))
+        return MBError::INVALID_ARG;
+
+    extent_hooks_t* extent_hooks = mm_meta->extent_hooks;
+    extent_hooks->alloc = [](extent_hooks_t* extent_hooks, void* addr, size_t size,
+                              size_t alignment, bool* zero, bool* commit,
+                              unsigned arena_ind) -> void* {
+        return arena_manager_map[arena_ind]->custom_extent_alloc(addr, size, alignment,
+            zero, commit, arena_ind);
+    };
+    extent_hooks->dalloc = custom_extent_dalloc;
+    extent_hooks->commit = custom_extent_commit;
+    extent_hooks->decommit = custom_extent_decommit;
+    extent_hooks->purge_lazy = custom_extent_purge_lazy;
+    extent_hooks->purge_forced = custom_extent_purge_forced;
+    extent_hooks->split = custom_extent_split;
+    extent_hooks->merge = custom_extent_merge;
+
+    size_t hooks_sz = sizeof(extent_hooks);
+    unsigned arena_ind;
+    size_t arena_index_sz = sizeof(arena_ind);
+
+    int rc = mallctl("arenas.create", &arena_ind, &arena_index_sz, nullptr, 0);
+    if (rc != 0) {
+        Logger::Log(LOG_LEVEL_ERROR, "failed to create jemalloc arena %d", rc);
+        return MBError::JEMALLOC_ERROR;
+    }
+    Logger::Log(LOG_LEVEL_INFO, "jemalloc arena index: %u created", arena_ind);
+
+    std::string arena_hooks = "arena." + std::to_string(arena_ind) + ".extent_hooks";
+    rc = mallctl(arena_hooks.c_str(), nullptr, nullptr, &extent_hooks, hooks_sz);
+    if (rc != 0) {
+        Logger::Log(LOG_LEVEL_ERROR, "failed to set jemalloc extent hooks %d", rc);
+        return MBError::JEMALLOC_ERROR;
+    }
+
+    // Store the MemoryManager instance in the global map
+    arena_manager_map[arena_ind] = this;
+    mm_meta->arena_index = arena_ind;
+    return MBError::SUCCESS;
+}
+
+// Initialize memory manager with the initial offset
+// This is used to pre-allocate memory for root node at offset 0
+// The base pointer is returned for the caller to use
+// This funnction must be called before any other memory allocation
+void* RollableFile::PreAlloc(size_t init_off)
+{
+    int rval = CheckAndOpenFile(0, true);
+    if (rval != MBError::SUCCESS) {
+        throw(int) rval;
+    }
+    if (!files[0]->IsMapped())
+        return nullptr;
+    files[0]->mm_meta->alloc_size = init_off;
+    return files[0]->GetMapAddr();
+}
+
+void* RollableFile::Malloc(size_t size, size_t& offset)
+{
+    void* ptr = nullptr;
+    if (size > 0) {
+        if (files[0] == nullptr) {
+            // create the first block file for memory metadata if not exist
+            int rval = CheckAndOpenFile(0, true);
+            if (rval != MBError::SUCCESS) {
+                throw(int) rval;
+            }
+        }
+        unsigned arena_index = files[0]->mm_meta->arena_index;
+        ptr = mallocx(size, MALLOCX_ARENA(arena_index) | MALLOCX_TCACHE_NONE);
+        offset = get_shm_offset(ptr);
+    }
+    return ptr;
+}
+
+// offset is the total offset. It is used to find the block order and relative offset within the block.
+size_t RollableFile::MemWrite(const void* src, size_t size, size_t offset)
+{
+    int block_order = offset / block_size;
+    size_t relative_offset = offset % block_size;
+    if (relative_offset + size > block_size) {
+        throw(int) MBError::OUT_OF_BOUND;
+    }
+    memcpy(files[block_order]->GetMapAddr() + relative_offset, src, size);
+    return size;
+}
+
+size_t RollableFile::MemRead(void* dst, size_t size, size_t offset)
+{
+    int block_order = offset / block_size;
+    size_t relative_offset = offset % block_size;
+    if (relative_offset + size > block_size) {
+        throw(int) MBError::OUT_OF_BOUND;
+    }
+    memcpy(dst, files[block_order]->GetMapAddr() + relative_offset, size);
+    return size;
+}
+
+void RollableFile::Free(void* ptr) const
+{
+    if (ptr != nullptr) {
+        unsigned arena_index = files[0]->mm_meta->arena_index;
+        dallocx(ptr, MALLOCX_ARENA(arena_index) | MALLOCX_TCACHE_NONE);
+    }
+}
+
+void RollableFile::Free(size_t offset) const
+{
+    int block_order = offset / block_size;
+    size_t relative_offset = offset % block_size;
+    if (block_order >= (int)files.size()) {
+        throw(int) MBError::OUT_OF_BOUND;
+    }
+
+    void* ptr = files[block_order]->GetMapAddr() + relative_offset;
+    unsigned arena_index = files[0]->mm_meta->arena_index;
+    dallocx(ptr, MALLOCX_ARENA(arena_index) | MALLOCX_TCACHE_NONE);
+}
+
+// Purge all unused dirty pages for the arena
+void RollableFile::Purge() const
+{
+    if (!(mode & CONSTS::OPTION_JEMALLOC)) {
+        return;
+    }
+    if (files[0] == nullptr) {
+        Logger::Log(LOG_LEVEL_WARN, "jemalloc not initialized");
+        return;
+    }
+    unsigned arena_index = files[0]->mm_meta->arena_index;
+    std::string arena_purge = "arena." + std::to_string(arena_index) + ".purge";
+    int rc = mallctl(arena_purge.c_str(), nullptr, nullptr, nullptr, 0);
+    if (rc != 0) {
+        Logger::Log(LOG_LEVEL_WARN, "failed to perform jemalloc purge error %d", rc);
+    }
+}
+
+// Reset jemalloc
+int RollableFile::ResetJemalloc()
+{
+    if (!(mode & CONSTS::OPTION_JEMALLOC)) {
+        return MBError::INVALID_ARG;
+    }
+    if (files[0] == nullptr) {
+        Logger::Log(LOG_LEVEL_DEBUG, "jemalloc not initialized, no need to reset");
+        return MBError::SUCCESS;
+    }
+    unsigned arena_index = files[0]->mm_meta->arena_index;
+    // Destroy the arena
+    std::string arena_destroy = "arena." + std::to_string(arena_index) + ".destroy";
+    int rc = mallctl(arena_destroy.c_str(), nullptr, nullptr, nullptr, 0);
+    if (rc != 0) {
+        Logger::Log(LOG_LEVEL_ERROR, "failed to destroy jemalloc arena %u, error code %d",
+            arena_index, rc);
+    }
+    // Reset the memory manager metadata
+    if (files[0]->mm_meta != nullptr) {
+        delete files[0]->mm_meta;
+        files[0]->mm_meta = nullptr;
+    }
+    files[0]->InitMemoryManager();
+    return ConfigureJemalloc(files[0]->mm_meta);
+}
+
+void* RollableFile::custom_extent_alloc(void* new_addr, size_t size, size_t alignment,
+    bool* zero, bool* commit, unsigned arena_ind)
+{
+    RollableFile* mgr = arena_manager_map[arena_ind];
+    assert(mgr != nullptr);
+
+    void* ptr = nullptr;
+    size_t aligned_offset;
+    MemoryManagerMetadata* mm_meta = mgr->files[0]->mm_meta;
+    if (new_addr != nullptr) {
+        ptr = new_addr;
+        aligned_offset = mgr->get_aligned_offset(new_addr);
+        if (aligned_offset + size > mgr->block_size) {
+            Logger::Log(LOG_LEVEL_WARN, "custom_extent_alloc: arena %u failed to extend existing"
+                                        " memory (aligned offset: %zu, size: %zu, block size: %zu)",
+                arena_ind, aligned_offset, size, mgr->block_size);
+            return nullptr;
+        }
+    } else {
+        // Note alloc_size is the current total allocation size used by all blocks
+        int block_order = mm_meta->alloc_size / mgr->block_size;
+        size_t relative_offset = mm_meta->alloc_size % mgr->block_size;
+        aligned_offset = (relative_offset + alignment - 1) & ~(alignment - 1);
+        if (aligned_offset + size > mgr->block_size) {
+            // Try next block
+            block_order++;
+            if ((size_t)block_order >= mgr->max_num_block) {
+                Logger::Log(LOG_LEVEL_ERROR, "custom_extent_alloc: arena %u max block number exceeded",
+                    " new memory (aligned offset: %zu, used: %zu, size: %zu)",
+                    arena_ind, aligned_offset, mm_meta->alloc_size, size);
+                throw(int) MBError::NO_MEMORY;
+            }
+            int rval = mgr->CheckAndOpenFile(block_order, true);
+            if (rval != MBError::SUCCESS) {
+                Logger::Log(LOG_LEVEL_ERROR, "custom_extent_alloc: arena %u failed to open"
+                                             " new block file (order: %d, used: %zu, size: %zu)",
+                    arena_ind, block_order, mm_meta->alloc_size, size);
+                throw(int) MBError::MMAP_FAILED;
+            }
+            aligned_offset = 0; // reset aligned offset for new block
+            if (aligned_offset + size > mgr->block_size) {
+                Logger::Log(LOG_LEVEL_ERROR, "custom_extent_alloc: arena %u failed to extend"
+                                             " new memory (offset: %zu, size: %zu, used: %zu, size: %zu)",
+                    arena_ind, aligned_offset, size, mgr->block_size);
+                throw(int) MBError::NO_MEMORY;
+            }
+        }
+        mm_meta->alloc_size = block_order * mgr->block_size + aligned_offset + size;
+        ptr = mgr->files[block_order]->GetMapAddr() + aligned_offset;
+    }
+
+    // Set zero and commit flags
+    if (*zero) {
+        memset(ptr, 0, size);
+    }
+    // Ensure the memory is committed if *commit is true
+    if (*commit) {
+        if (madvise(ptr, size, MADV_WILLNEED) != 0) {
+            Logger::Log(LOG_LEVEL_WARN, "custom_extent_alloc: failed to commit memory: arena %u "
+                                        "addr %p block index %d size %zu error %d %s",
+                arena_ind, ptr, find_block_index(ptr), size, errno, strerror(errno));
+        }
+    }
+    Logger::Log(LOG_LEVEL_DEBUG, "custom_extent_alloc: arena %u, allocated %zu bytes, used %zu",
+        arena_ind, size, mm_meta->alloc_size);
+    return ptr;
+}
+
+bool RollableFile::custom_extent_dalloc(extent_hooks_t* extent_hooks, void* addr,
+    size_t size, bool committed, unsigned arena_ind)
+{
+    // Indicate that the deallocation is successful
+    return true;
+}
+
+bool RollableFile::custom_extent_commit(extent_hooks_t* extent_hooks, void* addr,
+    size_t size, size_t offset, size_t length, unsigned arena_ind)
+{
+    // Indicate that the commit is successful
+    return false;
+}
+
+bool RollableFile::custom_extent_decommit(extent_hooks_t* extent_hooks, void* addr,
+    size_t size, size_t offset, size_t length, unsigned arena_ind)
+{
+    // Ask OS to discard the memory
+    if (madvise((char*)addr + offset, length, MADV_DONTNEED) != 0) {
+        Logger::Log(LOG_LEVEL_DEBUG, "failed to decommit memory: %d %s",
+            errno, strerror(errno));
+        return true;
+    }
+    return false;
+}
+
+bool RollableFile::custom_extent_purge_lazy(extent_hooks_t* extent_hooks, void* addr,
+    size_t size, size_t offset, size_t length, unsigned arena_ind)
+{
+    // Ask OS to discard the memory
+    if (madvise(static_cast<char*>(addr) + offset, length, MADV_DONTNEED) != 0) {
+        Logger::Log(LOG_LEVEL_DEBUG, "failed to purge(lazy) memory: %d %s",
+            errno, strerror(errno));
+        return true;
+    }
+    return false;
+}
+
+bool RollableFile::custom_extent_purge_forced(extent_hooks_t* extent_hooks, void* addr,
+    size_t size, size_t offset, size_t length, unsigned arena_ind)
+{
+    // Ask OS to free up the memory
+    if (madvise(static_cast<char*>(addr) + offset, length, MADV_FREE) != 0) {
+        Logger::Log(LOG_LEVEL_DEBUG, "failed to purge(forced) memory: %d %s",
+            errno, strerror(errno));
+        return true;
+    }
+    return false;
+}
+
+bool RollableFile::custom_extent_split(extent_hooks_t* extent_hooks, void* addr,
+    size_t size, size_t size_a, size_t size_b, bool committed, unsigned arena_ind)
+{
+    // Indicate that the split is successful
+    return false;
+}
+
+bool RollableFile::custom_extent_merge(extent_hooks_t* extent_hooks, void* addr_a,
+    size_t size_a, void* addr_b, size_t size_b, bool committed, unsigned arena_ind)
+{
+    // Check if the two extents are adjacent
+    // Note if addr_a and addr_b are on different blocks, the following condition will
+    // always be true. This is because the two addresses are from different mmaped regions.
+    if ((char*)addr_a + size_a != addr_b) {
+        return true;
+    }
+    return false;
+}
 }

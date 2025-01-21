@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2017 Cisco Inc.
+ * Copyright (C) 2025 Cisco Inc.
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU General Public License, version 2,
@@ -19,6 +19,7 @@
 #ifndef __MMAP_FILE__
 #define __MMAP_FILE__
 
+#include <cstring>
 #include <iostream>
 #include <stdint.h>
 #include <string>
@@ -29,6 +30,7 @@
 
 #include "file_io.h"
 #include "logger.h"
+#include "mb_mm.h"
 
 namespace mabain {
 
@@ -48,6 +50,10 @@ public:
     uint8_t* GetMapAddr() const;
     void Flush();
 
+    // for jemalloc
+    int InitMemoryManager();
+    MemoryManagerMetadata* mm_meta;
+
 private:
     bool mmap_file;
     size_t mmap_size;
@@ -61,5 +67,4 @@ private:
 };
 
 }
-
 #endif

@@ -54,7 +54,15 @@ install, ensure you meet the dependency requirements called out above run
 following command in the top level of your git clone:
 
 ```
-make build
+mkdir build
+cd build
+cmake ..
+make
+make install
+```
+To build with debug, run cmake with debug on
+```
+cmake -DENABLE_DEBUG=ON ..
 ```
 
 #### (Optional) - Run the unit tests

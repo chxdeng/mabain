@@ -146,7 +146,7 @@ void DRMBase::PrintHeader(std::ostream& out_stream) const
     out_stream << "writer count: " << header->num_writer << std::endl;
     out_stream << "reader count: " << header->num_reader << std::endl;
     out_stream << "shm queue ID: " << header->shm_queue_id << std::endl;
-    out_stream << "dummy: " << header->dummy << std::endl;
+    out_stream << "writer option: " << header->writer_options << std::endl;
     out_stream << "data block size: " << header->data_block_size << std::endl;
     out_stream << "index block size: " << header->index_block_size << std::endl;
     out_stream << "lock free data: " << std::endl;

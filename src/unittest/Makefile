@@ -5,7 +5,7 @@ CPP=g++
 
 CPPFLAGS = -I. -I.. -I../util -I/usr/include -Wall -Werror -g -O2 -std=c++17
 CPPFLAGS += -fprofile-arcs -ftest-coverage -fPIC -D__SHM_QUEUE__
-LDFLAGS  = -L/usr/lib64 -lgtest -lcrypto -lpthread
+LDFLAGS  = -L/usr/lib64 -ljemalloc -lgtest -lcrypto -lpthread
 
 TESTSOURCES=$(wildcard *.cpp)
 

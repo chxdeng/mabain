@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2017 Cisco Inc.
+ * Copyright (C) 2025 Cisco Inc.
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU General Public License, version 2,
@@ -28,8 +28,6 @@
 #include "integer_4b_5b.h"
 #include "mabain_consts.h"
 
-#define MAX_DATA_BUFFER_RESERVE_SIZE 0xFFFF
-#define NUM_DATA_BUFFER_RESERVE MAX_DATA_BUFFER_RESERVE_SIZE / DATA_BUFFER_ALIGNMENT
 #define DATA_HEADER_SIZE 32
 
 #define READER_LOCK_FREE_START \
@@ -49,7 +47,7 @@ Dict::Dict(const std::string& mbdir, bool init_header, int datasize,
     int max_num_index_blk, int max_num_data_blk,
     int64_t entry_per_bucket, uint32_t queue_size,
     const char* queue_dir)
-    : options(db_options)
+    : DRMBase(mbdir, db_options, false)
     , mm(mbdir, init_header, memsize_index, db_options, block_sz_idx, max_num_index_blk, queue_size)
     , queue(NULL)
 {
@@ -63,8 +61,8 @@ Dict::Dict(const std::string& mbdir, bool init_header, int datasize,
         throw(int) MBError::MMAP_FAILED;
     }
 
-    // confirm block size is the same
     if (!init_header) {
+        // confirm block size is the same
         if (block_sz_data != 0 && header->data_block_size != block_sz_data) {
             std::cerr << "mabain data block size not match " << block_sz_data << ": "
                       << header->data_block_size << std::endl;
@@ -95,36 +93,33 @@ Dict::Dict(const std::string& mbdir, bool init_header, int datasize,
     // Otherwise, the status will be set in the Init.
     if (init_header) {
         // Initialize header
+        // We known that only writers will set init_header to true.
         header->entry_per_bucket = entry_per_bucket;
         header->index_block_size = block_sz_idx;
         header->data_block_size = block_sz_data;
         header->data_size = datasize;
         header->count = 0;
         header->m_data_offset = GetStartDataOffset(); // start from a non-zero offset
-        // We known that only writers will set init_header to true.
-        free_lists = new FreeList(mbdir + "_dbfl", DATA_BUFFER_ALIGNMENT,
-            NUM_DATA_BUFFER_RESERVE);
     } else {
         if (options & CONSTS::ACCESS_MODE_WRITER) {
             if (header->entry_per_bucket != entry_per_bucket) {
                 std::cerr << "mabain count per bucket not match\n";
             }
-
-            free_lists = new FreeList(mbdir + "_dbfl", DATA_BUFFER_ALIGNMENT,
-                NUM_DATA_BUFFER_RESERVE);
-            if (mm.IsValid()) {
-                int rval = ExceptionRecovery();
-                if (rval == MBError::SUCCESS) {
-                    header->excep_lf_offset = 0;
-                    header->excep_offset = 0;
-                    status = MBError::SUCCESS;
-                }
+            // Check if jemalloc option is conststent
+            if ((options & CONSTS::OPTION_JEMALLOC) && !(header->writer_options & CONSTS::OPTION_JEMALLOC)) {
+                std::cerr << "mabain jemalloc option not match\n";
+                Destroy();
+                throw(int) MBError::INVALID_ARG;
             }
-        } else {
-            if (mm.IsValid())
-                status = MBError::SUCCESS;
+            if (!(options & CONSTS::OPTION_JEMALLOC) && (header->writer_options & CONSTS::OPTION_JEMALLOC)) {
+                std::cerr << "mabain jemalloc option not match header\n";
+                Destroy();
+                throw(int) MBError::INVALID_ARG;
+            }
         }
     }
+    if (mm.IsValid())
+        status = MBError::SUCCESS;
 }
 
 Dict::~Dict()
@@ -134,6 +129,7 @@ Dict::~Dict()
 // This function only needs to be called by writer.
 int Dict::Init(uint32_t id)
 {
+    Logger::Log(LOG_LEVEL_DEBUG, "connector %u initializing db", id);
     if (!(options & CONSTS::ACCESS_MODE_WRITER)) {
         Logger::Log(LOG_LEVEL_ERROR, "dict initialization not allowed for non-writer");
         return MBError::NOT_ALLOWED;
@@ -192,7 +188,6 @@ int Dict::Add(const uint8_t* key, int len, MBData& data, bool overwrite)
         return MBError::OUT_OF_BOUND;
 
     EdgePtrs edge_ptrs;
-    size_t data_offset = 0;
     int rval;
 
     rval = mm.GetRootEdge_Writer(data.options & CONSTS::OPTION_RC_MODE, key[0], edge_ptrs);
@@ -200,9 +195,9 @@ int Dict::Add(const uint8_t* key, int len, MBData& data, bool overwrite)
         return rval;
 
     if (edge_ptrs.len_ptr[0] == 0) {
-        ReserveData(data.buff, data.data_len, data_offset);
+        ReserveData(data.buff, data.data_len, data.data_offset);
         // Add the first edge along this edge
-        mm.AddRootEdge(edge_ptrs, key, len, data_offset);
+        mm.AddRootEdge(edge_ptrs, key, len, data.data_offset);
         if (data.options & CONSTS::OPTION_RC_MODE) {
             header->rc_count++;
         } else {
@@ -246,23 +241,23 @@ int Dict::Add(const uint8_t* key, int len, MBData& data, bool overwrite)
                     break;
             }
             if (!next) {
-                ReserveData(data.buff, data.data_len, data_offset);
-                rval = mm.UpdateNode(edge_ptrs, p, len, data_offset);
+                ReserveData(data.buff, data.data_len, data.data_offset);
+                rval = mm.UpdateNode(edge_ptrs, p, len, data.data_offset);
             } else if (match_len < static_cast<int>(edge_ptrs.len_ptr[0])) {
                 if (len > match_len) {
-                    ReserveData(data.buff, data.data_len, data_offset);
+                    ReserveData(data.buff, data.data_len, data.data_offset);
                     rval = mm.AddLink(edge_ptrs, match_len, p + match_len, len - match_len,
-                        data_offset, data);
+                        data.data_offset, data);
                 } else if (len == match_len) {
-                    ReserveData(data.buff, data.data_len, data_offset);
-                    rval = mm.InsertNode(edge_ptrs, match_len, data_offset, data);
+                    ReserveData(data.buff, data.data_len, data.data_offset);
+                    rval = mm.InsertNode(edge_ptrs, match_len, data.data_offset, data);
                 }
             } else if (len == 0) {
                 rval = UpdateDataBuffer(edge_ptrs, overwrite, data.buff, data.data_len, inc_count);
             }
         } else {
-            ReserveData(data.buff, data.data_len, data_offset);
-            rval = mm.AddLink(edge_ptrs, i, p + i, len - i, data_offset, data);
+            ReserveData(data.buff, data.data_len, data.data_offset);
+            rval = mm.AddLink(edge_ptrs, i, p + i, len - i, data.data_offset, data);
         }
     } else {
         for (i = 1; i < len; i++) {
@@ -270,12 +265,12 @@ int Dict::Add(const uint8_t* key, int len, MBData& data, bool overwrite)
                 break;
         }
         if (i < len) {
-            ReserveData(data.buff, data.data_len, data_offset);
-            rval = mm.AddLink(edge_ptrs, i, p + i, len - i, data_offset, data);
+            ReserveData(data.buff, data.data_len, data.data_offset);
+            rval = mm.AddLink(edge_ptrs, i, p + i, len - i, data.data_offset, data);
         } else {
             if (edge_ptrs.len_ptr[0] > len) {
-                ReserveData(data.buff, data.data_len, data_offset);
-                rval = mm.InsertNode(edge_ptrs, i, data_offset, data);
+                ReserveData(data.buff, data.data_len, data.data_offset);
+                rval = mm.InsertNode(edge_ptrs, i, data.data_offset, data);
             } else {
                 rval = UpdateDataBuffer(edge_ptrs, overwrite, data.buff, data.data_len, inc_count);
             }
@@ -345,10 +340,12 @@ int Dict::DeleteDataFromEdge(MBData& data, EdgePtrs& edge_ptrs)
         if (ReadData(reinterpret_cast<uint8_t*>(&data_len), DATA_SIZE_BYTE, data_off)
             != DATA_SIZE_BYTE)
             return MBError::READ_ERROR;
-
-        rel_size = free_lists->GetAlignmentSize(data_len + DATA_HDR_BYTE);
-        header->pending_data_buff_size += rel_size;
-        free_lists->ReleaseBuffer(data_off, rel_size);
+        if (options & CONSTS::OPTION_JEMALLOC) {
+            rel_size = data_len + DATA_HDR_BYTE;
+        } else {
+            rel_size = free_lists->GetAlignmentSize(data_len + DATA_HDR_BYTE);
+        }
+        ReleaseBuffer(data_off, rel_size);
 
         rval = mm.RemoveEdgeByIndex(edge_ptrs, data);
     } else {
@@ -374,9 +371,12 @@ int Dict::DeleteDataFromEdge(MBData& data, EdgePtrs& edge_ptrs)
                 != DATA_SIZE_BYTE)
                 return MBError::READ_ERROR;
 
-            rel_size = free_lists->GetAlignmentSize(data_len + DATA_HDR_BYTE);
-            header->pending_data_buff_size += rel_size;
-            free_lists->ReleaseBuffer(data_off, rel_size);
+            if (options & CONSTS::OPTION_JEMALLOC) {
+                rel_size = data_len + DATA_HDR_BYTE;
+            } else {
+                rel_size = free_lists->GetAlignmentSize(data_len + DATA_HDR_BYTE);
+            }
+            ReleaseBuffer(data_off, rel_size);
         } else {
             rval = MBError::NOT_EXIST;
         }
@@ -662,7 +662,8 @@ int Dict::Find_Internal(size_t root_off, const uint8_t* key, int len, MBData& da
     }
 
     if (edge_len < len) {
-        if ((edge_len > 1 && memcmp(key_buff, key + 1, edge_len_m1) != 0) || (edge_ptrs.flag_ptr[0] & EDGE_FLAG_DATA_OFF)) {
+        if ((edge_len > 1 && memcmp(key_buff, key + 1, edge_len_m1) != 0)
+            || (edge_ptrs.flag_ptr[0] & EDGE_FLAG_DATA_OFF)) {
 #ifdef __LOCK_FREE__
             READER_LOCK_FREE_STOP(edge_ptrs.offset, data)
 #endif
@@ -758,19 +759,29 @@ void Dict::PrintStats(std::ostream& out_stream) const
         return;
 
     out_stream << "DB stats:\n";
+    out_stream << "\tWriter option: " << header->writer_options << std::endl;
     out_stream << "\tNumber of DB writer: " << header->num_writer << std::endl;
     out_stream << "\tNumber of DB reader: " << header->num_reader << std::endl;
     out_stream << "\tEntry count in DB: " << header->count << std::endl;
     out_stream << "\tEntry count per bucket: " << header->entry_per_bucket << std::endl;
     out_stream << "\tEviction bucket index: " << header->eviction_bucket_index << std::endl;
     out_stream << "\tData block size: " << header->data_block_size << std::endl;
-    out_stream << "\tData size: " << header->m_data_offset << std::endl;
-    out_stream << "\tPending Buffer Size: " << header->pending_data_buff_size << std::endl;
-    if (free_lists)
-        out_stream << "\tTrackable Buffer Size: " << free_lists->GetTotSize() << std::endl;
+    // The pending_data_buff_size in jemalloc mode is the total size of all allocated data buffers
+    // The pending_data_buff_size in non-jemalloc mode is the total size of all free data buffers
+    if (options & CONSTS::OPTION_JEMALLOC) {
+        out_stream << "\tAllocated data memory size: " << header->pending_data_buff_size << std::endl;
+    } else if (free_lists != nullptr) {
+        out_stream << "\tData size: " << header->m_data_offset << std::endl;
+        out_stream << "\tPending buffer size: " << header->pending_data_buff_size << std::endl;
+        out_stream << "\tTrackable buffer size: " << free_lists->GetTotSize() << std::endl;
+    }
     mm.PrintStats(out_stream);
 
     kv_file->PrintStats(out_stream);
+
+#ifdef __DEBUG__
+    out_stream << "Size of tracking buffer: " << buffer_map.size() << std::endl;
+#endif
 }
 
 int64_t Dict::Count() const
@@ -950,9 +961,6 @@ int Dict::Remove(const uint8_t* key, int len, MBData& data)
 
     if (rval == MBError::SUCCESS) {
         header->count--;
-        if (header->count == 0) {
-            RemoveAll();
-        }
     }
 
     return rval;
@@ -961,20 +969,27 @@ int Dict::Remove(const uint8_t* key, int len, MBData& data)
 int Dict::RemoveAll()
 {
     int rval = MBError::SUCCESS;
-    ;
-    for (int c = 0; c < NUM_ALPHABET; c++) {
-        rval = mm.ClearRootEdge(c);
-        if (rval != MBError::SUCCESS)
-            break;
+
+    mm.ClearMem(); // clear memory will re-initialize jemalloc
+    if (options & CONSTS::OPTION_JEMALLOC) {
+        mm.InitRootNode();
+        kv_file->ResetJemalloc();
+        for (int c = 0; c < NUM_ALPHABET; c++) {
+            rval = mm.ClearRootEdge(c);
+            if (rval != MBError::SUCCESS)
+                break;
+        }
+    } else {
+        for (int c = 0; c < NUM_ALPHABET; c++) {
+            rval = mm.ClearRootEdge(c);
+            if (rval != MBError::SUCCESS)
+                break;
+        }
+        header->m_data_offset = GetStartDataOffset();
+        free_lists->Empty();
     }
-
-    mm.ClearMem();
-
-    header->count = 0;
-    header->m_data_offset = GetStartDataOffset();
-    free_lists->Empty();
     header->pending_data_buff_size = 0;
-
+    header->count = 0;
     header->eviction_bucket_index = 0;
     header->num_update = 0;
     return rval;
@@ -991,12 +1006,44 @@ AsyncNode* Dict::GetAsyncQueuePtr() const
 }
 
 // Reserve buffer and write to it
+// The pending_data_buff_size in jemalloc mode is the total size of all allocated data buffers
+// The pending_data_buff_size in non-jemalloc mode is the total size of all free data buffers
 void Dict::ReserveData(const uint8_t* buff, int size, size_t& offset)
+{
+    if (options & CONSTS::OPTION_JEMALLOC) {
+        int buf_size = size + DATA_HDR_BYTE;
+        void* ptr = kv_file->Malloc(buf_size, offset);
+        if (ptr == NULL) {
+            Logger::Log(LOG_LEVEL_ERROR, "failed to allocate memory for data buffer");
+            throw MBError::NO_MEMORY;
+        }
+        uint16_t dsize[2];
+        dsize[0] = static_cast<uint16_t>(size);
+        // store bucket index for LRU eviction
+        dsize[1] = (header->num_update / header->entry_per_bucket) % 0xFFFF;
+        if (dsize[1] == header->eviction_bucket_index && header->num_update > header->entry_per_bucket) {
+            header->eviction_bucket_index++;
+        }
+        memcpy(ptr, &dsize[0], DATA_HDR_BYTE);
+        memcpy(static_cast<uint8_t*>(ptr) + DATA_HDR_BYTE, buff, size);
+        // update the size of pending data buffer in the header
+        header->pending_data_buff_size += (buf_size + JEMALLOC_ALIGNMENT - 1) & ~(JEMALLOC_ALIGNMENT - 1);
+    } else {
+        reserveDataFL(buff, size, offset);
+    }
+
+#ifdef __DEBUG__
+    // offset is allocated, add it to the tracking map
+    // note if reserve failed, an exception will be thrown before this point
+    add_tracking_buffer(offset, size);
+#endif
+}
+
+void Dict::reserveDataFL(const uint8_t* buff, int size, size_t& offset)
 {
 #ifdef __DEBUG__
     assert(size <= CONSTS::MAX_DATA_SIZE);
 #endif
-
     int buf_size = free_lists->GetAlignmentSize(size + DATA_HDR_BYTE);
     int buf_index = free_lists->GetBufferIndex(buf_size);
     uint16_t dsize[2];
@@ -1020,9 +1067,9 @@ void Dict::ReserveData(const uint8_t* buff, int size, size_t& offset)
         if (rval != MBError::SUCCESS)
             throw rval;
 
-        //Checking missing buffer due to alignment
+        // Checking missing buffer due to alignment
         if (old_off < header->m_data_offset) {
-            free_lists->ReleaseAlignmentBuffer(old_off, header->m_data_offset);
+            ReleaseAlignmentBuffer(old_off, header->m_data_offset);
             header->pending_data_buff_size += header->m_data_offset - old_off;
         }
 
@@ -1038,17 +1085,68 @@ void Dict::ReserveData(const uint8_t* buff, int size, size_t& offset)
     }
 }
 
+int Dict::ReleaseBuffer(size_t offset, int size)
+{
+#ifdef __DEBUG__
+    remove_tracking_buffer(offset, size);
+#endif
+    if (options & CONSTS::OPTION_JEMALLOC) {
+        kv_file->Free(offset);
+        size_t rel_size = ((size_t)size + JEMALLOC_ALIGNMENT - 1) & ~(JEMALLOC_ALIGNMENT - 1);
+        header->pending_data_buff_size -= (int64_t)rel_size;
+        if (header->pending_data_buff_size < 0) {
+            Logger::Log(LOG_LEVEL_DEBUG, "pending data buffer size is negative: %d",
+                header->pending_data_buff_size);
+            header->pending_data_buff_size = 0;
+        }
+        return MBError::SUCCESS;
+    } else {
+        header->pending_data_buff_size += size;
+        return free_lists->ReleaseBuffer(offset, size);
+    }
+}
+
+void Dict::ReleaseAlignmentBuffer(size_t offset, size_t alignment_off)
+{
+    // alignment is not a real buffer, so no need to track it
+    if (options & CONSTS::OPTION_JEMALLOC) {
+        // no-op
+    } else {
+        free_lists->ReleaseAlignmentBuffer(offset, alignment_off);
+    }
+}
+
 int Dict::ReleaseBuffer(size_t offset)
 {
+#ifdef __DEBUG__
+    remove_tracking_buffer(offset);
+#endif
+    // First read the size of the data buffer
     uint16_t data_size;
-
-    if (ReadData(reinterpret_cast<uint8_t*>(&data_size), DATA_SIZE_BYTE, offset)
-        != DATA_SIZE_BYTE)
+    if (ReadData(reinterpret_cast<uint8_t*>(&data_size), DATA_SIZE_BYTE, offset) != DATA_SIZE_BYTE) {
+        if (options & CONSTS::OPTION_JEMALLOC) {
+            // For jemalloc mode, we can just free the buffer and return
+            kv_file->Free(offset);
+        }
         return MBError::READ_ERROR;
+    }
+    data_size += DATA_HDR_BYTE;
+    if (options & CONSTS::OPTION_JEMALLOC) {
+        kv_file->Free(offset);
 
-    int rel_size = free_lists->GetAlignmentSize(data_size + DATA_HDR_BYTE);
-    header->pending_data_buff_size += rel_size;
-    return free_lists->ReleaseBuffer(offset, rel_size);
+        size_t rel_size = ((size_t)data_size + JEMALLOC_ALIGNMENT - 1) & ~(JEMALLOC_ALIGNMENT - 1);
+        header->pending_data_buff_size -= (int64_t)rel_size;
+        if (header->pending_data_buff_size < 0) {
+            Logger::Log(LOG_LEVEL_DEBUG, "pending data buffer size is negative: %d",
+                header->pending_data_buff_size);
+            header->pending_data_buff_size = 0;
+        }
+        return MBError::SUCCESS;
+    } else {
+        int rel_size = free_lists->GetAlignmentSize(data_size);
+        header->pending_data_buff_size += rel_size;
+        return free_lists->ReleaseBuffer(offset, rel_size);
+    }
 }
 
 int Dict::UpdateDataBuffer(EdgePtrs& edge_ptrs, bool overwrite, const uint8_t* buff,
@@ -1163,6 +1261,8 @@ DictMem* Dict::GetMM() const
 
 size_t Dict::GetStartDataOffset() const
 {
+    // TODO: handle data header allocation in jemalloc mode.
+    // Note this header is not used currently
     return DATA_HEADER_SIZE;
 }
 
@@ -1179,6 +1279,15 @@ void Dict::Flush() const
     if (kv_file != NULL)
         kv_file->Flush();
     mm.Flush();
+}
+
+void Dict::Purge() const
+{
+    if ((options & CONSTS::ACCESS_MODE_WRITER) && (options & CONSTS::OPTION_JEMALLOC)) {
+        if (kv_file != nullptr)
+            kv_file->Purge();
+        mm.Purge();
+    }
 }
 
 // Recovery from abnormal writer terminations (segfault, kill -9 etc)
@@ -1277,14 +1386,36 @@ int Dict::ExceptionRecovery()
 
 void Dict::WriteData(const uint8_t* buff, unsigned len, size_t offset) const
 {
-    if (offset + len > header->m_data_offset) {
-        std::cerr << "invalid dict write: " << offset << " " << len << " "
-                  << header->m_data_offset << "\n";
-        throw(int) MBError::OUT_OF_BOUND;
+    if (options & CONSTS::OPTION_JEMALLOC) {
+        kv_file->MemWrite(buff, len, offset);
+    } else {
+        if (offset + len > header->m_data_offset) {
+            std::cerr << "invalid dict write: " << offset << " " << len << " "
+                      << header->m_data_offset << "\n";
+            throw(int) MBError::OUT_OF_BOUND;
+        }
+
+        if (kv_file->RandomWrite(buff, len, offset) != len)
+            throw(int) MBError::WRITE_ERROR;
+    }
+}
+
+int Dict::ReadDataByOffset(size_t offset, MBData& data) const
+{
+    uint16_t hdr[2];
+    if (ReadData(reinterpret_cast<uint8_t*>(&hdr[0]), DATA_HDR_BYTE, offset) != DATA_HDR_BYTE) {
+        return MBError::READ_ERROR;
     }
 
-    if (kv_file->RandomWrite(buff, len, offset) != len)
-        throw(int) MBError::WRITE_ERROR;
+    // store bucket index
+    data.data_len = hdr[0]; // store data length
+    data.bucket_index = hdr[1];
+    data.Resize(hdr[0]); // resize data buffer using size from header
+    offset += DATA_HDR_BYTE;
+    if (ReadData(data.buff, hdr[0], offset) != hdr[0]) {
+        return MBError::READ_ERROR;
+    }
+    return MBError::SUCCESS;
 }
 
 }

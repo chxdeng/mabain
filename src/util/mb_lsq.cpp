@@ -21,7 +21,8 @@
 
 namespace mabain {
 
-MBlsq::MBlsq(void (*free_fn)(void *)) : FreeFunc(free_fn)
+MBlsq::MBlsq(void (*free_fn)(void*))
+    : FreeFunc(free_fn)
 {
     head = NULL;
     tail = NULL;
@@ -30,12 +31,11 @@ MBlsq::MBlsq(void (*free_fn)(void *)) : FreeFunc(free_fn)
 
 void MBlsq::Clear()
 {
-    LSQ_Node *node;
-    while(head != NULL)
-    {
+    LSQ_Node* node;
+    while (head != NULL) {
         node = head;
         head = head->next;
-        if(FreeFunc)
+        if (FreeFunc)
             FreeFunc(node->data.data_ptr);
         free(node);
     }
@@ -55,16 +55,16 @@ uint64_t MBlsq::Count() const
     return count;
 }
 
-int MBlsq::AddToHead(void *ptr)
+int MBlsq::AddToHead(void* ptr)
 {
-    LSQ_Node *node = (LSQ_Node *) malloc(sizeof(*node));
-    if(node == NULL)
+    LSQ_Node* node = (LSQ_Node*)malloc(sizeof(*node));
+    if (node == NULL)
         return MBError::NO_MEMORY;
 
     node->data.data_ptr = ptr;
     node->next = head;
     head = node;
-    if(count == 0)
+    if (count == 0)
         tail = node;
 
     count++;
@@ -73,14 +73,14 @@ int MBlsq::AddToHead(void *ptr)
 
 int MBlsq::AddIntToHead(int64_t value)
 {
-    LSQ_Node *node = (LSQ_Node *) malloc(sizeof(*node));
-    if(node == NULL)
+    LSQ_Node* node = (LSQ_Node*)malloc(sizeof(*node));
+    if (node == NULL)
         return MBError::NO_MEMORY;
 
     node->data.value = value;
     node->next = head;
     head = node;
-    if(count == 0)
+    if (count == 0)
         tail = node;
 
     count++;
@@ -89,19 +89,16 @@ int MBlsq::AddIntToHead(int64_t value)
 
 int MBlsq::AddIntToTail(int64_t value)
 {
-    LSQ_Node *node = (LSQ_Node *) malloc(sizeof(*node));
-    if(node == NULL)
+    LSQ_Node* node = (LSQ_Node*)malloc(sizeof(*node));
+    if (node == NULL)
         return MBError::NO_MEMORY;
 
     node->data.value = value;
     node->next = NULL;
-    if(tail)
-    {
+    if (tail) {
         tail->next = node;
         tail = node;
-    }
-    else
-    {
+    } else {
         head = node;
         tail = node;
     }
@@ -110,20 +107,17 @@ int MBlsq::AddIntToTail(int64_t value)
     return MBError::SUCCESS;
 }
 
-int MBlsq::AddToTail(void *ptr)
+int MBlsq::AddToTail(void* ptr)
 {
-    LSQ_Node *node = (LSQ_Node *) malloc(sizeof(*node));
-    if(node == NULL)
+    LSQ_Node* node = (LSQ_Node*)malloc(sizeof(*node));
+    if (node == NULL)
         return MBError::NO_MEMORY;
 
     node->data.data_ptr = ptr;
     node->next = NULL;
-    if(tail != NULL)
-    {
+    if (tail != NULL) {
         tail->next = node;
-    }
-    else
-    {
+    } else {
         head = node;
     }
 
@@ -134,27 +128,22 @@ int MBlsq::AddToTail(void *ptr)
 
 void* MBlsq::RemoveFromHead()
 {
-    void *data;
+    void* data;
 
-    if(count > 1)
-    {
-        LSQ_Node *node = head;
+    if (count > 1) {
+        LSQ_Node* node = head;
         data = head->data.data_ptr;
         head = head->next;
         count--;
         free(node);
-    }
-    else if(count == 1)
-    {
-        LSQ_Node *node = head;
+    } else if (count == 1) {
+        LSQ_Node* node = head;
         data = head->data.data_ptr;
         head = NULL;
         tail = NULL;
         count = 0;
         free(node);
-    }
-    else
-    {
+    } else {
         data = NULL;
     }
 
@@ -165,25 +154,20 @@ int64_t MBlsq::RemoveIntFromHead()
 {
     int64_t value;
 
-    if(count > 1)
-    {
-        LSQ_Node *node = head;
+    if (count > 1) {
+        LSQ_Node* node = head;
         value = head->data.value;
         head = head->next;
         count--;
         free(node);
-    }
-    else if(count == 1)
-    {
-        LSQ_Node *node = head;
+    } else if (count == 1) {
+        LSQ_Node* node = head;
         value = head->data.value;
         head = NULL;
         tail = NULL;
         count = 0;
         free(node);
-    }
-    else
-    {
+    } else {
         value = 0;
     }
 
