@@ -15,14 +15,11 @@
 #include <unistd.h>
 
 struct PruneData {
-    std::mutex mtx;
-    std::condition_variable cv;
-    std::queue<std::string> prune_list;
     double prune_ratio;
     int64_t memcap_index;
     int64_t memcap_data;
-    size_t prune_node_offset; // current offset of the node to be pruned
-    uint32_t previous_node_offset; // previous offset of the node to be pruned
+    size_t prune_node_offset; // current offset of the data node to be pruned
+    uint32_t previous_node_offset; // offset of the previously added data node
     int prune_cnt;
     PruneData()
     {
@@ -92,16 +89,12 @@ void add_random_key_value_pairs(mabain::DB& db, int num_pairs, int key_type, Pru
     for (int i = 0; i < num_pairs; ++i) {
         // Generate a random key using TestKey
         std::string key = testKey.get_key(std::rand());
-        // Generate a random value of random size between 10 and 100 bytes
-        int value_size = 10 + std::rand() % 91;
-        std::string value(value_size, ' ');
-        for (int j = 0; j < value_size; ++j) {
-            value[j] = 'A' + std::rand() % 26; // Random character between 'A' and 'Z'
-        }
-
         // Construct the data buffer
         construct_data(key, data, pdata);
+
         // Add the key/value pair to the database
+        // Do not set overwrite to true when calling Add since it will mess up the prune list,
+        // which uses singled linked list.
         int rc = db.Add(key.c_str(), key.size(), data, false);
         if (rc == mabain::MBError::SUCCESS) {
             if (pdata.prune_node_offset == 0xFFFFFFFFFFFFFFFF) {

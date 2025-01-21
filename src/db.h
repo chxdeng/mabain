@@ -23,7 +23,6 @@
 #include <string>
 #include <vector>
 
-#include "drm_base.h"
 #include "error.h"
 #include "integer_4b_5b.h"
 #include "lock.h"
@@ -204,10 +203,7 @@ public:
 
     void GetDBConfig(MBConfig& config) const;
 
-    static inline int GetDataHeaderSize()
-    {
-        return DATA_HDR_BYTE;
-    }
+    static int GetDataHeaderSize();
 
     //iterator
     const iterator begin(bool check_async_mode = true, bool rc_mode = false) const;

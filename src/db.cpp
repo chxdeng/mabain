@@ -25,6 +25,7 @@
 #include "async_writer.h"
 #include "db.h"
 #include "dict.h"
+#include "drm_base.h"
 #include "error.h"
 #include "integer_4b_5b.h"
 #include "logger.h"
@@ -873,6 +874,11 @@ void DB::CloseLogFile()
 void DB::ClearResources(const std::string& path)
 {
     ResourcePool::getInstance().RemoveResourceByDB(path);
+}
+
+int DB::GetDataHeaderSize()
+{
+    return DATA_HDR_BYTE;
 }
 
 } // namespace mabain

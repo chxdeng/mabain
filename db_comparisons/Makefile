@@ -22,4 +22,4 @@ db_comp_kc: db_comp.cpp
 build: all
 
 clean:
-	- rm db_comp_ldb db_comp_kc db_comp_lmdb db_comp_mb
+	- rm db_comp_mb
