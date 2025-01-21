@@ -25,7 +25,6 @@
 #include "async_writer.h"
 #include "db.h"
 #include "dict.h"
-#include "drm_base.h"
 #include "error.h"
 #include "integer_4b_5b.h"
 #include "logger.h"

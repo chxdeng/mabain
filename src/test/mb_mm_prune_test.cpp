@@ -14,9 +14,6 @@
 #include <thread>
 #include <unistd.h>
 
-#include "../dict.h"
-#include "../drm_base.h"
-
 struct PruneData {
     std::mutex mtx;
     std::condition_variable cv;
@@ -116,7 +113,7 @@ void add_random_key_value_pairs(mabain::DB& db, int num_pairs, int key_type, Pru
                 db.WriteDataByOffset(pdata.previous_node_offset, reinterpret_cast<const char*>(&data.data_offset), 4);
             }
             // Save the offset for next add
-            pdata.previous_node_offset = data.data_offset + DATA_HDR_BYTE;
+            pdata.previous_node_offset = data.data_offset + mabain::DB::GetDataHeaderSize();
             if (need_to_prune(db, pdata)) {
                 perform_prune(db, pdata);
             }
