@@ -532,6 +532,27 @@ int DB::FindLongestPrefix(const std::string& key, MBData& data) const
     return FindLongestPrefix(key.data(), key.size(), data);
 }
 
+int DB::ReadDataByOffset(size_t offset, MBData& data) const
+{
+    if (status != MBError::SUCCESS)
+        return MBError::NOT_INITIALIZED;
+
+    return dict->ReadDataByOffset(offset, data);
+}
+
+int DB::WriteDataByOffset(size_t offset, const char* data, int data_len) const
+{
+    if (status != MBError::SUCCESS)
+        return MBError::NOT_INITIALIZED;
+
+    try {
+        dict->WriteData(reinterpret_cast<const uint8_t*>(data), data_len, offset);
+    } catch (int error) {
+        return error;
+    }
+    return MBError::SUCCESS;
+}
+
 // Add a key-value pair
 int DB::Add(const char* key, int len, MBData& mbdata, bool overwrite)
 {
@@ -749,6 +770,21 @@ int64_t DB::Count() const
     return dict->Count();
 }
 
+int64_t DB::GetPendingDataBufferSize() const
+{
+    if (status != MBError::SUCCESS)
+        return -1;
+
+    return dict->GetHeaderPtr()->pending_data_buff_size;
+}
+
+int64_t DB::GetPendingIndexBufferSize() const
+{
+    if (status != MBError::SUCCESS)
+        return -1;
+    return dict->GetHeaderPtr()->pending_index_buff_size;
+}
+
 void DB::PrintStats(std::ostream& out_stream) const
 {
     if (status != MBError::SUCCESS)
@@ -793,6 +829,7 @@ void DB::LogDebug()
 
 Dict* DB::GetDictPtr() const
 {
+    // Only allow writer to access dict directly
     if (options & CONSTS::ACCESS_MODE_WRITER)
         return dict;
     return NULL;

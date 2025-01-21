@@ -596,6 +596,8 @@ bool DictMem::ReserveNode(int nt, size_t& offset, uint8_t*& ptr)
             throw MBError::NO_MEMORY;
         }
         ret = false;
+        size_t rel_size = ((size_t)buf_size + JEMALLOC_ALIGNMENT - 1) & ~(JEMALLOC_ALIGNMENT - 1);
+        header->pending_index_buff_size += (int64_t)rel_size;
     } else {
         ret = reserveNodeFL(nt, offset, ptr);
     }
@@ -668,6 +670,8 @@ void DictMem::ReserveData(const uint8_t* key, int size, size_t& offset, bool map
             throw MBError::NO_MEMORY;
         }
         memcpy(ptr, key, size);
+        size_t rel_size = ((size_t)size + JEMALLOC_ALIGNMENT - 1) & ~(JEMALLOC_ALIGNMENT - 1);
+        header->pending_index_buff_size += (int64_t)rel_size;
     } else {
         reserveDataFL(key, size, offset, map_new_sliding);
     }
@@ -729,6 +733,8 @@ void DictMem::ReleaseNode(size_t offset, int nt)
 #endif
     if (options & CONSTS::OPTION_JEMALLOC) {
         kv_file->Free(offset);
+        size_t rel_size = ((size_t)node_size[nt] + JEMALLOC_ALIGNMENT - 1) & ~(JEMALLOC_ALIGNMENT - 1);
+        header->pending_index_buff_size -= (int64_t)rel_size;
     } else {
         releaseNodeFL(offset, nt);
     }
@@ -756,6 +762,8 @@ void DictMem::ReleaseBuffer(size_t offset, int size)
 #endif
     if (options & CONSTS::OPTION_JEMALLOC) {
         kv_file->Free(offset);
+        size_t rel_size = ((size_t)size + JEMALLOC_ALIGNMENT - 1) & ~(JEMALLOC_ALIGNMENT - 1);
+        header->pending_index_buff_size -= (int64_t)rel_size;
     } else {
         releaseBufferFL(offset, size);
     }
@@ -875,17 +883,15 @@ void DictMem::ClearMem() const
     if (options & CONSTS::OPTION_JEMALLOC) {
         kv_file->ResetJemalloc();
         header->n_states = 0;
-        header->n_edges = 0;
-        header->edge_str_size = 0;
     } else {
         int root_node_size = free_lists->GetAlignmentSize(node_size[NUM_ALPHABET - 1]);
         header->m_index_offset = root_offset + root_node_size;
         header->n_states = 1; // Keep the root node
-        header->n_edges = 0;
-        header->edge_str_size = 0;
         free_lists->Empty();
-        header->pending_index_buff_size = 0;
     }
+    header->n_edges = 0;
+    header->edge_str_size = 0;
+    header->pending_index_buff_size = 0;
 }
 
 int DictMem::ReadNode(size_t& node_off, EdgePtrs& edge_ptrs,
@@ -1209,8 +1215,7 @@ void DictMem::PrintStats(std::ostream& out_stream) const
     out_stream << "\tEdge size: " << header->n_edges * EDGE_SIZE << std::endl;
     out_stream << "\tException flag: " << header->excep_updating_status << std::endl;
     if (options & CONSTS::OPTION_JEMALLOC) {
-#ifdef __DEBUG__
-#endif
+        out_stream << "\tAllocated index memory size: " << header->pending_index_buff_size << std::endl;
     } else if (free_lists != nullptr) {
         out_stream << "\tPending buffer size: " << header->pending_index_buff_size << std::endl;
         out_stream << "\tTrackable buffer size: " << free_lists->GetTotSize() << std::endl;

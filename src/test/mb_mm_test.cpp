@@ -17,9 +17,15 @@ void add_random_key_value_pairs(mabain::DB& db, int num_pairs, int key_type)
     for (int i = 0; i < num_pairs; ++i) {
         // Generate a random key using TestKey
         const char* key = testKey.get_key(std::rand());
+        // Generate a random value of random size between 10 and 100 bytes
+        int value_size = 10 + std::rand() % 91;
+        std::string value(value_size, ' ');
+        for (int j = 0; j < value_size; ++j) {
+            value[j] = 'A' + std::rand() % 26; // Random character between 'A' and 'Z'
+        }
 
         // Add the key/value pair to the database
-        db.Add(key, key);
+        db.Add(key, value);
         keys.push_back(key);
     }
 
@@ -27,6 +33,9 @@ void add_random_key_value_pairs(mabain::DB& db, int num_pairs, int key_type)
         // Remove the key/value pair from the database
         db.Remove(keys[i]);
     }
+
+    assert(db.GetPendingDataBufferSize() == 0);
+    assert(db.GetPendingIndexBufferSize() == 0);
 }
 
 int main(int argc, char* argv[])

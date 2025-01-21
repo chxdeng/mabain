@@ -59,8 +59,8 @@ public:
     int Find(const uint8_t* key, int len, MBData& data);
     // Find value by key using longest prefix match
     int FindPrefix(const uint8_t* key, int len, MBData& data);
-
     int FindBound(size_t root_off, const uint8_t* key, int len, MBData& data);
+    int ReadDataByOffset(size_t offset, MBData& data) const;
 
     // Delete entry by key
     int Remove(const uint8_t* key, int len);

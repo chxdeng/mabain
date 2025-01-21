@@ -135,6 +135,9 @@ public:
     // FindLowerBound returns that largest entry that is not greater than the given key.
     int FindLowerBound(const char* key, int len, MBData& data) const;
     int FindLowerBound(const std::string& key, MBData& data) const;
+    int ReadDataByOffset(size_t offset, MBData& data) const;
+    int WriteDataByOffset(size_t offset, const char* data, int data_len) const;
+
     // Remove an entry using a key
     int Remove(const char* key, int len);
     int RemoveAsync(const char* key, int len);
@@ -185,6 +188,8 @@ public:
     void PrintHeader(std::ostream& out_stream = std::cout) const;
     // current count of key-value pair
     int64_t Count() const;
+    int64_t GetPendingDataBufferSize() const;
+    int64_t GetPendingIndexBufferSize() const;
     // DB status
     int Status() const;
     // DB status string

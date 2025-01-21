@@ -627,7 +627,6 @@ void* RollableFile::custom_extent_alloc(void* new_addr, size_t size, size_t alig
                 throw(int) MBError::MMAP_FAILED;
             }
             aligned_offset = 0; // reset aligned offset for new block
-            relative_offset = 0; // this is now a new block file so reset relative offset
             if (aligned_offset + size > mgr->block_size) {
                 Logger::Log(LOG_LEVEL_ERROR, "custom_extent_alloc: arena %u failed to extend"
                                              " new memory (offset: %zu, size: %zu, used: %zu, size: %zu)",
