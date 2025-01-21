@@ -1407,10 +1407,12 @@ int Dict::ReadDataByOffset(size_t offset, MBData& data) const
         return MBError::READ_ERROR;
     }
 
+    // store data length
+    data.data_len = hdr[0];
     // store bucket index
-    data.data_len = hdr[0]; // store data length
     data.bucket_index = hdr[1];
-    data.Resize(hdr[0]); // resize data buffer using size from header
+    // resize data buffer using size from header
+    data.Resize(hdr[0]);
     offset += DATA_HDR_BYTE;
     if (ReadData(data.buff, hdr[0], offset) != hdr[0]) {
         return MBError::READ_ERROR;
