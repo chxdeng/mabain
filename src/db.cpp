@@ -553,6 +553,13 @@ int DB::WriteDataByOffset(size_t offset, const char* data, int data_len) const
     return MBError::SUCCESS;
 }
 
+uint8_t* DB::GetDataPtrByOffset(size_t offset) const
+{
+    if (status != MBError::SUCCESS)
+        return nullptr;
+    return dict->GetShmPtr(offset, 0);
+}
+
 // Add a key-value pair
 int DB::Add(const char* key, int len, MBData& mbdata, bool overwrite)
 {

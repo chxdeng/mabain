@@ -253,7 +253,7 @@ int Dict::Add(const uint8_t* key, int len, MBData& data, bool overwrite)
                     rval = mm.InsertNode(edge_ptrs, match_len, data.data_offset, data);
                 }
             } else if (len == 0) {
-                rval = UpdateDataBuffer(edge_ptrs, overwrite, data.buff, data.data_len, inc_count);
+                rval = UpdateDataBuffer(edge_ptrs, overwrite, data, inc_count);
             }
         } else {
             ReserveData(data.buff, data.data_len, data.data_offset);
@@ -272,7 +272,7 @@ int Dict::Add(const uint8_t* key, int len, MBData& data, bool overwrite)
                 ReserveData(data.buff, data.data_len, data.data_offset);
                 rval = mm.InsertNode(edge_ptrs, i, data.data_offset, data);
             } else {
-                rval = UpdateDataBuffer(edge_ptrs, overwrite, data.buff, data.data_len, inc_count);
+                rval = UpdateDataBuffer(edge_ptrs, overwrite, data, inc_count);
             }
         }
     }
@@ -1149,22 +1149,19 @@ int Dict::ReleaseBuffer(size_t offset)
     }
 }
 
-int Dict::UpdateDataBuffer(EdgePtrs& edge_ptrs, bool overwrite, const uint8_t* buff,
-    int len, bool& inc_count)
+int Dict::UpdateDataBuffer(EdgePtrs& edge_ptrs, bool overwrite, MBData& mbd, bool& inc_count)
 {
-    size_t data_off;
-
     if (edge_ptrs.flag_ptr[0] & EDGE_FLAG_DATA_OFF) {
         inc_count = false;
         // leaf node
+        mbd.data_offset = Get6BInteger(edge_ptrs.offset_ptr);
         if (!overwrite)
             return MBError::IN_DICT;
 
-        data_off = Get6BInteger(edge_ptrs.offset_ptr);
-        if (ReleaseBuffer(data_off) != MBError::SUCCESS)
-            Logger::Log(LOG_LEVEL_WARN, "failed to release data buffer: %llu", data_off);
-        ReserveData(buff, len, data_off);
-        Write6BInteger(edge_ptrs.offset_ptr, data_off);
+        if (ReleaseBuffer(mbd.data_offset) != MBError::SUCCESS)
+            Logger::Log(LOG_LEVEL_WARN, "failed to release data buffer: %llu", mbd.data_offset);
+        ReserveData(mbd.buff, mbd.data_len, mbd.data_offset);
+        Write6BInteger(edge_ptrs.offset_ptr, mbd.data_offset);
 
         header->excep_lf_offset = edge_ptrs.offset;
         memcpy(header->excep_buff, edge_ptrs.offset_ptr, OFFSET_SIZE);
@@ -1186,12 +1183,11 @@ int Dict::UpdateDataBuffer(EdgePtrs& edge_ptrs, bool overwrite, const uint8_t* b
 
         if (node_buff[0] & FLAG_NODE_MATCH) {
             inc_count = false;
+            mbd.data_offset = Get6BInteger(node_buff + 2);
             if (!overwrite)
                 return MBError::IN_DICT;
-
-            data_off = Get6BInteger(node_buff + 2);
-            if (ReleaseBuffer(data_off) != MBError::SUCCESS)
-                Logger::Log(LOG_LEVEL_WARN, "failed to release data buffer %llu", data_off);
+            if (ReleaseBuffer(mbd.data_offset) != MBError::SUCCESS)
+                Logger::Log(LOG_LEVEL_WARN, "failed to release data buffer %llu", mbd.data_offset);
 
             node_buff[NODE_EDGE_KEY_FIRST] = 0;
         } else {
@@ -1201,8 +1197,8 @@ int Dict::UpdateDataBuffer(EdgePtrs& edge_ptrs, bool overwrite, const uint8_t* b
             node_buff[NODE_EDGE_KEY_FIRST] = 1;
         }
 
-        ReserveData(buff, len, data_off);
-        Write6BInteger(node_buff + 2, data_off);
+        ReserveData(mbd.buff, mbd.data_len, mbd.data_offset);
+        Write6BInteger(node_buff + 2, mbd.data_offset);
 
         header->excep_offset = node_off;
 #ifdef __LOCK_FREE__

@@ -137,6 +137,7 @@ public:
     int FindLowerBound(const std::string& key, MBData& data) const;
     int ReadDataByOffset(size_t offset, MBData& data) const;
     int WriteDataByOffset(size_t offset, const char* data, int data_len) const;
+    uint8_t* GetDataPtrByOffset(size_t offset) const;
 
     // Remove an entry using a key
     int Remove(const char* key, int len);

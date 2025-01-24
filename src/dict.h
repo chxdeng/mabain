@@ -121,8 +121,7 @@ private:
     int Find_Internal(size_t root_off, const uint8_t* key, int len, MBData& data);
     int FindPrefix_Internal(size_t root_off, const uint8_t* key, int len, MBData& data);
     int ReleaseBuffer(size_t offset);
-    int UpdateDataBuffer(EdgePtrs& edge_ptrs, bool overwrite, const uint8_t* buff,
-        int len, bool& inc_count);
+    int UpdateDataBuffer(EdgePtrs& edge_ptrs, bool overwrite, MBData& mbd, bool& inc_count);
     int ReadDataFromEdge(MBData& data, const EdgePtrs& edge_ptrs) const;
     int ReadDataFromNode(MBData& data, const uint8_t* node_ptr) const;
     int DeleteDataFromEdge(MBData& data, EdgePtrs& edge_ptrs);
