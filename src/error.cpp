@@ -46,6 +46,7 @@ const char* MBError::error_str[] = {
     "failed to create thread",
     "rc skipped",
     "version mismatch",
+    "jemalloc error",
 
     ///////////////////////////////////
     "DB not exist",
