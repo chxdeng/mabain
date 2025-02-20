@@ -21,6 +21,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <iostream>
+#include <stdint.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
