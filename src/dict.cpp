@@ -78,7 +78,6 @@ Dict::Dict(const std::string& mbdir, bool init_header, int datasize,
 
     if (!(db_options & CONSTS::READ_ONLY_DB)) {
         // initialize shared memory queue
-        ShmQueueMgr qmgr;
         slaq = qmgr.CreateFile(header->shm_queue_id, queue_size, queue_dir, db_options);
         queue = slaq->queue;
     }

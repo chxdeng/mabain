@@ -62,6 +62,8 @@ public:
 
 private:
     void InitShmObjects(shm_lock_and_queue* slaq, int queue_size);
+    // hold a reference to the queue file
+    std::shared_ptr<MmapFileIO> qfile;
 };
 
 }
