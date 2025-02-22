@@ -57,7 +57,6 @@ shm_lock_and_queue* ShmQueueMgr::CreateFile(uint64_t qid, int qsize,
     if (access(qfile_path.c_str(), F_OK))
         init_queue = true;
 
-    std::shared_ptr<MmapFileIO> qfile;
     bool map_qfile = true;
     int q_buff_size = sizeof(shm_lock_and_queue);
     if (qsize < MB_MAX_NUM_SHM_QUEUE_NODE)
