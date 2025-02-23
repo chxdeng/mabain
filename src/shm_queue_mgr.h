@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2020 Cisco Inc.
+ * Copyright (C) 2025 Cisco Inc.
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU General Public License, version 2,
@@ -20,8 +20,10 @@
 #define __SHM_QUEUE_MGR_H__
 
 #include <atomic>
+#include <iostream>
 
 #include "db.h"
+#include "drm_base.h"
 
 namespace mabain {
 
@@ -59,6 +61,7 @@ public:
     ShmQueueMgr();
     ~ShmQueueMgr();
     shm_lock_and_queue* CreateFile(uint64_t qid, int qsize, const char* queue_dir, int options);
+    void PrintStats(std::ostream& out_stream, const IndexHeader* hdr) const;
 
 private:
     void InitShmObjects(shm_lock_and_queue* slaq, int queue_size);

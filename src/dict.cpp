@@ -770,6 +770,7 @@ void Dict::PrintStats(std::ostream& out_stream) const
     mm.PrintStats(out_stream);
 
     kv_file->PrintStats(out_stream);
+    qmgr.PrintStats(out_stream, header);
 }
 
 int64_t Dict::Count() const

@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2020 Cisco Inc.
+ * Copyright (C) 2025 Cisco Inc.
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU General Public License, version 2,
@@ -91,6 +91,24 @@ shm_lock_and_queue* ShmQueueMgr::CreateFile(uint64_t qid, int qsize,
 
 ShmQueueMgr::~ShmQueueMgr()
 {
+}
+
+void ShmQueueMgr::PrintStats(std::ostream& out_stream, const IndexHeader* hdr) const
+{
+    if (qfile != nullptr) {
+        void* addr = qfile->GetMapAddr();
+        if (addr != nullptr) {
+            out_stream << "Async queue memory addr: " << addr << std::endl;
+        } else {
+            out_stream << "Async queue memory addr: NULL" << std::endl;
+        }
+        if (hdr != nullptr) {
+            out_stream << "\tqueue id: " << hdr->shm_queue_id << std::endl;
+            out_stream << "\tqueue size: " << hdr->async_queue_size << std::endl;
+            out_stream << "\tqueue index: " << hdr->queue_index << std::endl;
+            out_stream << "\twriter index: " << hdr->writer_index << std::endl;
+        }
+    }
 }
 
 }
