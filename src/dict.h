@@ -148,6 +148,8 @@ private:
     AsyncNode* queue;
     shm_lock_and_queue* slaq;
     MBPipe mbp;
+    // Hold a reference to shared memory queue file so that the async thread can access it during process exit
+    ShmQueueMgr qmgr;
 };
 
 }

@@ -76,7 +76,6 @@ Dict::Dict(const std::string& mbdir, bool init_header, int datasize,
 
     if (!(db_options & CONSTS::READ_ONLY_DB)) {
         // initialize shared memory queue
-        ShmQueueMgr qmgr;
         slaq = qmgr.CreateFile(header->shm_queue_id, queue_size, queue_dir, db_options);
         queue = slaq->queue;
     }
@@ -778,6 +777,7 @@ void Dict::PrintStats(std::ostream& out_stream) const
     mm.PrintStats(out_stream);
 
     kv_file->PrintStats(out_stream);
+    qmgr.PrintStats(out_stream, header);
 
 #ifdef __DEBUG__
     out_stream << "Size of tracking buffer: " << buffer_map.size() << std::endl;
