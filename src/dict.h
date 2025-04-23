@@ -129,9 +129,13 @@ private:
     int SHMQ_PrepareSlot(AsyncNode* node_ptr);
     AsyncNode* SHMQ_AcquireSlot(int& err) const;
     int ReadLowerBound(EdgePtrs& edge_ptrs, MBData& data, std::string* bound_key, int le_edge_key) const;
-    int ReadDataFromBoundEdge(bool use_curr_edge, EdgePtrs& edge_ptrs,
-        EdgePtrs& bound_edge_ptrs, MBData& data, int root_key, std::string* bound_key, int le_edge_key) const;
+    int ReadBoundFromRootEdge(EdgePtrs& edge_ptrs, MBData& data, int root_key, std::string* bound_key) const;
     void AppendEdgeKey(std::string* key, int edge_key, const EdgePtrs& edge_ptrs) const;
+    int TraverseToLowerBound(
+        const uint8_t*& p, int& len,
+        EdgePtrs& edge_ptrs, MBData& data, EdgePtrs& bound_edge_ptrs,
+        const uint8_t* key, uint8_t* node_buff, std::string* bound_key,
+        int& le_match_len, int& le_edge_key, bool& use_curr_edge) const;
 
     // DB access permission
     int options;

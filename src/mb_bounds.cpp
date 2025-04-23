@@ -44,6 +44,7 @@ int Dict::ReadLowerBound(EdgePtrs& edge_ptrs, MBData& data, std::string* bound_k
 
     rval = MBError::SUCCESS;
     int max_key = -1;
+    // loop until we find the leaf node
     while (!(edge_ptrs.flag_ptr[0] & EDGE_FLAG_DATA_OFF)) {
         if (bound_key != nullptr && le_edge_key >= 0) {
             AppendEdgeKey(bound_key, le_edge_key, edge_ptrs);
@@ -66,34 +67,27 @@ int Dict::ReadLowerBound(EdgePtrs& edge_ptrs, MBData& data, std::string* bound_k
     return rval;
 }
 
-int Dict::ReadDataFromBoundEdge(bool use_curr_edge, EdgePtrs& edge_ptrs,
-    EdgePtrs& bound_edge_ptrs, MBData& data,
-    int root_key, std::string* bound_key, int le_edge_key) const
+int Dict::ReadBoundFromRootEdge(EdgePtrs& edge_ptrs, MBData& data,
+    int root_key, std::string* bound_key) const
 {
     int rval = MBError::NOT_EXIST;
-    if (use_curr_edge) {
-        data.options &= ~CONSTS::OPTION_INTERNAL_NODE_BOUND;
-        rval = ReadLowerBound(edge_ptrs, data, bound_key, le_edge_key);
-    } else if (bound_edge_ptrs.curr_edge_index >= 0) {
-        InitTempEdgePtrs(bound_edge_ptrs);
-        rval = ReadLowerBound(bound_edge_ptrs, data, bound_key, le_edge_key);
-    } else {
-        int ret;
-        // check for root edge (edge_ptrs still points to root edge)
-        for (int i = root_key - 1; i >= 0; i--) {
-            ret = mm.GetRootEdge(0, i, edge_ptrs);
-            if (ret != MBError::SUCCESS)
-                return ret;
-            if (edge_ptrs.len_ptr[0] != 0) {
-                rval = ReadLowerBound(edge_ptrs, data, bound_key, i);
-                break;
-            }
+
+    int ret;
+    // Check for root edge (edge_ptrs still points to root edge)
+    for (int i = root_key - 1; i >= 0; i--) {
+        ret = mm.GetRootEdge(0, i, edge_ptrs);
+        if (ret != MBError::SUCCESS)
+            return ret;
+        if (edge_ptrs.len_ptr[0] != 0) {
+            rval = ReadLowerBound(edge_ptrs, data, bound_key, i);
+            break;
         }
     }
 
     return rval;
 }
 
+// Finds the lower bound for a given key in the dictionary.
 int Dict::FindBound(size_t root_off, const uint8_t* key, int len, MBData& data, std::string* bound_key)
 {
     EdgePtrs& edge_ptrs = data.edge_ptrs;
@@ -102,24 +96,24 @@ int Dict::FindBound(size_t root_off, const uint8_t* key, int len, MBData& data, 
     bool use_curr_edge = false;
     int root_key = key[0];
 
-    int rval = mm.GetRootEdge(root_off, key[0], edge_ptrs);
+    int rval = mm.GetRootEdge(root_off, root_key, edge_ptrs);
     if (rval != MBError::SUCCESS)
         return rval;
     if (edge_ptrs.len_ptr[0] == 0) {
-        return ReadDataFromBoundEdge(use_curr_edge, edge_ptrs, bound_edge_ptrs,
-            data, root_key, bound_key, -1);
+        return ReadBoundFromRootEdge(edge_ptrs, data, root_key, bound_key);
     }
 
-    int key_cmp;
-    const uint8_t* key_buff;
-    uint8_t* node_buff = data.node_buff;
     const uint8_t* p = key;
+    const uint8_t* key_buff = nullptr;
+    uint8_t* node_buff = data.node_buff;
     int edge_len = edge_ptrs.len_ptr[0];
     int edge_len_m1 = edge_len - 1;
+
     rval = MBError::NOT_EXIST;
+
     if (edge_len > LOCAL_EDGE_LEN) {
-        size_t edge_str_off_lf = Get5BInteger(edge_ptrs.ptr);
-        if (mm.ReadData(node_buff, edge_len_m1, edge_str_off_lf) != edge_len_m1)
+        size_t edge_str_off = Get5BInteger(edge_ptrs.ptr);
+        if (mm.ReadData(node_buff, edge_len_m1, edge_str_off) != edge_len_m1)
             return MBError::READ_ERROR;
         key_buff = node_buff;
     } else {
@@ -128,90 +122,34 @@ int Dict::FindBound(size_t root_off, const uint8_t* key, int len, MBData& data, 
 
     int le_match_len = 0;
     int le_edge_key = -1;
+
     if (edge_len < len) {
-        key_cmp = memcmp(key_buff, p + 1, edge_len_m1);
+        int key_cmp = memcmp(key_buff, p + 1, edge_len_m1);
         if (key_cmp != 0) {
             if (key_cmp < 0) {
                 use_curr_edge = true;
-                if (bound_key != nullptr) {
-                    bound_key->push_back((char)key[0]);
-                    bound_key->append((char*)key_buff, edge_len_m1);
+                if (bound_key) {
+                    bound_key->push_back(static_cast<char>(key[0]));
+                    bound_key->append(reinterpret_cast<const char*>(key_buff), edge_len_m1);
                 }
             }
-            return ReadDataFromBoundEdge(use_curr_edge, edge_ptrs, bound_edge_ptrs, data, root_key, bound_key, -1);
+            return ReadBoundFromRootEdge(edge_ptrs, data, root_key, bound_key);
         }
 
         len -= edge_len;
         p += edge_len;
         data.match_len += edge_len;
-        while (true) {
-            int new_le_key = -1;
-            rval = mm.NextLowerBoundEdge(p, len, edge_ptrs, node_buff, data, bound_edge_ptrs, new_le_key);
-            if (bound_key != nullptr && new_le_key >= 0) {
-                le_match_len = data.match_len;
-                le_edge_key = new_le_key;
-            }
-            if (rval != MBError::SUCCESS)
-                break;
 
-            edge_len = edge_ptrs.len_ptr[0];
-            edge_len_m1 = edge_len - 1;
-            // match edge string
-            if (edge_len > LOCAL_EDGE_LEN) {
-                size_t edge_str_off_lf = Get5BInteger(edge_ptrs.ptr);
-                if (mm.ReadData(node_buff, edge_len_m1, edge_str_off_lf) != edge_len_m1) {
-                    rval = MBError::READ_ERROR;
-                    break;
-                }
-                key_buff = node_buff;
-            } else {
-                key_buff = edge_ptrs.ptr;
-            }
-
-            if (edge_len_m1 > 0) {
-                key_cmp = memcmp(key_buff, p + 1, edge_len_m1);
-                if (key_cmp != 0) {
-                    if (key_cmp < 0) {
-                        use_curr_edge = true;
-                        if (bound_key != nullptr) {
-                            bound_key->append((char*)key, data.match_len + 1);
-                            bound_key->append((char*)key_buff, edge_len_m1);
-                        }
-                    }
-                    rval = MBError::NOT_EXIST;
-                    break;
-                }
-            } else if (edge_len_m1 < 0) {
-                rval = MBError::NOT_EXIST;
-                break;
-            }
-
-            len -= edge_len;
-            if (len <= 0) {
-                rval = ReadDataFromEdge(data, edge_ptrs);
-                if (rval == MBError::SUCCESS)
-                    data.match_len += edge_len;
-                break;
-            } else {
-                if (edge_ptrs.flag_ptr[0] & EDGE_FLAG_DATA_OFF) {
-                    // Reach a leaf node and no match found
-                    // This must be the lower bound.
-                    rval = ReadDataFromEdge(data, edge_ptrs);
-                    if (rval == MBError::SUCCESS)
-                        data.match_len += edge_len;
-                    break;
-                }
-            }
-            p += edge_len;
-            data.match_len += edge_len;
-        }
+        rval = TraverseToLowerBound(p, len, edge_ptrs, data, bound_edge_ptrs,
+            key, node_buff, bound_key, le_match_len,
+            le_edge_key, use_curr_edge);
     } else if (edge_len == len) {
-        if (len > 1 && (key_cmp = memcmp(key_buff, key + 1, len - 1)) != 0) {
-            if (key_cmp < 0) {
+        if (len > 1 && memcmp(key_buff, key + 1, len - 1) != 0) {
+            if (memcmp(key_buff, key + 1, len - 1) < 0) {
                 use_curr_edge = true;
-                if (bound_key != nullptr) {
-                    bound_key->append((char*)key, data.match_len + 1);
-                    bound_key->append((char*)key_buff, len - 1);
+                if (bound_key) {
+                    bound_key->append(reinterpret_cast<const char*>(key), data.match_len + 1);
+                    bound_key->append(reinterpret_cast<const char*>(key_buff), len - 1);
                 }
             }
         } else {
@@ -222,24 +160,98 @@ int Dict::FindBound(size_t root_off, const uint8_t* key, int len, MBData& data, 
     }
 
     if (rval == MBError::NOT_EXIST) {
-        if (bound_key != nullptr) {
-            if (!use_curr_edge) {
+        if (use_curr_edge) {
+            data.options &= ~CONSTS::OPTION_INTERNAL_NODE_BOUND;
+            rval = ReadLowerBound(edge_ptrs, data, bound_key, -1);
+        } else {
+            if (bound_key != nullptr) {
                 bound_key->append((char*)key, le_match_len);
                 if (data.options & CONSTS::OPTION_INTERNAL_NODE_BOUND) {
                     le_edge_key = -1;
                 }
+            }
+            if (bound_edge_ptrs.curr_edge_index >= 0) {
+                InitTempEdgePtrs(bound_edge_ptrs);
+                rval = ReadLowerBound(bound_edge_ptrs, data, bound_key, le_edge_key);
             } else {
-                le_edge_key = -1;
+                rval = ReadBoundFromRootEdge(edge_ptrs, data, root_key, bound_key);
             }
         }
-        rval = ReadDataFromBoundEdge(use_curr_edge, edge_ptrs, bound_edge_ptrs, data, root_key, bound_key, le_edge_key);
-    } else if (rval == MBError::SUCCESS) {
-        if (bound_key != nullptr) {
-            bound_key->append((char*)key, data.match_len);
-        }
+    } else if (rval == MBError::SUCCESS && bound_key) {
+        bound_key->append(reinterpret_cast<const char*>(key), data.match_len);
     }
 
     return rval;
+}
+
+// Traverses the trie to locate the lower bound node for a given key segment.
+int Dict::TraverseToLowerBound(
+    const uint8_t*& p, int& len,
+    EdgePtrs& edge_ptrs, MBData& data, EdgePtrs& bound_edge_ptrs,
+    const uint8_t* key, uint8_t* node_buff, std::string* bound_key,
+    int& le_match_len, int& le_edge_key, bool& use_curr_edge) const
+{
+    const uint8_t* key_buff = nullptr;
+
+    while (true) {
+        int new_le_key = -1;
+
+        int rval = mm.NextLowerBoundEdge(p, len, edge_ptrs, node_buff, data, bound_edge_ptrs, new_le_key);
+
+        if (bound_key && new_le_key >= 0) {
+            le_match_len = data.match_len;
+            le_edge_key = new_le_key;
+        }
+
+        if (rval != MBError::SUCCESS)
+            return rval;
+
+        int edge_len = edge_ptrs.len_ptr[0];
+        int edge_len_m1 = edge_len - 1;
+
+        if (edge_len > LOCAL_EDGE_LEN) {
+            size_t edge_str_off = Get5BInteger(edge_ptrs.ptr);
+            if (mm.ReadData(node_buff, edge_len_m1, edge_str_off) != edge_len_m1)
+                return MBError::READ_ERROR;
+            key_buff = node_buff;
+        } else {
+            key_buff = edge_ptrs.ptr;
+        }
+
+        if (edge_len_m1 > 0) {
+            int cmp = memcmp(key_buff, p + 1, edge_len_m1);
+            if (cmp != 0) {
+                if (cmp < 0) {
+                    use_curr_edge = true;
+                    if (bound_key) {
+                        bound_key->append(reinterpret_cast<const char*>(key), data.match_len + 1);
+                        bound_key->append(reinterpret_cast<const char*>(key_buff), edge_len_m1);
+                    }
+                }
+                return MBError::NOT_EXIST;
+            }
+        } else if (edge_len_m1 < 0) {
+            return MBError::NOT_EXIST;
+        }
+
+        len -= edge_len;
+        if (len <= 0) {
+            rval = ReadDataFromEdge(data, edge_ptrs);
+            if (rval == MBError::SUCCESS)
+                data.match_len += edge_len;
+            return rval;
+        }
+
+        if (edge_ptrs.flag_ptr[0] & EDGE_FLAG_DATA_OFF) {
+            rval = ReadDataFromEdge(data, edge_ptrs);
+            if (rval == MBError::SUCCESS)
+                data.match_len += edge_len;
+            return rval;
+        }
+
+        p += edge_len;
+        data.match_len += edge_len;
+    }
 }
 
 }
