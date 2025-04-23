@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2017 Cisco Inc.
+ * Copyright (C) 2025 Cisco Inc.
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU General Public License, version 2,
@@ -19,11 +19,13 @@
 // A mabain command-line client
 
 #include <assert.h>
+#include <ctype.h>
 #include <fstream>
 #include <iostream>
 #include <readline/history.h>
 #include <readline/readline.h>
 #include <signal.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <string>
@@ -207,6 +209,37 @@ static int parse_args(const std::string& arg_str,
     return 0;
 }
 
+static void print_with_bin_encoding(const unsigned char* data, int len)
+{
+    int in_ascii = 0;
+    for (int i = 0; i < len; ++i) {
+        if (isprint(data[i]) && data[i] < 128) {
+            if (!in_ascii) {
+                putchar('"');
+                in_ascii = 1;
+            }
+            putchar(data[i]);
+        } else {
+            if (in_ascii) {
+                putchar('"');
+                in_ascii = 0;
+            }
+            printf("bin(0x%02X)", data[i]);
+        }
+    }
+    if (in_ascii) {
+        putchar('"');
+    }
+}
+
+static void display_key_value(const unsigned char* key, int klen, const unsigned char* value, int vlen)
+{
+    print_with_bin_encoding(key, klen);
+    printf(": ");
+    print_with_bin_encoding(value, vlen);
+    putchar('\n');
+}
+
 static int parse_command(std::string& cmd,
     std::string& key,
     std::string& value,
@@ -336,7 +369,7 @@ static void display_all_kvs(DB* db, const std::string& prefix)
     int count = 0;
     for (DB::iterator iter = db->begin(prefix); iter != db->end(); ++iter) {
         count++;
-        std::cout << iter.key << ": " << std::string((char*)iter.value.buff, iter.value.data_len) << "\n";
+        display_key_value((const unsigned char*)iter.key.data(), iter.key.size(), iter.value.buff, iter.value.data_len);
         if (count % ENTRY_PER_PAGE == 0) {
             std::string show_more;
             std::cout << "Press \'y\' for displaying more: ";
@@ -347,7 +380,13 @@ static void display_all_kvs(DB* db, const std::string& prefix)
     }
 }
 
-static void display_output(const MBData& mbd, bool hex_output, bool prefix)
+// Helper function to print a string enclosed in double quotes
+void print_quoted_string(const std::string& str)
+{
+    std::cout << "\"" << str << "\"";
+}
+
+static void display_output(const std::string& key, const MBData& mbd, bool hex_output, bool prefix)
 {
     if (prefix)
         std::cout << "key length matched: " << mbd.match_len << "\n";
@@ -363,7 +402,7 @@ static void display_output(const MBData& mbd, bool hex_output, bool prefix)
         else
             std::cout << hex_buff << "\n";
     } else {
-        std::cout << std::string((char*)mbd.buff, mbd.data_len) << "\n";
+        display_key_value((const unsigned char*)key.data(), key.size(), mbd.buff, mbd.data_len);
     }
 }
 
@@ -388,7 +427,7 @@ static int RunCommand(int mode, DB* db, int cmd_id, const std::string& key,
     case COMMAND_FIND:
         rval = db->Find(key, mbd);
         if (rval == MBError::SUCCESS)
-            display_output(mbd, hex_output, false);
+            display_output(key, mbd, hex_output, false);
         else
             std::cout << MBError::get_error_str(rval) << "\n";
         break;
@@ -397,17 +436,18 @@ static int RunCommand(int mode, DB* db, int cmd_id, const std::string& key,
     case COMMAND_FIND_LPREFIX:
         rval = db->FindLongestPrefix(key, mbd);
         if (rval == MBError::SUCCESS)
-            display_output(mbd, hex_output, true);
+            display_output(key, mbd, hex_output, true);
         else
             std::cout << MBError::get_error_str(rval) << "\n";
         break;
-    case COMMAND_FIND_LOWER_BOUND:
-        rval = db->FindLowerBound(key, mbd);
+    case COMMAND_FIND_LOWER_BOUND: {
+        std::string bound_key;
+        rval = db->FindLowerBound(key, mbd, &bound_key);
         if (rval == MBError::SUCCESS)
-            display_output(mbd, false, false);
+            display_output(bound_key, mbd, false, false);
         else
             std::cout << MBError::get_error_str(rval) << "\n";
-        break;
+    } break;
     case COMMAND_DELETE:
         rval = db->Remove(key);
         std::cout << MBError::get_error_str(rval) << "\n";
@@ -576,8 +616,8 @@ int main(int argc, char* argv[])
     int mode = 0;
     std::string query_cmd = "";
     std::string script_file = "";
-    int64_t index_blk_size = 64LL * 1024 * 1024;
-    int64_t data_blk_size = 64LL * 1024 * 1024;
+    int64_t index_blk_size = 16LL * 1024 * 1024;
+    int64_t data_blk_size = 16LL * 1024 * 1024;
     int64_t lru_bucket_size = 500;
 
     for (int i = 1; i < argc; i++) {
