@@ -60,7 +60,7 @@ public:
     // Find value by key using longest prefix match
     int FindPrefix(const uint8_t* key, int len, MBData& data);
 
-    int FindBound(size_t root_off, const uint8_t* key, int len, MBData& data);
+    int FindBound(size_t root_off, const uint8_t* key, int len, MBData& data, std::string* bound_key);
 
     // Delete entry by key
     int Remove(const uint8_t* key, int len);
@@ -128,10 +128,9 @@ private:
     int ReadNodeMatch(size_t node_off, int& match, MBData& data) const;
     int SHMQ_PrepareSlot(AsyncNode* node_ptr);
     AsyncNode* SHMQ_AcquireSlot(int& err) const;
-    int ReadLowerBound(EdgePtrs& edge_ptrs, MBData& data) const;
-    int ReadUpperBound(EdgePtrs& edge_ptrs, MBData& data) const;
+    int ReadLowerBound(EdgePtrs& edge_ptrs, MBData& data, std::string* bound_key, int le_edge_key) const;
     int ReadDataFromBoundEdge(bool use_curr_edge, EdgePtrs& edge_ptrs,
-        EdgePtrs& bound_edge_ptrs, MBData& data, int root_key) const;
+        EdgePtrs& bound_edge_ptrs, MBData& data, int root_key, std::string* bound_key, int le_edge_key) const;
 
     // DB access permission
     int options;

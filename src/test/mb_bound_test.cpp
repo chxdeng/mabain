@@ -38,14 +38,17 @@ static void InsertRandom(map<string, int>& m, DB* db, int num, int type)
     }
 }
 
+static int bound_key_err = 0;
 static void find_test(map<string, int>& m, DB* db, int num, int* test_key, int type)
 {
     MBData mbd;
     string kv;
+    std::string bound_key;
     TestKey tkey_sha1(MABAIN_TEST_KEY_TYPE_SHA_128);
     TestKey tkey_sha2(MABAIN_TEST_KEY_TYPE_SHA_256);
     for (int i = 0; i < num; i++) {
         mbd.Clear();
+        bound_key.clear();
 
         switch (type) {
         case 0:
@@ -67,12 +70,19 @@ static void find_test(map<string, int>& m, DB* db, int num, int* test_key, int t
             continue;
         if (lower->first != kv)
             lower--;
-        int rval = db->FindLowerBound(kv, mbd);
+        int rval = db->FindLowerBound(kv, mbd, &bound_key);
         if (lower != m.end()) {
             if (rval != MBError::SUCCESS || lower->first != string((char*)mbd.buff, mbd.data_len)) {
                 cout << test_key[i] << " " << lower->first << " "
                      << string((char*)mbd.buff, mbd.data_len) << ": " << rval << "\n";
                 abort();
+            }
+            // compare the constructed bound key in mabain
+            if (bound_key != lower->first) {
+                cout << "search key: " << test_key[i] << ", " << kv << ", lower->first: " << lower->first << ", bound key: "
+                     << bound_key << ", value: " << string((char*)mbd.buff, mbd.data_len) << std::endl;
+                abort();
+                bound_key_err++;
             }
         }
     }
@@ -108,6 +118,7 @@ static void find_test(map<string, int>& m, DB* db, int num, int* test_key, int t
 
     gettimeofday(&start, nullptr);
     for (int i = 0; i < num; i++) {
+        mbd.Clear();
         switch (type) {
         case 0:
             kv = to_string(test_key[i]);
@@ -123,11 +134,12 @@ static void find_test(map<string, int>& m, DB* db, int num, int* test_key, int t
             break;
         }
 
-        db->FindLowerBound(kv, mbd);
+        db->FindLowerBound(kv, mbd, nullptr);
     }
     gettimeofday(&stop, nullptr);
     timediff = (stop.tv_sec - start.tv_sec) * 1000000 + (stop.tv_usec - start.tv_usec);
-    std::cout << "map ===== " << timediff * 1.0 / num << " micro seconds per lookup\n";
+    std::cout << "mabain ===== " << timediff * 1.0 / num << " micro seconds per lookup\n";
+    std::cout << "bound key error count: " << bound_key_err << "\n";
 }
 
 int main()

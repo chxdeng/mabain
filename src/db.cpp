@@ -464,12 +464,12 @@ int DB::Find(const std::string& key, MBData& mdata) const
     return Find(key.data(), key.size(), mdata);
 }
 
-int DB::FindLowerBound(const std::string& key, MBData& data) const
+int DB::FindLowerBound(const std::string& key, MBData& data, std::string* bound_key) const
 {
-    return FindLowerBound(key.data(), key.size(), data);
+    return FindLowerBound(key.data(), key.size(), data, bound_key);
 }
 
-int DB::FindLowerBound(const char* key, int len, MBData& data) const
+int DB::FindLowerBound(const char* key, int len, MBData& data, std::string* bound_key) const
 {
     if (key == NULL)
         return MBError::INVALID_ARG;
@@ -480,7 +480,9 @@ int DB::FindLowerBound(const char* key, int len, MBData& data) const
         return MBError::NOT_ALLOWED;
 
     data.options = 0;
-    return dict->FindBound(0, reinterpret_cast<const uint8_t*>(key), len, data);
+    if (bound_key != nullptr)
+        bound_key->reserve(CONSTS::MAX_KEY_LENGHTH);
+    return dict->FindBound(0, reinterpret_cast<const uint8_t*>(key), len, data, bound_key);
 }
 
 // Find the longest prefix match

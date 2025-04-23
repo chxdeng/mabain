@@ -78,8 +78,8 @@ public:
     int NextEdge(const uint8_t* key, EdgePtrs& edge_ptrs,
         uint8_t* tmp_buff, MBData& mbdata) const;
     int NextLowerBoundEdge(const uint8_t* key, int len, EdgePtrs& edge_ptrs,
-        uint8_t* node_buff, MBData& mbdata, EdgePtrs& less_edge_ptrs) const;
-    int NextMaxEdge(EdgePtrs& edge_ptrs, uint8_t* node_buff, MBData& mbdata) const;
+        uint8_t* node_buff, MBData& mbdata, EdgePtrs& less_edge_ptrs, int& le_edge_key) const;
+    int NextMaxEdge(EdgePtrs& edge_ptrs, uint8_t* node_buff, MBData& mbdata, int& max_key) const;
     int RemoveEdgeByIndex(const EdgePtrs& edge_ptrs, MBData& data);
     void InitRootNode();
     inline void WriteEdge(const EdgePtrs& edge_ptrs) const;
