@@ -20,6 +20,21 @@
 
 namespace mabain {
 
+void Dict::AppendEdgeKey(std::string* key, int edge_key, const EdgePtrs& edge_ptrs) const
+{
+    key->push_back((char)edge_key);
+    int edge_len_m1 = edge_ptrs.len_ptr[0] - 1;
+    if (edge_len_m1 + 1 > LOCAL_EDGE_LEN) {
+        size_t edge_str_off = Get5BInteger(edge_ptrs.ptr);
+        uint8_t* edge_str_buff = mm.GetShmPtr(edge_str_off, edge_len_m1);
+        if (edge_str_buff != nullptr) {
+            key->append((const char*)edge_str_buff, edge_len_m1);
+        }
+    } else if (edge_len_m1 > 0) {
+        key->append(reinterpret_cast<const char*>(edge_ptrs.ptr), edge_len_m1);
+    }
+}
+
 int Dict::ReadLowerBound(EdgePtrs& edge_ptrs, MBData& data, std::string* bound_key, int le_edge_key) const
 {
     int rval;
@@ -31,21 +46,8 @@ int Dict::ReadLowerBound(EdgePtrs& edge_ptrs, MBData& data, std::string* bound_k
     int max_key = -1;
     while (!(edge_ptrs.flag_ptr[0] & EDGE_FLAG_DATA_OFF)) {
         if (bound_key != nullptr && le_edge_key >= 0) {
-            bound_key->push_back((char)le_edge_key);
+            AppendEdgeKey(bound_key, le_edge_key, edge_ptrs);
             le_edge_key = -1;
-
-            int edge_len_m1 = edge_ptrs.len_ptr[0] - 1;
-            if (edge_len_m1 + 1 > LOCAL_EDGE_LEN) {
-                size_t edge_str_off = Get5BInteger(edge_ptrs.ptr);
-                uint8_t* edge_str_buff = mm.GetShmPtr(edge_str_off, edge_len_m1);
-                if (edge_str_buff != nullptr) {
-                    bound_key->append((char*)edge_str_buff, edge_len_m1);
-                } else {
-                    return MBError::READ_ERROR;
-                }
-            } else if (edge_len_m1 > 0) {
-                bound_key->append(reinterpret_cast<const char*>(edge_ptrs.ptr), edge_len_m1);
-            }
         }
         max_key = -1;
         // Read the next maximum edge
@@ -56,21 +58,7 @@ int Dict::ReadLowerBound(EdgePtrs& edge_ptrs, MBData& data, std::string* bound_k
     }
 
     if (bound_key != nullptr && le_edge_key >= 0 && (edge_ptrs.flag_ptr[0] & EDGE_FLAG_DATA_OFF)) {
-        bound_key->push_back((char)le_edge_key);
-        if (true) {
-            int edge_len_m1 = edge_ptrs.len_ptr[0] - 1;
-            if (edge_len_m1 + 1 > LOCAL_EDGE_LEN) {
-                size_t edge_str_off = Get5BInteger(edge_ptrs.ptr);
-                uint8_t* edge_str_buff = mm.GetShmPtr(edge_str_off, edge_len_m1);
-                if (edge_str_buff != nullptr) {
-                    bound_key->append((char*)edge_str_buff, edge_len_m1);
-                } else {
-                    return MBError::READ_ERROR;
-                }
-            } else if (edge_len_m1 > 0) {
-                bound_key->append(reinterpret_cast<const char*>(edge_ptrs.ptr), edge_len_m1);
-            }
-        }
+        AppendEdgeKey(bound_key, le_edge_key, edge_ptrs);
     }
 
     if (rval == MBError::SUCCESS || rval == MBError::NOT_EXIST)
@@ -237,8 +225,7 @@ int Dict::FindBound(size_t root_off, const uint8_t* key, int len, MBData& data, 
         if (bound_key != nullptr) {
             if (!use_curr_edge) {
                 bound_key->append((char*)key, le_match_len);
-                if (le_edge_key >= 0 && !(data.options & CONSTS::OPTION_INTERNAL_NODE_BOUND)) {
-                } else {
+                if (data.options & CONSTS::OPTION_INTERNAL_NODE_BOUND) {
                     le_edge_key = -1;
                 }
             } else {
