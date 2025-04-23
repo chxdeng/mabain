@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2017 Cisco Inc.
+ * Copyright (C) 2025 Cisco Inc.
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU General Public License, version 2,
@@ -20,6 +20,7 @@
 #define __EXPR_PARSER_H__
 
 #include <string>
+#include <cstdint>
 
 // A simple mabain client expression LL parser
 class ExprParser {

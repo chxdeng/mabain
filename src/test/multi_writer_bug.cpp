@@ -51,8 +51,8 @@ DB* OpenDB(bool is_writer, const char* db_dir)
     reader_config.num_entry_per_bucket = 500;
     db = new DB(reader_config);
     if (!db->is_open()) {
-        delete db;
         std::cerr << "Failed to open mabain db reader: " << db->StatusStr() << "\n";
+        delete db;
         exit(1);
     }
     return db;

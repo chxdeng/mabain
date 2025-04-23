@@ -915,7 +915,7 @@ int DictMem::ReadNode(size_t& node_off, EdgePtrs& edge_ptrs,
     return MBError::SUCCESS;
 }
 
-int DictMem::NextMaxEdge(EdgePtrs& edge_ptrs, uint8_t* node_buff, MBData& mbdata) const
+int DictMem::NextMaxEdge(EdgePtrs& edge_ptrs, uint8_t* node_buff, MBData& mbdata, int& max_key) const
 {
     size_t node_off;
     int nt = -1;
@@ -931,11 +931,11 @@ int DictMem::NextMaxEdge(EdgePtrs& edge_ptrs, uint8_t* node_buff, MBData& mbdata
     }
 
     int curr_max_index = 0;
-    int curr_max_key = (int)node_buff[0 + NODE_EDGE_KEY_FIRST];
+    max_key = (int)node_buff[0 + NODE_EDGE_KEY_FIRST];
     for (int i = 1; i < nt; i++) {
         auto key = (int)node_buff[i + NODE_EDGE_KEY_FIRST];
-        if (key > curr_max_key) {
-            curr_max_key = key;
+        if (key > max_key) {
+            max_key = key;
             curr_max_index = i;
         }
     }
@@ -951,7 +951,8 @@ int DictMem::NextLowerBoundEdge(const uint8_t* key, int len,
     EdgePtrs& edge_ptrs,
     uint8_t* node_buff,
     MBData& mbdata,
-    EdgePtrs& less_edge_ptrs) const
+    EdgePtrs& less_edge_ptrs,
+    int& le_edge_key) const
 {
     size_t node_off;
     int nt = -1;
@@ -959,13 +960,13 @@ int DictMem::NextLowerBoundEdge(const uint8_t* key, int len,
     if (ret != MBError::SUCCESS)
         return ret;
 
+    bool le_node = false;
     if (node_buff[0] & FLAG_NODE_MATCH) {
         mbdata.options |= CONSTS::OPTION_INTERNAL_NODE_BOUND;
-        less_edge_ptrs.curr_edge_index = 0;
         less_edge_ptrs.offset = edge_ptrs.offset;
+        le_node = true;
     }
 
-    int le_edge_key = -1;
     int le_edge_index = -1;
     int byte_read;
     ret = MBError::NOT_EXIST;
@@ -988,6 +989,9 @@ int DictMem::NextLowerBoundEdge(const uint8_t* key, int len,
         less_edge_ptrs.curr_edge_index = le_edge_index;
         less_edge_ptrs.offset = node_off + NODE_EDGE_KEY_FIRST + nt
             + le_edge_index * EDGE_SIZE;
+    } else if (le_node) {
+        less_edge_ptrs.curr_edge_index = 0;
+        le_edge_key = key[0];
     }
 
     return ret;

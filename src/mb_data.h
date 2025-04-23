@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2017 Cisco Inc.
+ * Copyright (C) 2025 Cisco Inc.
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU General Public License, version 2,
@@ -30,8 +30,8 @@
 #define DB_ITER_STATE_INIT 0x00
 #define DB_ITER_STATE_MORE 0x01
 #define DB_ITER_STATE_DONE 0x02
-#define DATA_BLOCK_SIZE_DEFAULT 64LLU * 1024 * 1024 // 64M
-#define INDEX_BLOCK_SIZE_DEFAULT 64LLU * 1024 * 1024 // 64M
+#define DATA_BLOCK_SIZE_DEFAULT 16LLU * 1024 * 1024 // 16M
+#define INDEX_BLOCK_SIZE_DEFAULT 16LLU * 1024 * 1024 // 16M
 #define BLOCK_SIZE_ALIGN 4 * 1024 * 1024 // 4K
 #define BUFFER_TYPE_NONE 0
 #define BUFFER_TYPE_EDGE_STR 0x01
