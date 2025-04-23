@@ -38,6 +38,17 @@ typedef struct _AsyncNode AsyncNode;
 struct _shm_lock_and_queue;
 typedef struct _shm_lock_and_queue shm_lock_and_queue;
 
+// bound search
+struct BoundSearchState {
+    const uint8_t* key;
+    uint8_t* node_buff;
+    std::string* bound_key;
+
+    int le_match_len = 0;
+    int le_edge_key = -1;
+    bool use_curr_edge = false;
+};
+
 // dictionary class
 // This is the work horse class for basic db operations (add, find and remove).
 class Dict : public DRMBase {
@@ -131,11 +142,8 @@ private:
     int ReadLowerBound(EdgePtrs& edge_ptrs, MBData& data, std::string* bound_key, int le_edge_key) const;
     int ReadBoundFromRootEdge(EdgePtrs& edge_ptrs, MBData& data, int root_key, std::string* bound_key) const;
     void AppendEdgeKey(std::string* key, int edge_key, const EdgePtrs& edge_ptrs) const;
-    int TraverseToLowerBound(
-        const uint8_t*& p, int& len,
-        EdgePtrs& edge_ptrs, MBData& data, EdgePtrs& bound_edge_ptrs,
-        const uint8_t* key, uint8_t* node_buff, std::string* bound_key,
-        int& le_match_len, int& le_edge_key, bool& use_curr_edge) const;
+    int TraverseToLowerBound(const uint8_t* key, int len, EdgePtrs& edge_ptrs, MBData& data,
+        EdgePtrs& bound_edge_ptrs, BoundSearchState& state) const;
 
     // DB access permission
     int options;
