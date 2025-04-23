@@ -4,13 +4,11 @@ endif
 
 all: db_comp_ldb db_comp_lmdb db_comp_mb db_comp_kc
 
-CPP=/usr/bin/aarch64-wrs-linux/aarch64-wrs-linux-g++
+CPP=g++
 
 CFLAGS = -O2 -g -std=c++17 -Wall -I/usr/local/include -I$(MABAIN_INSTALL_DIR)/include
-CFLAGS += --sysroot=/opt/aarch64-wrs-linux-sysroot
 
 LDFLAGS = -lpthread -lcrypto -L$(MABAIN_INSTALL_DIR)/lib -lleveldb -lkyotocabinet -lmabain -llmdb
-LDFLAGS += --sysroot=/opt/aarch64-wrs-linux-sysroot
 
 db_comp_ldb: db_comp.cpp
 	$(CPP) $(CFLAGS) -DLEVEL_DB -o db_comp_ldb db_comp.cpp $(LDFLAGS)
