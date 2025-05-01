@@ -149,7 +149,21 @@ int main()
 {
     int num = 1000000;
     map<string, string> m;
-    DB* db = new DB("/var/tmp/mabain_test", CONSTS::WriterOptions(), 9999999999LL, 9999999999LL);
+
+    mabain::MBConfig mconf;
+    memset(&mconf, 0, sizeof(mconf));
+    std::string mbdir_tmp = "/var/tmp/mabain_test/";
+    mconf.mbdir = mbdir_tmp.c_str();
+    mconf.options = mabain::CONSTS::WriterOptions();
+    mconf.options |= mabain::CONSTS::OPTION_JEMALLOC;
+    mconf.block_size_index = 32 * 1024 * 1024;
+    mconf.block_size_data = 32 * 1024 * 1024;
+    mconf.memcap_index = 10 * mconf.block_size_index;
+    mconf.memcap_data = 10 * mconf.block_size_data;
+    mconf.max_num_index_block = 10;
+    mconf.max_num_data_block = 10;
+    DB* db = new DB(mconf);
+
     int* test_key = new int[num];
     int mod_n = num * 10;
     db->RemoveAll();

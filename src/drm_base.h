@@ -82,7 +82,7 @@ typedef struct _IndexHeader {
     LockFreeShmData lock_free;
 
     // read/write lock
-    char padding[56]; //pthread_rwlock_t mb_rw_lock;
+    char padding[56]; // pthread_rwlock_t mb_rw_lock;
 
     // block size
     uint32_t index_block_size;
@@ -208,7 +208,7 @@ inline void DRMBase::WriteData(const uint8_t* buff, unsigned len, size_t offset)
         kv_file->MemWrite(buff, len, offset);
     } else {
         if (kv_file->RandomWrite(buff, len, offset) != len)
-            throw(int) MBError::WRITE_ERROR;
+            throw (int)MBError::WRITE_ERROR;
     }
 }
 

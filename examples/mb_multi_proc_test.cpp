@@ -50,7 +50,7 @@ static int test_type = 0;
 static int64_t memcap_index = 256 * 1024 * 1024LL;
 static int64_t memcap_data = 256 * 1024 * 1024LL;
 static int key_type = KEY_TYPE_SHA256;
-//static int key_type = KEY_TYPE_INT;
+// static int key_type = KEY_TYPE_INT;
 static std::map<std::string, int> checked;
 
 static const char* get_sha256_str(int key);
@@ -157,7 +157,7 @@ static void RemoveHalf(DB& db)
     }
 }
 
-//Writer process
+// Writer process
 static void Writer(int id)
 {
     DB db(mb_dir, CONSTS::WriterOptions(), memcap_index, memcap_data);
@@ -223,7 +223,7 @@ static void Writer(int id)
     exit(0);
 }
 
-//Reader process
+// Reader process
 static void Reader(int id)
 {
     DB db(mb_dir, CONSTS::ReaderOptions(), memcap_index, memcap_data);
@@ -449,9 +449,9 @@ int main(int argc, char* argv[])
                         stop_processing = 1;
                         struct timeval stop_tm;
                         gettimeofday(&stop_tm, NULL);
-                        //std::cout << "All children have exited!\n";
-                        //std::cout << "time: " << ((stop_tm.tv_sec-start_tm.tv_sec)*1000000.0 +
-                        //            (stop_tm.tv_usec-start_tm.tv_usec))/num_keys << "\n";
+                        // std::cout << "All children have exited!\n";
+                        // std::cout << "time: " << ((stop_tm.tv_sec-start_tm.tv_sec)*1000000.0 +
+                        //             (stop_tm.tv_usec-start_tm.tv_usec))/num_keys << "\n";
                     }
                 }
             }

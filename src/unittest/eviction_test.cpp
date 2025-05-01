@@ -110,7 +110,7 @@ TEST_F(EvictionTest, bucket_256_test)
             index++;
     }
 
-    //Prune by db size
+    // Prune by db size
     rval = db->CollectResource(1000000000, 1000000000, 100, 10000000000);
     EXPECT_EQ(rval, MBError::SUCCESS);
     while (db->AsyncWriterBusy()) {
@@ -128,7 +128,7 @@ TEST_F(EvictionTest, bucket_256_test)
     while (db->AsyncWriterBusy()) {
         usleep(100);
     }
-    //Prune by db count
+    // Prune by db count
     rval = db->CollectResource(1000000000, 1000000000, 1000000000, 1000);
     EXPECT_EQ(rval, MBError::SUCCESS);
     while (db->AsyncWriterBusy()) {

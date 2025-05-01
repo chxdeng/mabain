@@ -206,7 +206,7 @@ public:
 
     static int GetDataHeaderSize();
 
-    //iterator
+    // iterator
     const iterator begin(bool check_async_mode = true, bool rc_mode = false) const;
     const iterator begin(const std::string& prefix) const;
     const iterator end() const;

@@ -165,8 +165,8 @@ static void InitDB(bool writer_mode = true)
         mconf.options |= mabain::CONSTS::OPTION_JEMALLOC;
         mconf.block_size_index = 128LL * 1024 * 1024;
         mconf.block_size_data = 128LL * 1024 * 1024;
-        mconf.memcap_index = 10*mconf.block_size_index;
-        mconf.memcap_data = 10*mconf.block_size_data;
+        mconf.memcap_index = 10 * mconf.block_size_index;
+        mconf.memcap_data = 10 * mconf.block_size_data;
         mconf.max_num_index_block = 10;
         mconf.max_num_data_block = 10;
     } else {
@@ -295,11 +295,11 @@ static void Lookup(int n)
         lmdb_key.mv_size = key.size();
         if (mdb_cursor_get(cursor, &lmdb_key, &lmdb_value, MDB_SET) == 0)
             nfound++;
-            //std::cout<<key<<":"<<std::string((char*)lmdb_value.mv_data, lmdb_value.mv_size)<<"\n";
+            // std::cout<<key<<":"<<std::string((char*)lmdb_value.mv_data, lmdb_value.mv_size)<<"\n";
 #elif MABAIN
         mabain::MBData mbd;
         int rval = db->Find(key, mbd);
-        //std::cout<<key<<":"<<std::string((char*)mbd.buff, mbd.data_len)<<"\n";
+        // std::cout<<key<<":"<<std::string((char*)mbd.buff, mbd.data_len)<<"\n";
         if (rval == 0)
             nfound++;
 #endif

@@ -19,8 +19,8 @@
 #ifndef __EXPR_PARSER_H__
 #define __EXPR_PARSER_H__
 
-#include <string>
 #include <cstdint>
+#include <string>
 
 // A simple mabain client expression LL parser
 class ExprParser {

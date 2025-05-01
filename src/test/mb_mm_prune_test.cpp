@@ -155,8 +155,8 @@ int main(int argc, char* argv[])
         }
     }
 
-    //mabain::DB::LogDebug();
-    // Create a Mabain DB instance
+    // mabain::DB::LogDebug();
+    //  Create a Mabain DB instance
     mabain::MBConfig config;
     memset(&config, 0, sizeof(config));
     config.mbdir = "/var/tmp/mabain_test";

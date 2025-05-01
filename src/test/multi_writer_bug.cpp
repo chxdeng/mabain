@@ -33,7 +33,7 @@ DB* OpenDB(bool is_writer, const char* db_dir)
                 delete db_writer;
                 exit(1);
             }
-            //db_writer->LogDebug();
+            // db_writer->LogDebug();
             db_writer->CollectResource(1, 1, 0xFFFFFFFFFFFF, 0xFFFFFFFFFFFF);
             db_ref_count = 1;
         } else {

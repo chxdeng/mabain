@@ -261,7 +261,7 @@ uint8_t* RollableFile::NewSlidingMapAddr(size_t offset, int size)
     if (sliding_addr != NULL) {
         // No need to call msync since munmap will write all memory
         // update to disk
-        //msync(sliding_addr, sliding_size, MS_SYNC);
+        // msync(sliding_addr, sliding_size, MS_SYNC);
         munmap(sliding_addr, sliding_size);
     }
 
@@ -472,7 +472,7 @@ void* RollableFile::PreAlloc(size_t init_off)
 {
     int rval = CheckAndOpenFile(0, true);
     if (rval != MBError::SUCCESS) {
-        throw(int) rval;
+        throw (int)rval;
     }
     if (!files[0]->IsMapped())
         return nullptr;
@@ -488,7 +488,7 @@ void* RollableFile::Malloc(size_t size, size_t& offset)
             // create the first block file for memory metadata if not exist
             int rval = CheckAndOpenFile(0, true);
             if (rval != MBError::SUCCESS) {
-                throw(int) rval;
+                throw (int)rval;
             }
         }
         unsigned arena_index = files[0]->mm_meta->arena_index;
@@ -504,7 +504,7 @@ size_t RollableFile::MemWrite(const void* src, size_t size, size_t offset)
     int block_order = offset / block_size;
     size_t relative_offset = offset % block_size;
     if (relative_offset + size > block_size) {
-        throw(int) MBError::OUT_OF_BOUND;
+        throw (int)MBError::OUT_OF_BOUND;
     }
     memcpy(files[block_order]->GetMapAddr() + relative_offset, src, size);
     return size;
@@ -515,7 +515,7 @@ size_t RollableFile::MemRead(void* dst, size_t size, size_t offset)
     int block_order = offset / block_size;
     size_t relative_offset = offset % block_size;
     if (relative_offset + size > block_size) {
-        throw(int) MBError::OUT_OF_BOUND;
+        throw (int)MBError::OUT_OF_BOUND;
     }
     memcpy(dst, files[block_order]->GetMapAddr() + relative_offset, size);
     return size;
@@ -534,7 +534,7 @@ void RollableFile::Free(size_t offset) const
     int block_order = offset / block_size;
     size_t relative_offset = offset % block_size;
     if (block_order >= (int)files.size()) {
-        throw(int) MBError::OUT_OF_BOUND;
+        throw (int)MBError::OUT_OF_BOUND;
     }
 
     void* ptr = files[block_order]->GetMapAddr() + relative_offset;
@@ -617,21 +617,21 @@ void* RollableFile::custom_extent_alloc(void* new_addr, size_t size, size_t alig
                 Logger::Log(LOG_LEVEL_ERROR, "custom_extent_alloc: arena %u max block number exceeded",
                     " new memory (aligned offset: %zu, used: %zu, size: %zu)",
                     arena_ind, aligned_offset, mm_meta->alloc_size, size);
-                throw(int) MBError::NO_MEMORY;
+                throw (int)MBError::NO_MEMORY;
             }
             int rval = mgr->CheckAndOpenFile(block_order, true);
             if (rval != MBError::SUCCESS) {
                 Logger::Log(LOG_LEVEL_ERROR, "custom_extent_alloc: arena %u failed to open"
                                              " new block file (order: %d, used: %zu, size: %zu)",
                     arena_ind, block_order, mm_meta->alloc_size, size);
-                throw(int) MBError::MMAP_FAILED;
+                throw (int)MBError::MMAP_FAILED;
             }
             aligned_offset = 0; // reset aligned offset for new block
             if (aligned_offset + size > mgr->block_size) {
                 Logger::Log(LOG_LEVEL_ERROR, "custom_extent_alloc: arena %u failed to extend"
                                              " new memory (offset: %zu, size: %zu, used: %zu, size: %zu)",
                     arena_ind, aligned_offset, size, mgr->block_size);
-                throw(int) MBError::NO_MEMORY;
+                throw (int)MBError::NO_MEMORY;
             }
         }
         mm_meta->alloc_size = block_order * mgr->block_size + aligned_offset + size;

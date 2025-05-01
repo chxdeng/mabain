@@ -97,7 +97,7 @@ DictMem::DictMem(const std::string& mbdir, bool init_header, size_t memsize,
             std::cerr << "mabain index block size not match " << block_size << ": "
                       << header->index_block_size << std::endl;
             Destroy();
-            throw(int) MBError::INVALID_SIZE;
+            throw (int)MBError::INVALID_SIZE;
         }
     } else {
         // Explicitly cast to void* because GCC 8 is (rightfully) upset that this is
@@ -247,7 +247,7 @@ void DictMem::UpdateTailEdge(EdgePtrs& edge_ptrs, int match_len, MBData& data,
         size_t edge_str_off = Get5BInteger(edge_ptrs.ptr);
         if (ReadData(data.node_buff, edge_len, edge_str_off + match_len - 1)
             != edge_len)
-            throw(int) MBError::READ_ERROR;
+            throw (int)MBError::READ_ERROR;
         new_key_first = data.node_buff[0];
 
         // Reserve the key buffer
@@ -258,7 +258,7 @@ void DictMem::UpdateTailEdge(EdgePtrs& edge_ptrs, int match_len, MBData& data,
         if (edge_ptrs.len_ptr[0] > LOCAL_EDGE_LEN) {
             if (ReadData(data.node_buff, edge_len, Get5BInteger(edge_ptrs.ptr) + match_len - 1)
                 != edge_len)
-                throw(int) MBError::READ_ERROR;
+                throw (int)MBError::READ_ERROR;
             new_key_first = data.node_buff[0];
             if (edge_len > 1)
                 memcpy(tail_edge.ptr, data.node_buff + 1, edge_len - 1);
@@ -274,7 +274,7 @@ void DictMem::UpdateTailEdge(EdgePtrs& edge_ptrs, int match_len, MBData& data,
     memcpy(tail_edge.flag_ptr, edge_ptrs.flag_ptr, OFFSET_SIZE_P1);
 }
 
-//The old edge becomes head edge.
+// The old edge becomes head edge.
 void DictMem::UpdateHeadEdge(EdgePtrs& edge_ptrs, int match_len,
     MBData& data, int& release_buffer_size,
     size_t& edge_str_off, bool& map_new_sliding)
@@ -287,14 +287,14 @@ void DictMem::UpdateHeadEdge(EdgePtrs& edge_ptrs, int match_len,
             // Old key is remote but new key is local. Need to read the old key.
             if (match_len_m1 > 0) {
                 if (ReadData(edge_ptrs.ptr, match_len_m1, edge_str_off) != match_len_m1)
-                    throw(int) MBError::READ_ERROR;
+                    throw (int)MBError::READ_ERROR;
             }
         } else {
             edge_str_off = Get5BInteger(edge_ptrs.ptr);
             release_buffer_size = edge_ptrs.len_ptr[0] - 1;
             // Load the string with length edge_len - 1
             if (ReadData(data.node_buff, match_len_m1, edge_str_off) != match_len_m1)
-                throw(int) MBError::READ_ERROR;
+                throw (int)MBError::READ_ERROR;
             // Reserve the key buffer
             size_t new_key_off;
             ReserveData(data.node_buff, match_len_m1, new_key_off, map_new_sliding);
@@ -648,7 +648,7 @@ bool DictMem::reserveNodeFL(int nt, size_t& offset, uint8_t*& ptr)
         ptr = node_ptr;
     }
 
-    //Checking missing buffer due to alignment
+    // Checking missing buffer due to alignment
     if (old_off < header->m_index_offset) {
         free_lists->ReleaseAlignmentBuffer(old_off, header->m_index_offset);
         header->pending_index_buff_size += header->m_index_offset - old_off;
@@ -708,7 +708,7 @@ void DictMem::reserveDataFL(const uint8_t* key, int size, size_t& offset, bool m
         if (rval != MBError::SUCCESS)
             throw rval;
 
-        //Checking missing buffer due to alignment
+        // Checking missing buffer due to alignment
         if (old_off < header->m_index_offset) {
             free_lists->ReleaseAlignmentBuffer(old_off, header->m_index_offset);
             header->pending_index_buff_size += header->m_index_offset - old_off;
@@ -799,7 +799,7 @@ int DictMem::GetRootEdge_Writer(bool rc_mode, int nt, EdgePtrs& edge_ptrs) const
 {
     if (rc_mode) {
         if (root_offset_rc == 0)
-            throw(int) MBError::UNKNOWN_ERROR;
+            throw (int)MBError::UNKNOWN_ERROR;
         edge_ptrs.offset = root_offset_rc + NODE_EDGE_KEY_FIRST + NUM_ALPHABET + nt * EDGE_SIZE;
     } else {
         edge_ptrs.offset = root_offset + NODE_EDGE_KEY_FIRST + NUM_ALPHABET + nt * EDGE_SIZE;
@@ -1263,11 +1263,11 @@ void DictMem::WriteData(const uint8_t* buff, unsigned len, size_t offset) const
         if (offset + len > header->m_index_offset) {
             std::cerr << "invalid dmm write: " << offset << " " << len << " "
                       << header->m_index_offset << "\n";
-            throw(int) MBError::OUT_OF_BOUND;
+            throw (int)MBError::OUT_OF_BOUND;
         }
 
         if (kv_file->RandomWrite(buff, len, offset) != len)
-            throw(int) MBError::WRITE_ERROR;
+            throw (int)MBError::WRITE_ERROR;
     }
 }
 

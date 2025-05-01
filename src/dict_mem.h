@@ -147,11 +147,11 @@ inline void DictMem::WriteEdge(const EdgePtrs& edge_ptrs) const
         if (edge_ptrs.offset + EDGE_SIZE > header->m_index_offset) {
             std::cerr << "invalid edge write: " << edge_ptrs.offset << " " << EDGE_SIZE
                       << " " << header->m_index_offset << "\n";
-            throw(int) MBError::OUT_OF_BOUND;
+            throw (int)MBError::OUT_OF_BOUND;
         }
 
         if (kv_file->RandomWrite(edge_ptrs.ptr, EDGE_SIZE, edge_ptrs.offset) != EDGE_SIZE)
-            throw(int) MBError::WRITE_ERROR;
+            throw (int)MBError::WRITE_ERROR;
     }
 }
 

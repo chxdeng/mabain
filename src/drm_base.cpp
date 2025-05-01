@@ -30,11 +30,11 @@ void DRMBase::ReadHeaderVersion(const std::string& header_path, uint16_t ver[4])
     FILE* hdr_file = fopen(header_path.c_str(), "rb");
     if (hdr_file == NULL) {
         Logger::Log(LOG_LEVEL_ERROR, "failed to open header file %s", header_path.c_str());
-        throw(int) MBError::OPEN_FAILURE;
+        throw (int)MBError::OPEN_FAILURE;
     }
     if (fread(ver, sizeof(uint16_t), 4, hdr_file) != 4) {
         fclose(hdr_file);
-        throw(int) MBError::READ_ERROR;
+        throw (int)MBError::READ_ERROR;
     }
     fclose(hdr_file);
 }
@@ -44,11 +44,11 @@ void DRMBase::ReadHeader(const std::string& header_path, uint8_t* buff, int buf_
     FILE* hdr_file = fopen(header_path.c_str(), "rb");
     if (hdr_file == NULL) {
         Logger::Log(LOG_LEVEL_ERROR, "failed to open header file %s", header_path.c_str());
-        throw(int) MBError::OPEN_FAILURE;
+        throw (int)MBError::OPEN_FAILURE;
     }
     if (fread(buff, buf_size, 1, hdr_file) != 1) {
         fclose(hdr_file);
-        throw(int) MBError::READ_ERROR;
+        throw (int)MBError::READ_ERROR;
     }
     fclose(hdr_file);
 }
@@ -58,11 +58,11 @@ void DRMBase::WriteHeader(const std::string& header_path, uint8_t* buff)
     FILE* hdr_file = fopen(header_path.c_str(), "wb");
     if (hdr_file == NULL) {
         Logger::Log(LOG_LEVEL_ERROR, "failed to open header file %s", header_path.c_str());
-        throw(int) MBError::OPEN_FAILURE;
+        throw (int)MBError::OPEN_FAILURE;
     }
     if (fwrite(buff, RollableFile::page_size, 1, hdr_file) != 1) {
         fclose(hdr_file);
-        throw(int) MBError::WRITE_ERROR;
+        throw (int)MBError::WRITE_ERROR;
     }
     fclose(hdr_file);
 }
@@ -75,7 +75,7 @@ void DRMBase::ValidateHeaderFile(const std::string& header_path, int mode,
     if (hdr_ver[0] >= 1 && hdr_ver[1] >= 3)
         return;
     if (!(mode & CONSTS::ACCESS_MODE_WRITER))
-        throw(int) MBError::VERSION_MISMATCH;
+        throw (int)MBError::VERSION_MISMATCH;
 
     Logger::Log(LOG_LEVEL_INFO, "header version: %u.%u.%u does not match "
                                 "library version: %u.%u.%u",
@@ -102,7 +102,7 @@ void DRMBase::ValidateHeaderFile(const std::string& header_path, int mode,
         map_hdr,
         false);
     if (hdr_file == NULL || !map_hdr)
-        throw(int) MBError::OPEN_FAILURE;
+        throw (int)MBError::OPEN_FAILURE;
     IndexHeader* hdr = reinterpret_cast<IndexHeader*>(hdr_file->GetMapAddr());
     hdr->shm_queue_id = get_file_inode(tmp_header_path);
     hdr->async_queue_size = queue_size;
@@ -116,12 +116,12 @@ void DRMBase::ValidateHeaderFile(const std::string& header_path, int mode,
     if (rename(header_path.c_str(), old_header_path.c_str()) != 0) {
         Logger::Log(LOG_LEVEL_ERROR, "failed to move file %s to %s", header_path.c_str(),
             old_header_path.c_str());
-        throw(int) MBError::OPEN_FAILURE;
+        throw (int)MBError::OPEN_FAILURE;
     }
     if (rename(tmp_header_path.c_str(), header_path.c_str()) != 0) {
         Logger::Log(LOG_LEVEL_ERROR, "failed to move file %s to %s", tmp_header_path.c_str(),
             header_path.c_str());
-        throw(int) MBError::OPEN_FAILURE;
+        throw (int)MBError::OPEN_FAILURE;
     }
 
     update_header = true;
