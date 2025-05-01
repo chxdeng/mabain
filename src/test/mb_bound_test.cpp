@@ -10,7 +10,7 @@
 using namespace std;
 using namespace mabain;
 
-static void InsertRandom(map<string, int>& m, DB* db, int num, int type)
+static void InsertRandom(map<string, string>& m, DB* db, int num, int type)
 {
     int mod_n = num * 10;
     string kv;
@@ -33,13 +33,13 @@ static void InsertRandom(map<string, int>& m, DB* db, int num, int type)
             break;
         }
 
-        m[kv] = val;
+        m[kv] = kv;
         db->Add(kv, kv);
     }
 }
 
 static int bound_key_err = 0;
-static void find_test(map<string, int>& m, DB* db, int num, int* test_key, int type)
+static void find_test(map<string, string>& m, DB* db, int num, int* test_key, int type)
 {
     MBData mbd;
     string kv;
@@ -111,6 +111,9 @@ static void find_test(map<string, int>& m, DB* db, int num, int* test_key, int t
             continue;
         if (lower->first != kv)
             lower--;
+        if (lower != m.end()) {
+            assert(lower->first == lower->second);
+        }
     }
     gettimeofday(&stop, nullptr);
     timediff = (stop.tv_sec - start.tv_sec) * 1000000 + (stop.tv_usec - start.tv_usec);
@@ -145,7 +148,7 @@ static void find_test(map<string, int>& m, DB* db, int num, int* test_key, int t
 int main()
 {
     int num = 1000000;
-    map<string, int> m;
+    map<string, string> m;
     DB* db = new DB("/var/tmp/mabain_test", CONSTS::WriterOptions(), 9999999999LL, 9999999999LL);
     int* test_key = new int[num];
     int mod_n = num * 10;
