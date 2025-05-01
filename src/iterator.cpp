@@ -48,7 +48,7 @@ static iterator_node* new_iterator_node(const std::string& key, MBData* mbdata)
 {
     iterator_node* inode = (iterator_node*)malloc(sizeof(*inode));
     if (inode == NULL)
-        throw(int) MBError::NO_MEMORY;
+        throw (int)MBError::NO_MEMORY;
 
     inode->key = new std::string(key);
     if (mbdata != NULL) {

@@ -52,17 +52,17 @@ AsyncWriter::AsyncWriter(DB* db_ptr)
 {
     dict = NULL;
     if (!(db_ptr->GetDBOptions() & CONSTS::ACCESS_MODE_WRITER))
-        throw(int) MBError::NOT_ALLOWED;
+        throw (int)MBError::NOT_ALLOWED;
     if (db == NULL)
-        throw(int) MBError::INVALID_ARG;
+        throw (int)MBError::INVALID_ARG;
     dict = db->GetDictPtr();
     if (dict == NULL)
-        throw(int) MBError::NOT_INITIALIZED;
+        throw (int)MBError::NOT_INITIALIZED;
 
     // initialize shared memory queue pointer
     header = dict->GetHeaderPtr();
     if (header == NULL)
-        throw(int) MBError::NOT_INITIALIZED;
+        throw (int)MBError::NOT_INITIALIZED;
     queue = dict->GetAsyncQueuePtr();
     header->rc_flag.store(0, std::memory_order_release);
 
@@ -71,7 +71,7 @@ AsyncWriter::AsyncWriter(DB* db_ptr)
     if (pthread_create(&tid, NULL, async_thread_wrapper, this) != 0) {
         Logger::Log(LOG_LEVEL_ERROR, "failed to create async thread");
         tid = 0;
-        throw(int) MBError::THREAD_FAILED;
+        throw (int)MBError::THREAD_FAILED;
     }
 }
 

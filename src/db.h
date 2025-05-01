@@ -133,8 +133,8 @@ public:
     int FindLongestPrefix(const std::string& key, MBData& data) const;
     // Find lower bound does not support reader/writer concurrency currently.
     // FindLowerBound returns that largest entry that is not greater than the given key.
-    int FindLowerBound(const char* key, int len, MBData& data) const;
-    int FindLowerBound(const std::string& key, MBData& data) const;
+    int FindLowerBound(const char* key, int len, MBData& data, std::string* bound_key = nullptr) const;
+    int FindLowerBound(const std::string& key, MBData& data, std::string* bound_key = nullptr) const;
     int ReadDataByOffset(size_t offset, MBData& data) const;
     int WriteDataByOffset(size_t offset, const char* data, int data_len) const;
     uint8_t* GetDataPtrByOffset(size_t offset) const;
@@ -206,7 +206,7 @@ public:
 
     static int GetDataHeaderSize();
 
-    //iterator
+    // iterator
     const iterator begin(bool check_async_mode = true, bool rc_mode = false) const;
     const iterator begin(const std::string& prefix) const;
     const iterator end() const;

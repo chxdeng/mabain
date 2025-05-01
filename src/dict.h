@@ -38,6 +38,17 @@ typedef struct _AsyncNode AsyncNode;
 struct _shm_lock_and_queue;
 typedef struct _shm_lock_and_queue shm_lock_and_queue;
 
+// bound search
+struct BoundSearchState {
+    const uint8_t* key;
+    uint8_t* node_buff;
+    std::string* bound_key;
+
+    int le_match_len = 0;
+    int le_edge_key = -1;
+    bool use_curr_edge = false;
+};
+
 // dictionary class
 // This is the work horse class for basic db operations (add, find and remove).
 class Dict : public DRMBase {
@@ -59,7 +70,7 @@ public:
     int Find(const uint8_t* key, int len, MBData& data);
     // Find value by key using longest prefix match
     int FindPrefix(const uint8_t* key, int len, MBData& data);
-    int FindBound(size_t root_off, const uint8_t* key, int len, MBData& data);
+    int FindBound(size_t root_off, const uint8_t* key, int len, MBData& data, std::string* bound_key);
     int ReadDataByOffset(size_t offset, MBData& data) const;
 
     // Delete entry by key
@@ -128,10 +139,12 @@ private:
     int ReadNodeMatch(size_t node_off, int& match, MBData& data) const;
     int SHMQ_PrepareSlot(AsyncNode* node_ptr);
     AsyncNode* SHMQ_AcquireSlot(int& err) const;
-    int ReadLowerBound(EdgePtrs& edge_ptrs, MBData& data) const;
-    int ReadUpperBound(EdgePtrs& edge_ptrs, MBData& data) const;
-    int ReadDataFromBoundEdge(bool use_curr_edge, EdgePtrs& edge_ptrs,
-        EdgePtrs& bound_edge_ptrs, MBData& data, int root_key) const;
+
+    int ReadLowerBound(EdgePtrs& edge_ptrs, MBData& data, std::string* bound_key, int le_edge_key) const;
+    int ReadBoundFromRootEdge(EdgePtrs& edge_ptrs, MBData& data, int root_key, std::string* bound_key) const;
+    void AppendEdgeKey(std::string* key, int edge_key, const EdgePtrs& edge_ptrs) const;
+    int TraverseToLowerBound(const uint8_t* key, int len, EdgePtrs& edge_ptrs, MBData& data,
+        EdgePtrs& bound_edge_ptrs, BoundSearchState& state) const;
     void reserveDataFL(const uint8_t* buff, int size, size_t& offset);
     int ReleaseBuffer(size_t offset, int size);
     void ReleaseAlignmentBuffer(size_t offset, size_t alignment_off);

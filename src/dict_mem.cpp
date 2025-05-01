@@ -40,24 +40,25 @@ namespace mabain {
 /////////////////////////////////////////////////////////////////////////////////////
 // EDGE MEMORY LAYOUT
 // Edge size is 13 bytes.
-// X************    leading byte of edge key offset
-// *XXXX********    edge key string or edge key offset
-// *****X*******    edge key length
-// ******X******    flag (0x01) indicating the data offset; This bit can used to
-//                      determine if the node if a leaf-node.
-//                  flag (0x02) indicating this edge owns the allocated bufifer
-// *******X*****    leading byte of next node offset or data offset
-// ********xxxxX    next node offset of data offset
+// X************    Leading byte of edge key offset
+// *XXXX********    Edge key string or edge key offset
+// *****X*******    Edge key length
+// ******X******    Flags:
+//                  - (0x01): Indicates the presence of a data offset (used to determine
+//                              if the node is a leaf node)
+//                  - (0x02): Indicates this edge owns the allocated buffer
+// *******X*****    Leading byte of next node offset or data offset
+// ********XXXXX    Next node offset of data offset
 /////////////////////////////////////////////////////////////////////////////////////
 // NODE MEMORY LAYOUT
 // Node size is 1 + 1 + 6 + NT + NT*13
-// X************   flags (0x01 bit indicating match found)
-// *X***********   nt-1, nt is the number of edges for this node.
-// **XXXXXX*****   data offset
-// NT bytes of first characters of each edge
-// NT edges        NT*13 bytes
-// Since we use 6-byte to store both the index and data offset, the maximum size for
-// data and index is 281474976710655 bytes (or 255T).
+// X************   Flags (0x01 bit indicating match found)
+// *X***********   nt-1, where nt is the number of edges for this node
+// **XXXXXX*****   Data offset
+// NT bytes        First character of each edge
+// NT edges        Each edge is 13 bytes (NT * 13 total)
+// Note: We use 6 bytes to store both index and data offsets, so the maximum supported
+//       size for data and index is 281,474,976,710,655 bytes (or 255 TB).
 /////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////
@@ -97,7 +98,7 @@ DictMem::DictMem(const std::string& mbdir, bool init_header, size_t memsize,
             std::cerr << "mabain index block size not match " << block_size << ": "
                       << header->index_block_size << std::endl;
             Destroy();
-            throw(int) MBError::INVALID_SIZE;
+            throw (int)MBError::INVALID_SIZE;
         }
     } else {
         // Explicitly cast to void* because GCC 8 is (rightfully) upset that this is
@@ -247,7 +248,7 @@ void DictMem::UpdateTailEdge(EdgePtrs& edge_ptrs, int match_len, MBData& data,
         size_t edge_str_off = Get5BInteger(edge_ptrs.ptr);
         if (ReadData(data.node_buff, edge_len, edge_str_off + match_len - 1)
             != edge_len)
-            throw(int) MBError::READ_ERROR;
+            throw (int)MBError::READ_ERROR;
         new_key_first = data.node_buff[0];
 
         // Reserve the key buffer
@@ -258,7 +259,7 @@ void DictMem::UpdateTailEdge(EdgePtrs& edge_ptrs, int match_len, MBData& data,
         if (edge_ptrs.len_ptr[0] > LOCAL_EDGE_LEN) {
             if (ReadData(data.node_buff, edge_len, Get5BInteger(edge_ptrs.ptr) + match_len - 1)
                 != edge_len)
-                throw(int) MBError::READ_ERROR;
+                throw (int)MBError::READ_ERROR;
             new_key_first = data.node_buff[0];
             if (edge_len > 1)
                 memcpy(tail_edge.ptr, data.node_buff + 1, edge_len - 1);
@@ -274,7 +275,7 @@ void DictMem::UpdateTailEdge(EdgePtrs& edge_ptrs, int match_len, MBData& data,
     memcpy(tail_edge.flag_ptr, edge_ptrs.flag_ptr, OFFSET_SIZE_P1);
 }
 
-//The old edge becomes head edge.
+// The old edge becomes head edge.
 void DictMem::UpdateHeadEdge(EdgePtrs& edge_ptrs, int match_len,
     MBData& data, int& release_buffer_size,
     size_t& edge_str_off, bool& map_new_sliding)
@@ -287,14 +288,14 @@ void DictMem::UpdateHeadEdge(EdgePtrs& edge_ptrs, int match_len,
             // Old key is remote but new key is local. Need to read the old key.
             if (match_len_m1 > 0) {
                 if (ReadData(edge_ptrs.ptr, match_len_m1, edge_str_off) != match_len_m1)
-                    throw(int) MBError::READ_ERROR;
+                    throw (int)MBError::READ_ERROR;
             }
         } else {
             edge_str_off = Get5BInteger(edge_ptrs.ptr);
             release_buffer_size = edge_ptrs.len_ptr[0] - 1;
             // Load the string with length edge_len - 1
             if (ReadData(data.node_buff, match_len_m1, edge_str_off) != match_len_m1)
-                throw(int) MBError::READ_ERROR;
+                throw (int)MBError::READ_ERROR;
             // Reserve the key buffer
             size_t new_key_off;
             ReserveData(data.node_buff, match_len_m1, new_key_off, map_new_sliding);
@@ -648,7 +649,7 @@ bool DictMem::reserveNodeFL(int nt, size_t& offset, uint8_t*& ptr)
         ptr = node_ptr;
     }
 
-    //Checking missing buffer due to alignment
+    // Checking missing buffer due to alignment
     if (old_off < header->m_index_offset) {
         free_lists->ReleaseAlignmentBuffer(old_off, header->m_index_offset);
         header->pending_index_buff_size += header->m_index_offset - old_off;
@@ -708,7 +709,7 @@ void DictMem::reserveDataFL(const uint8_t* key, int size, size_t& offset, bool m
         if (rval != MBError::SUCCESS)
             throw rval;
 
-        //Checking missing buffer due to alignment
+        // Checking missing buffer due to alignment
         if (old_off < header->m_index_offset) {
             free_lists->ReleaseAlignmentBuffer(old_off, header->m_index_offset);
             header->pending_index_buff_size += header->m_index_offset - old_off;
@@ -799,7 +800,7 @@ int DictMem::GetRootEdge_Writer(bool rc_mode, int nt, EdgePtrs& edge_ptrs) const
 {
     if (rc_mode) {
         if (root_offset_rc == 0)
-            throw(int) MBError::UNKNOWN_ERROR;
+            throw (int)MBError::UNKNOWN_ERROR;
         edge_ptrs.offset = root_offset_rc + NODE_EDGE_KEY_FIRST + NUM_ALPHABET + nt * EDGE_SIZE;
     } else {
         edge_ptrs.offset = root_offset + NODE_EDGE_KEY_FIRST + NUM_ALPHABET + nt * EDGE_SIZE;
@@ -915,7 +916,7 @@ int DictMem::ReadNode(size_t& node_off, EdgePtrs& edge_ptrs,
     return MBError::SUCCESS;
 }
 
-int DictMem::NextMaxEdge(EdgePtrs& edge_ptrs, uint8_t* node_buff, MBData& mbdata) const
+int DictMem::NextMaxEdge(EdgePtrs& edge_ptrs, uint8_t* node_buff, MBData& mbdata, int& max_key) const
 {
     size_t node_off;
     int nt = -1;
@@ -931,11 +932,11 @@ int DictMem::NextMaxEdge(EdgePtrs& edge_ptrs, uint8_t* node_buff, MBData& mbdata
     }
 
     int curr_max_index = 0;
-    int curr_max_key = (int)node_buff[0 + NODE_EDGE_KEY_FIRST];
+    max_key = static_cast<int>(node_buff[0 + NODE_EDGE_KEY_FIRST]);
     for (int i = 1; i < nt; i++) {
         auto key = (int)node_buff[i + NODE_EDGE_KEY_FIRST];
-        if (key > curr_max_key) {
-            curr_max_key = key;
+        if (key > max_key) {
+            max_key = key;
             curr_max_index = i;
         }
     }
@@ -951,7 +952,8 @@ int DictMem::NextLowerBoundEdge(const uint8_t* key, int len,
     EdgePtrs& edge_ptrs,
     uint8_t* node_buff,
     MBData& mbdata,
-    EdgePtrs& less_edge_ptrs) const
+    EdgePtrs& less_edge_ptrs,
+    int& le_edge_key) const
 {
     size_t node_off;
     int nt = -1;
@@ -959,13 +961,18 @@ int DictMem::NextLowerBoundEdge(const uint8_t* key, int len,
     if (ret != MBError::SUCCESS)
         return ret;
 
+    bool le_node = false;
+    // If the current node is a matching node (FLAG_NODE_MATCH set),
+    // it serves as a candidate for lower-bound resolution in case
+    // no lesser edge key (closer to the target) is found later.
+    // We store its offset in less_edge_ptrs and mark it using the
+    // INTERNAL_NODE_BOUND flag for fallback consideration.
     if (node_buff[0] & FLAG_NODE_MATCH) {
         mbdata.options |= CONSTS::OPTION_INTERNAL_NODE_BOUND;
-        less_edge_ptrs.curr_edge_index = 0;
         less_edge_ptrs.offset = edge_ptrs.offset;
+        le_node = true;
     }
 
-    int le_edge_key = -1;
     int le_edge_index = -1;
     int byte_read;
     ret = MBError::NOT_EXIST;
@@ -984,10 +991,18 @@ int DictMem::NextLowerBoundEdge(const uint8_t* key, int len,
     }
 
     if (le_edge_index >= 0) {
+        // A lesser edge key was found in the current node,
+        // so we prefer it over the internal node match.
+        // Clear the INTERNAL_NODE_BOUND flag to indicate that.
         mbdata.options &= ~CONSTS::OPTION_INTERNAL_NODE_BOUND;
         less_edge_ptrs.curr_edge_index = le_edge_index;
         less_edge_ptrs.offset = node_off + NODE_EDGE_KEY_FIRST + nt
             + le_edge_index * EDGE_SIZE;
+    } else if (le_node) {
+        // No lesser edge found, but the current node is an internal match.
+        // So we fall back to using that.
+        less_edge_ptrs.curr_edge_index = 0;
+        le_edge_key = key[0];
     }
 
     return ret;
@@ -1259,11 +1274,11 @@ void DictMem::WriteData(const uint8_t* buff, unsigned len, size_t offset) const
         if (offset + len > header->m_index_offset) {
             std::cerr << "invalid dmm write: " << offset << " " << len << " "
                       << header->m_index_offset << "\n";
-            throw(int) MBError::OUT_OF_BOUND;
+            throw (int)MBError::OUT_OF_BOUND;
         }
 
         if (kv_file->RandomWrite(buff, len, offset) != len)
-            throw(int) MBError::WRITE_ERROR;
+            throw (int)MBError::WRITE_ERROR;
     }
 }
 

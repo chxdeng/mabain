@@ -131,7 +131,7 @@ public:
             break;
         case EXCEP_STATUS_REMOVE_EDGE:
             // Currently we cannot simulate this exception.
-            //dmm->WriteData(buffer, OFFSET_SIZE, header->excep_lf_offset+EDGE_NODE_LEADING_POS);
+            // dmm->WriteData(buffer, OFFSET_SIZE, header->excep_lf_offset+EDGE_NODE_LEADING_POS);
             break;
         case EXCEP_STATUS_CLEAR_EDGE:
             dmm->WriteData(buffer, EDGE_SIZE, header->excep_lf_offset);
@@ -439,7 +439,7 @@ TEST_F(AbnormalExitTest, RC_RECOVERY_test)
     Dict* dict = db->GetDictPtr();
     IndexHeader* header = dict->GetHeaderPtr();
 
-    //Reset m_index_offset and m_data_offset to simulate RC process
+    // Reset m_index_offset and m_data_offset to simulate RC process
     header->rc_m_index_off_pre = header->m_index_offset;
     header->rc_m_data_off_pre = header->m_data_offset;
     if (header->pending_index_buff_size == 0) {

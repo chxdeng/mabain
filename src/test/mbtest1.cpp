@@ -41,7 +41,7 @@ static void* Reader(void* arg)
     int ktype;
 
     while (!stop_processing) {
-        //usleep(5);
+        // usleep(5);
 
         if (key_high.load(std::memory_order_consume) == key_low.load(std::memory_order_consume))
             continue;

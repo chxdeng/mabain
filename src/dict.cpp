@@ -58,7 +58,7 @@ Dict::Dict(const std::string& mbdir, bool init_header, int datasize,
     header = mm.GetHeaderPtr();
     if (header == NULL) {
         Logger::Log(LOG_LEVEL_ERROR, "header not mapped");
-        throw(int) MBError::MMAP_FAILED;
+        throw (int)MBError::MMAP_FAILED;
     }
 
     if (!init_header) {
@@ -68,7 +68,7 @@ Dict::Dict(const std::string& mbdir, bool init_header, int datasize,
                       << header->data_block_size << std::endl;
             PrintHeader(std::cout);
             Destroy();
-            throw(int) MBError::INVALID_SIZE;
+            throw (int)MBError::INVALID_SIZE;
         }
     } else {
         header->data_block_size = block_sz_data;
@@ -108,12 +108,12 @@ Dict::Dict(const std::string& mbdir, bool init_header, int datasize,
             if ((options & CONSTS::OPTION_JEMALLOC) && !(header->writer_options & CONSTS::OPTION_JEMALLOC)) {
                 std::cerr << "mabain jemalloc option not match\n";
                 Destroy();
-                throw(int) MBError::INVALID_ARG;
+                throw (int)MBError::INVALID_ARG;
             }
             if (!(options & CONSTS::OPTION_JEMALLOC) && (header->writer_options & CONSTS::OPTION_JEMALLOC)) {
                 std::cerr << "mabain jemalloc option not match header\n";
                 Destroy();
-                throw(int) MBError::INVALID_ARG;
+                throw (int)MBError::INVALID_ARG;
             }
         }
     }
@@ -878,7 +878,7 @@ void Dict::ReadNodeHeader(size_t node_off, int& node_size, int& match,
 {
     uint8_t node_buff[NODE_EDGE_KEY_FIRST];
     if (mm.ReadData(node_buff, NODE_EDGE_KEY_FIRST, node_off) != NODE_EDGE_KEY_FIRST)
-        throw(int) MBError::READ_ERROR;
+        throw (int)MBError::READ_ERROR;
 
     node_size = mm.GetNodeSizePtr()[node_buff[1]];
     if (node_buff[0] & FLAG_NODE_MATCH) {
@@ -1388,11 +1388,11 @@ void Dict::WriteData(const uint8_t* buff, unsigned len, size_t offset) const
         if (offset + len > header->m_data_offset) {
             std::cerr << "invalid dict write: " << offset << " " << len << " "
                       << header->m_data_offset << "\n";
-            throw(int) MBError::OUT_OF_BOUND;
+            throw (int)MBError::OUT_OF_BOUND;
         }
 
         if (kv_file->RandomWrite(buff, len, offset) != len)
-            throw(int) MBError::WRITE_ERROR;
+            throw (int)MBError::WRITE_ERROR;
     }
 }
 

@@ -1,15 +1,16 @@
 #include <cassert>
 
-#include "mabain/mb_data.h"
 #include "mabain/error.h"
+#include "mabain/mb_data.h"
 #include "mabain_interface.h"
 
 using namespace std;
 using namespace mabain;
 
 #define __MB_SIZE_UNLIMITED 9223372036854775807LL
-Mabain::Mabain(const string &db_path, bool writer_mode, bool async_mode = false)
-         : dbi(nullptr), db_async(nullptr)
+Mabain::Mabain(const string& db_path, bool writer_mode, bool async_mode = false)
+    : dbi(nullptr)
+    , db_async(nullptr)
 {
     if (async_mode && !writer_mode) {
         cerr << "async mode can only be used with writer mode\n";
@@ -17,11 +18,12 @@ Mabain::Mabain(const string &db_path, bool writer_mode, bool async_mode = false)
     }
 
     int mode = 0;
-    if (writer_mode) mode |= CONSTS::WriterOptions();
+    if (writer_mode)
+        mode |= CONSTS::WriterOptions();
     try {
-        if (async_mode)  {
+        if (async_mode) {
             db_async = new DB(db_path.c_str(), mode | CONSTS::ASYNC_WRITER_MODE,
-                              __MB_SIZE_UNLIMITED, __MB_SIZE_UNLIMITED);
+                __MB_SIZE_UNLIMITED, __MB_SIZE_UNLIMITED);
             mode = 0;
         }
         dbi = new DB(db_path.c_str(), mode, __MB_SIZE_UNLIMITED, __MB_SIZE_UNLIMITED);
@@ -41,7 +43,8 @@ Mabain::~Mabain()
 
 int Mabain::mbAdd(const std::string key, const std::string val)
 {
-    if (dbi == nullptr) return -1;
+    if (dbi == nullptr)
+        return -1;
     int rval;
     try {
         rval = dbi->Add(key, val);
@@ -53,7 +56,8 @@ int Mabain::mbAdd(const std::string key, const std::string val)
 
 int Mabain::mbDelete(const std::string key)
 {
-    if (dbi == nullptr) return -1;
+    if (dbi == nullptr)
+        return -1;
     int rval;
     try {
         rval = dbi->Remove(key);
@@ -63,9 +67,10 @@ int Mabain::mbDelete(const std::string key)
     return rval;
 }
 
-int Mabain::mbFind(const std::string key, mb_query_result &result)
+int Mabain::mbFind(const std::string key, mb_query_result& result)
 {
-    if (dbi == nullptr) return -1;
+    if (dbi == nullptr)
+        return -1;
 
     MBData mbd;
     int rval;
@@ -75,8 +80,8 @@ int Mabain::mbFind(const std::string key, mb_query_result &result)
         rval = error;
     }
     if (rval == MBError::SUCCESS) {
-        result.data = (char*) mbd.buff;
-        result.len  = mbd.data_len;
+        result.data = (char*)mbd.buff;
+        result.len = mbd.data_len;
         result.data[mbd.data_len] = '\0';
         mbd.buff = nullptr;
     }
@@ -85,13 +90,15 @@ int Mabain::mbFind(const std::string key, mb_query_result &result)
 
 bool Mabain::mbIsOpen() const
 {
-    if (dbi == nullptr) return false;
+    if (dbi == nullptr)
+        return false;
     return dbi->is_open();
 }
 
 int Mabain::mbGC(long long max_key_size, long long max_val_size)
 {
-    if (dbi == nullptr) return -1;
+    if (dbi == nullptr)
+        return -1;
 
     int rval;
     try {

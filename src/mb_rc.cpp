@@ -188,7 +188,7 @@ void ResourceCollection::Prepare(int64_t min_index_size, int64_t min_data_size)
 
         Logger::Log(LOG_LEVEL_DEBUG, "garbage collection skipped since pending"
                                      "sizes smaller than required");
-        throw(int) MBError::RC_SKIPPED;
+        throw (int)MBError::RC_SKIPPED;
     }
 
     index_free_lists->Empty();
@@ -216,7 +216,7 @@ void ResourceCollection::Prepare(int64_t min_index_size, int64_t min_data_size)
                                         "%llu %d, %llu, data: %llu %d, %llu",
                 header->m_index_offset, MIN_RC_OFFSET_GAP, rc_index_offset,
                 header->m_data_offset, MIN_RC_OFFSET_GAP, rc_data_offset);
-            throw(int) MBError::OUT_OF_BOUND;
+            throw (int)MBError::OUT_OF_BOUND;
         }
 
         // update current indexs to rc offsets
@@ -256,7 +256,7 @@ void ResourceCollection::Finish()
         header->pending_index_buff_size = 0;
     } else {
         if (header->rc_m_index_off_pre == 0)
-            throw(int) MBError::INVALID_ARG;
+            throw (int)MBError::INVALID_ARG;
         header->m_index_offset = header->rc_m_index_off_pre;
     }
     if (data_rc_status == MBError::SUCCESS) {
@@ -266,7 +266,7 @@ void ResourceCollection::Finish()
         header->pending_data_buff_size = 0;
     } else {
         if (header->rc_m_data_off_pre == 0)
-            throw(int) MBError::INVALID_ARG;
+            throw (int)MBError::INVALID_ARG;
         header->m_data_offset = header->rc_m_data_off_pre;
     }
 
@@ -281,8 +281,8 @@ void ResourceCollection::Finish()
 
     // TODO the temp file cannot be removed here. It could cause some
     // rare race conditons.
-    //dict->RemoveUnused(header->m_data_offset, true);
-    //dmm->RemoveUnused(header->m_index_offset, true);
+    // dict->RemoveUnused(header->m_data_offset, true);
+    // dmm->RemoveUnused(header->m_index_offset, true);
 }
 
 bool ResourceCollection::MoveIndexBuffer(int phase, size_t& offset_src, int size)

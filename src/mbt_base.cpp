@@ -26,31 +26,31 @@ DBTraverseBase::DBTraverseBase(const DB& db)
     , rw_buffer(NULL)
 {
     if (!(db.GetDBOptions() & CONSTS::ACCESS_MODE_WRITER))
-        throw(int) MBError::NOT_ALLOWED;
+        throw (int)MBError::NOT_ALLOWED;
 
     dict = db_ref.GetDictPtr();
     if (dict == NULL)
-        throw(int) MBError::NOT_INITIALIZED;
+        throw (int)MBError::NOT_INITIALIZED;
 
     dmm = dict->GetMM();
     if (dmm == NULL)
-        throw(int) MBError::NOT_INITIALIZED;
+        throw (int)MBError::NOT_INITIALIZED;
 
     header = dict->GetHeaderPtr();
     if (header == NULL)
-        throw(int) MBError::NOT_INITIALIZED;
+        throw (int)MBError::NOT_INITIALIZED;
 
     index_free_lists = dmm->GetFreeList();
     if (index_free_lists == NULL)
-        throw(int) MBError::NOT_INITIALIZED;
+        throw (int)MBError::NOT_INITIALIZED;
 
     data_free_lists = dict->GetFreeList();
     if (data_free_lists == NULL)
-        throw(int) MBError::NOT_INITIALIZED;
+        throw (int)MBError::NOT_INITIALIZED;
 
     lfree = dict->GetLockFreePtr();
     if (lfree == NULL)
-        throw(int) MBError::NOT_INITIALIZED;
+        throw (int)MBError::NOT_INITIALIZED;
 
     rw_buffer_size = 1024;
     rw_buffer = new uint8_t[rw_buffer_size];
@@ -96,7 +96,7 @@ void DBTraverseBase::GetAlignmentSize(DBTraverseNode& dbt_node) const
         uint16_t data_size[2];
         if (dict->ReadData((uint8_t*)&data_size[0], DATA_HDR_BYTE, dbt_node.data_offset)
             != DATA_HDR_BYTE)
-            throw(int) MBError::READ_ERROR;
+            throw (int)MBError::READ_ERROR;
         dbt_node.data_size = data_free_lists->GetAlignmentSize(data_size[0] + DATA_HDR_BYTE);
     }
 }
@@ -115,7 +115,7 @@ void DBTraverseBase::BufferCopy(size_t offset_dst, uint8_t* ptr_dst,
         if (size > rw_buffer_size)
             ResizeRWBuffer(size);
         if (drm->ReadData(rw_buffer, size, offset_src) != size)
-            throw(int) MBError::READ_ERROR;
+            throw (int)MBError::READ_ERROR;
 
         if (ptr_dst != NULL) {
             memcpy(ptr_dst, rw_buffer, size);

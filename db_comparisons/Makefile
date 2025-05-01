@@ -8,7 +8,7 @@ CPP=g++
 
 CFLAGS = -O2 -g -std=c++17 -Wall -I/usr/local/include -I$(MABAIN_INSTALL_DIR)/include
 
-LDFLAGS = -lpthread -lcrypto -L$(MABAIN_INSTALL_DIR)/lib -lmabain -ljemalloc
+LDFLAGS = -lpthread -lcrypto -L$(MABAIN_INSTALL_DIR)/lib -lmabain
 
 db_comp_ldb: db_comp.cpp
 	$(CPP) $(CFLAGS) -DLEVEL_DB -o db_comp_ldb db_comp.cpp $(LDFLAGS)

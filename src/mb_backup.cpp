@@ -31,15 +31,15 @@ DBBackup::DBBackup(const DB& db)
     : db_ref(db)
 {
     if (!(db.GetDBOptions() & CONSTS::ACCESS_MODE_WRITER))
-        throw(int) MBError::NOT_ALLOWED;
+        throw (int)MBError::NOT_ALLOWED;
 
     Dict* dict = db_ref.GetDictPtr();
     if (dict == NULL)
-        throw(int) MBError::NOT_INITIALIZED;
+        throw (int)MBError::NOT_INITIALIZED;
 
     header = dict->GetHeaderPtr();
     if (header == NULL)
-        throw(int) MBError::NOT_INITIALIZED;
+        throw (int)MBError::NOT_INITIALIZED;
 }
 
 DBBackup::~DBBackup()
@@ -92,21 +92,21 @@ void DBBackup::copy_file(const std::string& src_path, const std::string& dest_pa
 int DBBackup::Backup(const char* bk_dir)
 {
     if (bk_dir == NULL)
-        throw(int) MBError::INVALID_ARG;
+        throw (int)MBError::INVALID_ARG;
 
     std::string bk_header_path = std::string(bk_dir) + "/_mabain_h";
     if (access(bk_header_path.c_str(), R_OK) == 0)
-        throw(int) MBError::OPEN_FAILURE;
+        throw (int)MBError::OPEN_FAILURE;
 
     if (!db_ref.is_open())
-        throw(int) db_ref.Status();
+        throw (int)db_ref.Status();
 
     if (header->m_data_offset > MAX_6B_OFFSET || header->m_index_offset > MAX_6B_OFFSET)
-        throw(int) MBError::INVALID_SIZE;
+        throw (int)MBError::INVALID_SIZE;
     if (header->data_block_size == 0 || header->data_block_size % BLOCK_SIZE_ALIGN != 0)
-        throw(int) MBError::INVALID_SIZE;
+        throw (int)MBError::INVALID_SIZE;
     if (header->index_block_size == 0 || header->index_block_size % BLOCK_SIZE_ALIGN != 0)
-        throw(int) MBError::INVALID_SIZE;
+        throw (int)MBError::INVALID_SIZE;
 
     db_ref.Flush();
 
@@ -117,7 +117,7 @@ int DBBackup::Backup(const char* bk_dir)
 
     char* buffer = (char*)malloc(BLOCK_SIZE_ALIGN);
     if (buffer == NULL)
-        throw(int) MBError::NO_MEMORY;
+        throw (int)MBError::NO_MEMORY;
 
     // loop through all data files
     const std::string& orig_dir = db_ref.GetDBDir();
@@ -142,12 +142,12 @@ int DBBackup::Backup(const char* bk_dir)
 
     read_file_path = orig_dir + "/_mabain_h";
     write_file_path = std::string(bk_dir) + "/_mabain_h";
-    //header is size of page_size
+    // header is size of page_size
     copy_file(read_file_path, write_file_path, buffer, RollableFile::page_size);
 
     free(buffer);
 
-    //reset number readers/writers in backed up DB.
+    // reset number readers/writers in backed up DB.
     int rval;
     DB db = DB(bk_dir, CONSTS::ACCESS_MODE_READER, 0, 0);
     rval = db.UpdateNumHandlers(CONSTS::ACCESS_MODE_WRITER, -1);

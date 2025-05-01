@@ -46,7 +46,7 @@ shm_lock_and_queue* ShmQueueMgr::CreateFile(uint64_t qid, int qsize,
     const char* queue_dir, int options)
 {
     if (qsize > MB_MAX_NUM_SHM_QUEUE_NODE)
-        throw(int) MBError::INVALID_SIZE;
+        throw (int)MBError::INVALID_SIZE;
     std::string qfile_path;
     if (queue_dir != NULL)
         qfile_path = std::string(queue_dir) + "/_mabain_q" + std::to_string(qid);
@@ -70,7 +70,7 @@ shm_lock_and_queue* ShmQueueMgr::CreateFile(uint64_t qid, int qsize,
     if (qfile != NULL && map_qfile)
         slaq = reinterpret_cast<shm_lock_and_queue*>(qfile->GetMapAddr());
     if (slaq == NULL)
-        throw(int) MBError::MMAP_FAILED;
+        throw (int)MBError::MMAP_FAILED;
 
     if (options & CONSTS::ACCESS_MODE_WRITER) {
         if (init_queue)
@@ -82,7 +82,7 @@ shm_lock_and_queue* ShmQueueMgr::CreateFile(uint64_t qid, int qsize,
     } else {
         if (slaq->initialized == 0) {
             Logger::Log(LOG_LEVEL_ERROR, "shared memory queue not intialized");
-            throw(int) MBError::NOT_INITIALIZED;
+            throw (int)MBError::NOT_INITIALIZED;
         }
     }
 

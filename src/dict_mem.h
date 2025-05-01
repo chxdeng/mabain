@@ -78,8 +78,8 @@ public:
     int NextEdge(const uint8_t* key, EdgePtrs& edge_ptrs,
         uint8_t* tmp_buff, MBData& mbdata) const;
     int NextLowerBoundEdge(const uint8_t* key, int len, EdgePtrs& edge_ptrs,
-        uint8_t* node_buff, MBData& mbdata, EdgePtrs& less_edge_ptrs) const;
-    int NextMaxEdge(EdgePtrs& edge_ptrs, uint8_t* node_buff, MBData& mbdata) const;
+        uint8_t* node_buff, MBData& mbdata, EdgePtrs& less_edge_ptrs, int& le_edge_key) const;
+    int NextMaxEdge(EdgePtrs& edge_ptrs, uint8_t* node_buff, MBData& mbdata, int& max_key) const;
     int RemoveEdgeByIndex(const EdgePtrs& edge_ptrs, MBData& data);
     void InitRootNode();
     inline void WriteEdge(const EdgePtrs& edge_ptrs) const;
@@ -147,11 +147,11 @@ inline void DictMem::WriteEdge(const EdgePtrs& edge_ptrs) const
         if (edge_ptrs.offset + EDGE_SIZE > header->m_index_offset) {
             std::cerr << "invalid edge write: " << edge_ptrs.offset << " " << EDGE_SIZE
                       << " " << header->m_index_offset << "\n";
-            throw(int) MBError::OUT_OF_BOUND;
+            throw (int)MBError::OUT_OF_BOUND;
         }
 
         if (kv_file->RandomWrite(edge_ptrs.ptr, EDGE_SIZE, edge_ptrs.offset) != EDGE_SIZE)
-            throw(int) MBError::WRITE_ERROR;
+            throw (int)MBError::WRITE_ERROR;
     }
 }
 
