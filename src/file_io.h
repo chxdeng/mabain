@@ -39,6 +39,7 @@ public:
 
     int Open();
     int TruncateFile(off_t filesize);
+    int AllocateFile(off_t filesize);
     bool IsOpen() const;
     void Close();
 
