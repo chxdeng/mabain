@@ -62,10 +62,9 @@ MmapFileIO::MmapFileIO(const std::string& fpath, int mode, off_t filesize, bool 
     }
 
     if (filesize > 0 && (mode & O_CREAT)) {
-        if (TruncateFile(filesize) != 0) {
-            Logger::Log(LOG_LEVEL_ERROR, "failed to truncate file %s with size %d",
-                fpath.c_str(), static_cast<int>(filesize));
+        if (AllocateFile(filesize) != 0) {
             Close();
+            return;
         }
     }
 }
