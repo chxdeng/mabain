@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2017 Cisco Inc.
+ * Copyright (C) 2025 Cisco Inc.
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU General Public License, version 2,
@@ -17,9 +17,12 @@
 // @author Changxue Deng <chadeng@cisco.com>
 
 #include <errno.h>
+#include <fcntl.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 
 #include "file_io.h"
+#include "logger.h"
 
 namespace mabain {
 
@@ -144,6 +147,40 @@ int FileIO::TruncateFile(off_t filesize)
         return ftruncate(fd, filesize);
 
     return 1;
+}
+
+int FileIO::AllocateFile(off_t filesize)
+{
+    if (fd <= 0)
+        return 1;
+
+    // First, get current file size
+    struct stat st;
+    if (fstat(fd, &st) != 0)
+        return 1;
+
+    // If we're shrinking the file, use ftruncate
+    if (filesize < st.st_size) {
+        return ftruncate(fd, filesize);
+    }
+
+    // If we're extending the file, use fallocate for better performance
+    // and guaranteed space allocation
+    if (filesize > st.st_size) {
+        // Try fallocate first (Linux-specific, more efficient)
+        if (fallocate(fd, 0, st.st_size, filesize - st.st_size) == 0) {
+            return 0;
+        }
+
+        // Do NOT fall back to ftruncate - fallocate failure should be an error
+        // because ftruncate creates sparse files that can cause SIGBUS under disk pressure
+        Logger::Log(LOG_LEVEL_ERROR, "fallocate failed for file %s, errno=%d, not using ftruncate to avoid sparse files",
+            path.c_str(), errno);
+        return 1; // Return error instead of falling back to ftruncate
+    }
+
+    // File is already the right size
+    return 0;
 }
 
 void FileIO::Flush()
