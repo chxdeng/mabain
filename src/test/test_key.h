@@ -16,7 +16,6 @@
 
 // @author Changxue Deng <chadeng@cisco.com>
 
-#include <openssl/evp.h>
 #include <openssl/sha.h>
 
 #define MABAIN_TEST_KEY_TYPE_INT 0
@@ -44,13 +43,10 @@ public:
             break;
         case MABAIN_TEST_KEY_TYPE_SHA_128: {
             unsigned char hash[SHA_DIGEST_LENGTH];
-            EVP_MD_CTX *mdctx = EVP_MD_CTX_new();
-            if (mdctx == NULL) break;
-            if (EVP_DigestInit_ex(mdctx, EVP_sha1(), NULL) != 1) { EVP_MD_CTX_free(mdctx); break; }
-            if (EVP_DigestUpdate(mdctx, (unsigned char*)&key, 4) != 1) { EVP_MD_CTX_free(mdctx); break; }
-            unsigned int hash_len;
-            if (EVP_DigestFinal_ex(mdctx, hash, &hash_len) != 1) { EVP_MD_CTX_free(mdctx); break; }
-            EVP_MD_CTX_free(mdctx);
+            SHA_CTX sha1;
+            SHA1_Init(&sha1);
+            SHA1_Update(&sha1, (unsigned char*)&key, 4);
+            SHA1_Final(hash, &sha1);
             int i = 0;
             for (i = 0; i < SHA_DIGEST_LENGTH; i++) {
                 sprintf(key_buff + (i * 2), "%02x", hash[i]);
@@ -59,13 +55,10 @@ public:
         } break;
         case MABAIN_TEST_KEY_TYPE_SHA_256: {
             unsigned char hash[SHA256_DIGEST_LENGTH];
-            EVP_MD_CTX *mdctx = EVP_MD_CTX_new();
-            if (mdctx == NULL) break;
-            if (EVP_DigestInit_ex(mdctx, EVP_sha256(), NULL) != 1) { EVP_MD_CTX_free(mdctx); break; }
-            if (EVP_DigestUpdate(mdctx, (unsigned char*)&key, 4) != 1) { EVP_MD_CTX_free(mdctx); break; }
-            unsigned int hash_len;
-            if (EVP_DigestFinal_ex(mdctx, hash, &hash_len) != 1) { EVP_MD_CTX_free(mdctx); break; }
-            EVP_MD_CTX_free(mdctx);
+            SHA256_CTX sha256;
+            SHA256_Init(&sha256);
+            SHA256_Update(&sha256, (unsigned char*)&key, 4);
+            SHA256_Final(hash, &sha256);
             int i = 0;
             for (i = 0; i < SHA256_DIGEST_LENGTH; i++) {
                 sprintf(key_buff + (i * 2), "%02x", hash[i]);
