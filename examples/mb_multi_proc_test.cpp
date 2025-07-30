@@ -22,6 +22,7 @@
 #include <iostream>
 #include <map>
 #include <openssl/sha.h>
+#include <openssl/evp.h>
 #include <string.h>
 #include <string>
 #include <sys/time.h>
@@ -315,16 +316,29 @@ static void Reader(int id)
 static char sha256_str[65];
 static const char* get_sha256_str(int key)
 {
-    unsigned char hash[SHA256_DIGEST_LENGTH];
-    SHA256_CTX sha256;
-    SHA256_Init(&sha256);
-    SHA256_Update(&sha256, (unsigned char*)&key, 4);
-    SHA256_Final(hash, &sha256);
-    int i = 0;
-    for (i = 0; i < SHA256_DIGEST_LENGTH; i++) {
+    unsigned char hash[EVP_MAX_MD_SIZE];
+    unsigned int hash_len;
+    
+    EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+    if (!ctx) {
+        sha256_str[0] = 0;
+        return sha256_str;
+    }
+    
+    if (EVP_DigestInit_ex(ctx, EVP_sha256(), NULL) != 1 ||
+        EVP_DigestUpdate(ctx, (unsigned char*)&key, 4) != 1 ||
+        EVP_DigestFinal_ex(ctx, hash, &hash_len) != 1) {
+        EVP_MD_CTX_free(ctx);
+        sha256_str[0] = 0;
+        return sha256_str;
+    }
+    
+    EVP_MD_CTX_free(ctx);
+    
+    for (unsigned int i = 0; i < hash_len; i++) {
         sprintf(sha256_str + (i * 2), "%02x", hash[i]);
     }
-    sha256_str[64] = 0;
+    sha256_str[hash_len * 2] = 0;
     return (const char*)sha256_str;
 }
 

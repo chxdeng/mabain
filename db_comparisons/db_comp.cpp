@@ -3,6 +3,7 @@
 #include <fstream>
 #include <iostream>
 #include <openssl/sha.h>
+#include <openssl/evp.h>
 #include <string>
 #include <sys/syscall.h>
 #include <sys/time.h>
@@ -44,30 +45,56 @@ static unsigned long long memcap = 1024ULL * 1024 * 1024;
 
 static void get_sha256_str(int key, char* sha256_str)
 {
-    unsigned char hash[SHA256_DIGEST_LENGTH];
-    SHA256_CTX sha256;
-    SHA256_Init(&sha256);
-    SHA256_Update(&sha256, (unsigned char*)&key, 4);
-    SHA256_Final(hash, &sha256);
-    int i = 0;
-    for (i = 0; i < SHA256_DIGEST_LENGTH; i++) {
+    unsigned char hash[EVP_MAX_MD_SIZE];
+    unsigned int hash_len;
+    
+    EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+    if (!ctx) {
+        sha256_str[0] = 0;
+        return;
+    }
+    
+    if (EVP_DigestInit_ex(ctx, EVP_sha256(), NULL) != 1 ||
+        EVP_DigestUpdate(ctx, (unsigned char*)&key, 4) != 1 ||
+        EVP_DigestFinal_ex(ctx, hash, &hash_len) != 1) {
+        EVP_MD_CTX_free(ctx);
+        sha256_str[0] = 0;
+        return;
+    }
+    
+    EVP_MD_CTX_free(ctx);
+    
+    for (unsigned int i = 0; i < hash_len; i++) {
         sprintf(sha256_str + (i * 2), "%02x", hash[i]);
     }
-    sha256_str[64] = 0;
+    sha256_str[hash_len * 2] = 0;
 }
 
 static void get_sha1_str(int key, char* sha1_str)
 {
-    unsigned char hash[SHA_DIGEST_LENGTH];
-    SHA_CTX sha1;
-    SHA1_Init(&sha1);
-    SHA1_Update(&sha1, (unsigned char*)&key, 4);
-    SHA1_Final(hash, &sha1);
-    int i = 0;
-    for (i = 0; i < SHA_DIGEST_LENGTH; i++) {
+    unsigned char hash[EVP_MAX_MD_SIZE];
+    unsigned int hash_len;
+    
+    EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+    if (!ctx) {
+        sha1_str[0] = 0;
+        return;
+    }
+    
+    if (EVP_DigestInit_ex(ctx, EVP_sha1(), NULL) != 1 ||
+        EVP_DigestUpdate(ctx, (unsigned char*)&key, 4) != 1 ||
+        EVP_DigestFinal_ex(ctx, hash, &hash_len) != 1) {
+        EVP_MD_CTX_free(ctx);
+        sha1_str[0] = 0;
+        return;
+    }
+    
+    EVP_MD_CTX_free(ctx);
+    
+    for (unsigned int i = 0; i < hash_len; i++) {
         sprintf(sha1_str + (i * 2), "%02x", hash[i]);
     }
-    sha1_str[32] = 0;
+    sha1_str[hash_len * 2] = 0;
 }
 
 static void print_cpu_info()
