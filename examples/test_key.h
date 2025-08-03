@@ -17,6 +17,7 @@
 // @author Changxue Deng <chadeng@cisco.com>
 
 #include <openssl/sha.h>
+#include <openssl/evp.h>
 
 #define MABAIN_TEST_KEY_TYPE_INT 0
 #define MABAIN_TEST_KEY_TYPE_SHA_128 1
@@ -42,28 +43,54 @@ public:
             snprintf(key_buff, MABAIN_TEST_KEY_BUFF_SIZE, "%d", key);
             break;
         case MABAIN_TEST_KEY_TYPE_SHA_128: {
-            unsigned char hash[SHA_DIGEST_LENGTH];
-            SHA_CTX sha1;
-            SHA1_Init(&sha1);
-            SHA1_Update(&sha1, (unsigned char*)&key, 4);
-            SHA1_Final(hash, &sha1);
-            int i = 0;
-            for (i = 0; i < SHA_DIGEST_LENGTH; i++) {
+            unsigned char hash[EVP_MAX_MD_SIZE];
+            unsigned int hash_len;
+            
+            EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+            if (!ctx) {
+                key_buff[0] = 0;
+                break;
+            }
+            
+            if (EVP_DigestInit_ex(ctx, EVP_sha1(), NULL) != 1 ||
+                EVP_DigestUpdate(ctx, (unsigned char*)&key, 4) != 1 ||
+                EVP_DigestFinal_ex(ctx, hash, &hash_len) != 1) {
+                EVP_MD_CTX_free(ctx);
+                key_buff[0] = 0;
+                break;
+            }
+            
+            EVP_MD_CTX_free(ctx);
+            
+            for (unsigned int i = 0; i < hash_len; i++) {
                 sprintf(key_buff + (i * 2), "%02x", hash[i]);
             }
-            key_buff[32] = 0;
+            key_buff[hash_len * 2] = 0;
         } break;
         case MABAIN_TEST_KEY_TYPE_SHA_256: {
-            unsigned char hash[SHA256_DIGEST_LENGTH];
-            SHA256_CTX sha256;
-            SHA256_Init(&sha256);
-            SHA256_Update(&sha256, (unsigned char*)&key, 4);
-            SHA256_Final(hash, &sha256);
-            int i = 0;
-            for (i = 0; i < SHA256_DIGEST_LENGTH; i++) {
+            unsigned char hash[EVP_MAX_MD_SIZE];
+            unsigned int hash_len;
+            
+            EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+            if (!ctx) {
+                key_buff[0] = 0;
+                break;
+            }
+            
+            if (EVP_DigestInit_ex(ctx, EVP_sha256(), NULL) != 1 ||
+                EVP_DigestUpdate(ctx, (unsigned char*)&key, 4) != 1 ||
+                EVP_DigestFinal_ex(ctx, hash, &hash_len) != 1) {
+                EVP_MD_CTX_free(ctx);
+                key_buff[0] = 0;
+                break;
+            }
+            
+            EVP_MD_CTX_free(ctx);
+            
+            for (unsigned int i = 0; i < hash_len; i++) {
                 sprintf(key_buff + (i * 2), "%02x", hash[i]);
             }
-            key_buff[64] = 0;
+            key_buff[hash_len * 2] = 0;
         } break;
         default:
             abort();
