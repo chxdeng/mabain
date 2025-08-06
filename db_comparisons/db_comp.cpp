@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <chrono>
 #include <cstring>
 #include <fstream>
 #include <iostream>
@@ -216,14 +217,14 @@ static void InitDB(bool writer_mode = true)
 
 static void Add(int n)
 {
-    timeval start, stop;
     char kv[65];
 
-    gettimeofday(&start, NULL);
 #if LMDB
     if (!sync_on_write)
         mdb_txn_begin(env, NULL, 0, &txn);
 #endif
+
+    uint64_t total_time = 0;
     for (int i = 0; i < n; i++) {
         std::string key, val;
         if (key_type == 0) {
@@ -242,9 +243,15 @@ static void Add(int n)
 #ifdef LEVEL_DB
         leveldb::WriteOptions opts = leveldb::WriteOptions();
         opts.sync = sync_on_write;
+        auto start = std::chrono::high_resolution_clock::now();
         db->Put(opts, key, val);
+        auto stop = std::chrono::high_resolution_clock::now();
+        total_time += std::chrono::duration_cast<std::chrono::microseconds>(stop - start).count();
 #elif KYOTO_CABINET
+        auto start = std::chrono::high_resolution_clock::now();
         db->set(key.c_str(), val.c_str());
+        auto stop = std::chrono::high_resolution_clock::now();
+        total_time += std::chrono::duration_cast<std::chrono::microseconds>(stop - start).count();
 #elif LMDB
         MDB_val lmdb_key, lmdb_val;
         lmdb_key.mv_size = key.size();
@@ -255,16 +262,25 @@ static void Add(int n)
         if (sync_on_write) {
             mdb_txn_begin(env, NULL, 0, &txn);
             mdb_cursor_open(txn, db, &mc);
+            auto start = std::chrono::high_resolution_clock::now();
             mdb_cursor_put(mc, &lmdb_key, &lmdb_val, 0);
+            auto stop = std::chrono::high_resolution_clock::now();
+            total_time += std::chrono::duration_cast<std::chrono::microseconds>(stop - start).count();
             mdb_cursor_close(mc);
             mdb_txn_commit(txn);
         } else {
             mdb_cursor_open(txn, db, &mc);
+            auto start = std::chrono::high_resolution_clock::now();
             mdb_cursor_put(mc, &lmdb_key, &lmdb_val, 0);
+            auto stop = std::chrono::high_resolution_clock::now();
+            total_time += std::chrono::duration_cast<std::chrono::microseconds>(stop - start).count();
             mdb_cursor_close(mc);
         }
 #elif MABAIN
+        auto start = std::chrono::high_resolution_clock::now();
         db->Add(key, val);
+        auto stop = std::chrono::high_resolution_clock::now();
+        total_time += std::chrono::duration_cast<std::chrono::microseconds>(stop - start).count();
 #endif
 
         if ((i + 1) % ONE_MILLION == 0) {
@@ -276,15 +292,12 @@ static void Add(int n)
         mdb_txn_commit(txn);
 #endif
 
-    gettimeofday(&stop, NULL);
-
-    uint64_t timediff = (stop.tv_sec - start.tv_sec) * 1000000 + (stop.tv_usec - start.tv_usec);
+    uint64_t timediff = total_time;
     std::cout << "===== " << timediff * 1.0 / n << " micro seconds per insertion\n";
 }
 
 static void Lookup(int n)
 {
-    timeval start, stop;
     int nfound = 0;
     char kv[65];
 #ifdef LMDB
@@ -294,7 +307,7 @@ static void Lookup(int n)
     mdb_cursor_open(txn, db, &cursor);
 #endif
 
-    gettimeofday(&start, NULL);
+    uint64_t total_time = 0;
     for (int i = 0; i < n; i++) {
         std::string key;
         if (key_type == 0) {
@@ -310,22 +323,36 @@ static void Lookup(int n)
 
 #ifdef LEVEL_DB
         std::string value;
+        auto start = std::chrono::high_resolution_clock::now();
         leveldb::Status s = db->Get(leveldb::ReadOptions(), key, &value);
+        auto stop = std::chrono::high_resolution_clock::now();
+        total_time += std::chrono::duration_cast<std::chrono::microseconds>(stop - start).count();
         if (s.ok())
             nfound++;
 #elif KYOTO_CABINET
         std::string value;
-        if (db->get(key, &value))
+        auto start = std::chrono::high_resolution_clock::now();
+        bool found = db->get(key, &value);
+        auto stop = std::chrono::high_resolution_clock::now();
+        total_time += std::chrono::duration_cast<std::chrono::microseconds>(stop - start).count();
+        if (found)
             nfound++;
 #elif LMDB
         lmdb_key.mv_data = (void*)key.data();
         lmdb_key.mv_size = key.size();
-        if (mdb_cursor_get(cursor, &lmdb_key, &lmdb_value, MDB_SET) == 0)
+        auto start = std::chrono::high_resolution_clock::now();
+        int lmdb_result = mdb_cursor_get(cursor, &lmdb_key, &lmdb_value, MDB_SET);
+        auto stop = std::chrono::high_resolution_clock::now();
+        total_time += std::chrono::duration_cast<std::chrono::microseconds>(stop - start).count();
+        if (lmdb_result == 0)
             nfound++;
             // std::cout<<key<<":"<<std::string((char*)lmdb_value.mv_data, lmdb_value.mv_size)<<"\n";
 #elif MABAIN
         mabain::MBData mbd;
+        auto start = std::chrono::high_resolution_clock::now();
         int rval = db->Find(key, mbd);
+        auto stop = std::chrono::high_resolution_clock::now();
+        total_time += std::chrono::duration_cast<std::chrono::microseconds>(stop - start).count();
         // std::cout<<key<<":"<<std::string((char*)mbd.buff, mbd.data_len)<<"\n";
         if (rval == 0)
             nfound++;
@@ -340,16 +367,14 @@ static void Lookup(int n)
     mdb_cursor_close(cursor);
     mdb_txn_abort(txn);
 #endif
-    gettimeofday(&stop, NULL);
+    uint64_t timediff = total_time;
 
     std::cout << "found " << nfound << " key-value pairs\n";
-    uint64_t timediff = (stop.tv_sec - start.tv_sec) * 1000000 + (stop.tv_usec - start.tv_usec);
     std::cout << "===== " << timediff * 1.0 / n << " micro seconds per lookup\n";
 }
 
 static void Delete(int n)
 {
-    timeval start, stop;
     int nfound = 0;
     char kv[65];
 
@@ -358,7 +383,7 @@ static void Delete(int n)
         mdb_txn_begin(env, NULL, 0, &txn);
 #endif
 
-    gettimeofday(&start, NULL);
+    uint64_t total_time = 0;
     for (int i = 0; i < n; i++) {
         std::string key;
         if (key_type == 0) {
@@ -374,12 +399,18 @@ static void Delete(int n)
 #ifdef LEVEL_DB
         leveldb::WriteOptions opts = leveldb::WriteOptions();
         opts.sync = sync_on_write;
+        auto start = std::chrono::high_resolution_clock::now();
         leveldb::Status s = db->Delete(opts, key);
+        auto stop = std::chrono::high_resolution_clock::now();
+        total_time += std::chrono::duration_cast<std::chrono::microseconds>(stop - start).count();
         if (s.ok())
             nfound++;
 #elif KYOTO_CABINET
-        std::string value;
-        if (db->remove(key))
+        auto start = std::chrono::high_resolution_clock::now();
+        bool removed = db->remove(key);
+        auto stop = std::chrono::high_resolution_clock::now();
+        total_time += std::chrono::duration_cast<std::chrono::microseconds>(stop - start).count();
+        if (removed)
             nfound++;
 #elif LMDB
         MDB_val lmdb_key;
@@ -387,15 +418,26 @@ static void Delete(int n)
         lmdb_key.mv_data = (void*)key.data();
         if (sync_on_write) {
             mdb_txn_begin(env, NULL, 0, &txn);
-            if (mdb_del(txn, db, &lmdb_key, NULL) == 0)
+            auto start = std::chrono::high_resolution_clock::now();
+            int result = mdb_del(txn, db, &lmdb_key, NULL);
+            auto stop = std::chrono::high_resolution_clock::now();
+            total_time += std::chrono::duration_cast<std::chrono::microseconds>(stop - start).count();
+            if (result == 0)
                 nfound++;
             mdb_txn_commit(txn);
         } else {
-            if (mdb_del(txn, db, &lmdb_key, NULL) == 0)
+            auto start = std::chrono::high_resolution_clock::now();
+            int result = mdb_del(txn, db, &lmdb_key, NULL);
+            auto stop = std::chrono::high_resolution_clock::now();
+            total_time += std::chrono::duration_cast<std::chrono::microseconds>(stop - start).count();
+            if (result == 0)
                 nfound++;
         }
 #elif MABAIN
+        auto start = std::chrono::high_resolution_clock::now();
         int rval = db->Remove(key);
+        auto stop = std::chrono::high_resolution_clock::now();
+        total_time += std::chrono::duration_cast<std::chrono::microseconds>(stop - start).count();
         if (rval == 0)
             nfound++;
 #endif
@@ -409,10 +451,9 @@ static void Delete(int n)
     if (!sync_on_write)
         mdb_txn_commit(txn);
 #endif
-    gettimeofday(&stop, NULL);
 
     std::cout << "deleted " << nfound << " key-value pairs\n";
-    uint64_t timediff = (stop.tv_sec - start.tv_sec) * 1000000 + (stop.tv_usec - start.tv_usec);
+    uint64_t timediff = total_time;
     std::cout << "===== " << timediff * 1.0 / n << " micro seconds per deletion\n";
 }
 
@@ -539,9 +580,8 @@ static void ConcurrencyTest(int num, int n_r)
 #endif
 
     pthread_t wid;
-    timeval start, stop;
 
-    gettimeofday(&start, NULL);
+    auto start = std::chrono::high_resolution_clock::now();
 
     // Start the writer
     if (pthread_create(&wid, NULL, Writer, &num) != 0) {
@@ -564,9 +604,9 @@ static void ConcurrencyTest(int num, int n_r)
     }
     pthread_join(wid, NULL);
 
-    gettimeofday(&stop, NULL);
+    auto stop = std::chrono::high_resolution_clock::now();
 
-    uint64_t timediff = (stop.tv_sec - start.tv_sec) * 1000000 + (stop.tv_usec - start.tv_usec);
+    uint64_t timediff = std::chrono::duration_cast<std::chrono::microseconds>(stop - start).count();
     std::cout << "===== " << timediff * 1.0 / num_kv << " micro seconds per concurrent insertion/lookup\n";
 }
 

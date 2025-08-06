@@ -17,7 +17,7 @@ target_include_directories(mabain PUBLIC ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_
 # Set compile options
 target_compile_options(mabain PRIVATE
     -Wall -Werror -Wwrite-strings -Wsign-compare -Wcast-align -Wformat-security
-    -fdiagnostics-show-option -g -ggdb -fPIC -O2 -std=c++17 -D__LOCK_FREE__
+    -fdiagnostics-show-option -g -ggdb -fPIC -O3 -std=c++17 -D__LOCK_FREE__
 )
 
 # Conditionally add __DEBUG__ definition

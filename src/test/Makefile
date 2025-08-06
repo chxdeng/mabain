@@ -50,7 +50,7 @@ mb_header_test: mb_header_test.cpp
 
 sigbus_disk_pressure_test: sigbus_disk_pressure_test.cpp ../libmabain.so
 	$(CPP) $(CPPFLAGS) sigbus_disk_pressure_test.cpp
-	$(CPP) sigbus_disk_pressure_test.o -o sigbus_disk_pressure_test -L../ -lmabain $(LDFLAGS)
+	$(CPP) sigbus_disk_pressure_test.o -o sigbus_disk_pressure_test -L../../build/lib -lmabain $(LDFLAGS)
 
 
 clean:
