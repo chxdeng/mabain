@@ -6,7 +6,7 @@ LDFLAGS  = -lpthread -lcrypto -ljemalloc
 TESTSOURCES=$(wildcard *.cpp)
 
 all: mb_test mb_test1 mb_test2 mb_test_mp multi_writer_bug_test mb_bound_test mb_header_test \
-	mb_mm_test mb_mm_prune_test sigbus_disk_pressure_test
+	mb_mm_test mb_mm_prune_test sigbus_disk_pressure_test jemalloc_test
 
 mb_mm_prune_test: mb_mm_prune_test.cpp
 	$(CPP) $(CPPFLAGS) mb_mm_prune_test.cpp
@@ -19,6 +19,10 @@ mb_mm_test: mb_mm_test.cpp
 mb_test: mabain_test.cpp
 	$(CPP) $(CPPFLAGS) mabain_test.cpp
 	$(CPP) mabain_test.o -o mb_test -lmabain $(LDFLAGS)
+
+jemalloc_test: jemalloc_test.cpp
+	$(CPP) $(CPPFLAGS) jemalloc_test.cpp
+	$(CPP) jemalloc_test.o -o jemalloc_test -lmabain $(LDFLAGS)
 
 mb_test1: mbtest1.cpp
 	$(CPP) $(CPPFLAGS) mbtest1.cpp 
@@ -50,4 +54,4 @@ sigbus_disk_pressure_test: sigbus_disk_pressure_test.cpp ../libmabain.so
 
 
 clean:
-	-rm -rf *.o mb_test* multi_writer_bug_test mb_bound_test mb_header_test mb_mm_test mb_mm_prune_test sigbus_disk_pressure_test
+	-rm -rf *.o mb_test* multi_writer_bug_test mb_bound_test mb_header_test mb_mm_test mb_mm_prune_test sigbus_disk_pressure_test jemalloc_test

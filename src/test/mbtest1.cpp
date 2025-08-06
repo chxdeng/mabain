@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include <unistd.h>
+#include <filesystem>
 
 #include "../db.h"
 
@@ -335,8 +336,9 @@ static void* run_mb_test(void* arg)
                     }
                     CheckCount();
                 } else if (rcn % 20000523 == 0) {
-                    if (system("reboot") != 0) {
-                    }
+                    // Skip reboot command - this was a system test feature
+                    // if (system("reboot") != 0) {
+                    // }
                 }
             }
         }
@@ -357,13 +359,17 @@ static void* run_mb_test(void* arg)
 
 static void SetTestStatus(bool success)
 {
-    std::string cmd;
-    if (success) {
-        cmd = std::string("touch ") + mbdir + "/_success";
-    } else {
-        cmd = std::string("rm ") + mbdir + "/_success >" + mbdir + "/out 2>" + mbdir + "/err";
-    }
-    if (system(cmd.c_str()) != 0) {
+    std::string success_file = std::string(mbdir) + "/_success";
+    
+    try {
+        if (success) {
+            std::ofstream file(success_file);
+            file.close();
+        } else {
+            std::filesystem::remove(success_file);
+        }
+    } catch (const std::filesystem::filesystem_error& ex) {
+        // Ignore errors, similar to original system() calls
     }
 }
 

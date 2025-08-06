@@ -2,6 +2,7 @@
 #include <fstream>
 #include <time.h>
 #include <unistd.h>
+#include <filesystem>
 
 #include "../db.h"
 
@@ -25,9 +26,18 @@ static void create_header_file(int size)
 int main(int argc, char* argv[])
 {
     srand(time(NULL));
-    string cmd = string("rm ") + db_dir + "/_mabain*";
-    if (system(cmd.c_str()) != 0) {
+    
+    try {
+        // Remove files matching pattern
+        for (const auto& entry : std::filesystem::directory_iterator(db_dir)) {
+            if (entry.path().filename().string().find("_mabain") == 0) {
+                std::filesystem::remove_all(entry.path());
+            }
+        }
+    } catch (const std::filesystem::filesystem_error& ex) {
+        // Ignore errors, similar to original system() call
     }
+    
     create_header_file(4096);
     DB db(db_dir, CONSTS::WriterOptions() | CONSTS::ASYNC_WRITER_MODE);
     assert(db.is_open());

@@ -24,6 +24,7 @@
 #include <sys/time.h>
 #include <unistd.h>
 #include <vector>
+#include <filesystem>
 
 #include "../db.h"
 #include "../dict.h"
@@ -39,11 +40,25 @@ static bool debug = false;
 
 static void clean_db_dir()
 {
-    std::string cmd = std::string("rm -rf ") + MB_DIR + "/_mabain_* >" + MB_DIR + "/out 2>" + MB_DIR + "/err";
-    if (system(cmd.c_str()) != 0) {
-    }
-    cmd = std::string("rm -rf ") + MB_DIR + "/backup/_mabain_* >" + MB_DIR + "/out 2>" + MB_DIR + "/err";
-    if (system(cmd.c_str()) != 0) {
+    try {
+        // Remove files matching pattern1
+        for (const auto& entry : std::filesystem::directory_iterator(MB_DIR)) {
+            if (entry.path().filename().string().find("_mabain_") == 0) {
+                std::filesystem::remove_all(entry.path());
+            }
+        }
+        
+        // Remove files matching pattern2 in backup directory
+        std::string backup_dir = std::string(MB_DIR) + "/backup";
+        if (std::filesystem::exists(backup_dir)) {
+            for (const auto& entry : std::filesystem::directory_iterator(backup_dir)) {
+                if (entry.path().filename().string().find("_mabain_") == 0) {
+                    std::filesystem::remove_all(entry.path());
+                }
+            }
+        }
+    } catch (const std::filesystem::filesystem_error& ex) {
+        // Ignore errors, similar to original system() calls
     }
 }
 
@@ -481,8 +496,10 @@ static void backup_test(std::string& backup_dir, std::string& list_file, MBConfi
     std::string first_key = iter.key;
 
     // Create Backup DB directory
-    std::string backup_mkdir_cmd = "mkdir " + backup_dir;
-    if (system(backup_mkdir_cmd.c_str()) != 0) {
+    try {
+        std::filesystem::create_directories(backup_dir);
+    } catch (const std::filesystem::filesystem_error& ex) {
+        // Ignore errors, similar to original system() call
     }
 
     // backup DB
@@ -517,150 +534,19 @@ static void backup_test(std::string& backup_dir, std::string& list_file, MBConfi
     db.Close();
 }
 
-static void tracking_buffer_test(std::string& list_file, MBConfig& mbconf, int64_t expected_count)
-{
-    std::cout << "Tracking buffer test: " << list_file << "\n";
-    mbconf.options = CONSTS::ACCESS_MODE_WRITER;
-    DB db(mbconf);
-    assert(db.is_open());
-
-    std::ifstream in(list_file.c_str());
-    std::string line;
-    std::vector<std::string> keys;
-    std::cout << "Loading " << list_file << "\n";
-    while (std::getline(in, line)) {
-        if (line.length() > (unsigned)CONSTS::MAX_KEY_LENGHTH) {
-            continue;
-        }
-        db.Add(line, line);
-        keys.push_back(line);
-    }
-    in.close();
-    std::cout << "Removing " << list_file << "\n";
-    for (size_t i = 0; i < keys.size(); i++) {
-        db.Remove(keys[i]);
-    }
-
-    std::ostringstream oss;
-    db.PrintStats(oss);
-    std::string stats = oss.str();
-    std::cout << stats;
-    if (stats.find("Size of tracking buffer: 0") == std::string::npos) {
-        std::cerr << "Tracking buffer size is not 0\n";
-        exit(1);
-    }
-    // Note root index node is never removed
-    if (stats.find("Size of index tracking buffer: 1") == std::string::npos) {
-        std::cerr << "Size of tracking buffer is not 0\n";
-        exit(1);
-    }
-
-    db.Close();
-    std::cout << "Tracking buffer test passed: " << list_file << "\n";
-}
-
-static void jemalloc_remove_all_test(std::string& list_file, const MBConfig& mbconf, int64_t expected_count)
-{
-    MBConfig conf;
-    memcpy(&conf, &mbconf, sizeof(conf));
-    std::cout << "jemalloc remove all test: " << list_file << "\n";
-    conf.options = CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC;
-    conf.block_size_data = 64 * 1024 * 1024LL;
-    conf.block_size_index = 64 * 1024 * 1024LL;
-    conf.max_num_data_block = 1;
-    conf.max_num_index_block = 1;
-    conf.memcap_index = conf.block_size_index * conf.max_num_index_block;
-    conf.memcap_data = conf.block_size_data * conf.max_num_data_block;
-
-    DB db(conf);
-    std::cout << db.StatusStr() << "\n";
-    assert(db.is_open());
-
-    std::ifstream in(list_file.c_str());
-    std::string line;
-    std::vector<std::string> keys;
-    std::cout << "Loading " << list_file << "\n";
-    while (std::getline(in, line)) {
-        if (line.length() > (unsigned)CONSTS::MAX_KEY_LENGHTH) {
-            continue;
-        }
-        db.Add(line, line);
-        keys.push_back(line);
-    }
-    in.close();
-
-    std::cout << "test RemoveAll API\n";
-    int rval = db.RemoveAll();
-    assert(rval == MBError::SUCCESS);
-
-    conf.options = CONSTS::ACCESS_MODE_READER;
-    lookup_test(list_file, conf, 0);
-    iterator_test(conf, 0);
-
-    for (size_t i = 0; i < keys.size(); i++) {
-        db.Add(keys[i], keys[i]);
-    }
-    db.PrintStats();
-    lookup_test(list_file, conf, keys.size());
-    iterator_test(conf, keys.size());
-
-    std::cout << "remove all test passed: " << list_file << "\n";
-}
-
-static void jemalloc_test(std::string& list_file, const MBConfig& mbconf, int64_t expected_count)
-{
-    MBConfig conf;
-    memcpy(&conf, &mbconf, sizeof(conf));
-    std::cout << "Jemalloc test: " << list_file << "\n";
-    conf.options = CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC;
-    conf.block_size_data = 32 * 1024 * 1024LL;
-    conf.block_size_index = 32 * 1024 * 1024LL;
-    conf.max_num_data_block = 30;
-    conf.max_num_index_block = 30;
-    conf.memcap_index = conf.block_size_index * conf.max_num_index_block;
-    conf.memcap_data = conf.block_size_data * conf.max_num_data_block;
-
-    DB db(conf);
-    std::cout << db.StatusStr() << "\n";
-    assert(db.is_open());
-
-    std::ifstream in(list_file.c_str());
-    std::string line;
-    std::vector<std::string> keys;
-    std::cout << "Loading " << list_file << "\n";
-    while (std::getline(in, line)) {
-        if (line.length() > (unsigned)CONSTS::MAX_KEY_LENGHTH) {
-            continue;
-        }
-        db.Add(line, line);
-        keys.push_back(line);
-    }
-    in.close();
-
-    std::cout << "iterating test with jemalloc loading " << list_file << "\n";
-    conf.options = CONSTS::ACCESS_MODE_READER;
-    lookup_test(list_file, conf, keys.size());
-    iterator_test(conf, keys.size());
-
-    std::cout << "Removing " << list_file << "\n";
-    for (size_t i = 0; i < keys.size(); i++) {
-        db.Remove(keys[i]);
-    }
-
-    db.PrintStats();
-    db.Close();
-    std::cout << "Jemalloc test passed: " << list_file << "\n";
-}
-
 static void SetTestStatus(bool success)
 {
-    std::string cmd;
-    if (success) {
-        cmd = std::string("touch ") + MB_DIR + "/_success";
-    } else {
-        cmd = std::string("rm ") + MB_DIR + "/_success >" + MB_DIR + "/out 2>" + MB_DIR + "/err";
-    }
-    if (system(cmd.c_str()) != 0) {
+    std::string success_file = std::string(MB_DIR) + "/_success";
+    
+    try {
+        if (success) {
+            std::ofstream file(success_file);
+            file.close();
+        } else {
+            std::filesystem::remove(success_file);
+        }
+    } catch (const std::filesystem::filesystem_error& ex) {
+        // Ignore errors, similar to original system() calls
     }
 }
 
@@ -752,12 +638,6 @@ int main(int argc, char* argv[])
         } else if (mode.compare("backup") == 0) {
             mbconf.options = CONSTS::ACCESS_MODE_WRITER;
             backup_test(backup_dir, file, mbconf, expected_count);
-        } else if (mode.compare("tracking_buffer") == 0) {
-            tracking_buffer_test(file, mbconf, expected_count);
-        } else if (mode.compare("jemalloc") == 0) {
-            jemalloc_test(file, mbconf, expected_count);
-        } else if (mode.compare("remove_all") == 0) {
-            jemalloc_remove_all_test(file, mbconf, expected_count);
         } else {
             std::cerr << "Unknown test\n";
             abort();
