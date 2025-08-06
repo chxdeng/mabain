@@ -571,6 +571,8 @@ int RollableFile::ResetJemalloc()
         return MBError::SUCCESS;
     }
     unsigned arena_index = files[0]->mm_meta->arena_index;
+    // Remove from global arena manager map before destruction
+    arena_manager_map.erase(arena_index);
     // Destroy the arena
     std::string arena_destroy = "arena." + std::to_string(arena_index) + ".destroy";
     int rc = mallctl(arena_destroy.c_str(), nullptr, nullptr, nullptr, 0);

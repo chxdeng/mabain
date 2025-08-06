@@ -56,6 +56,9 @@ typedef struct _MBConfig {
     int num_entry_per_bucket;
     uint32_t queue_size;
     const char* queue_dir;
+
+    // Jemalloc configuration
+    bool jemalloc_keep_db; // If true, don't call RemoveAll in jemalloc mode
 } MBConfig;
 
 // Database handle class

@@ -297,12 +297,17 @@ void DB::PostDBUpdate(const MBConfig& config, bool init_header, bool update_head
     if (config.options & CONSTS::ACCESS_MODE_WRITER) {
         if (config.options & CONSTS::OPTION_JEMALLOC) {
             if (!init_header) {
-                // reset db in jemalloc mode if header already exists
-                Logger::Log(LOG_LEVEL_INFO, "reset db in jemalloc mode");
-                int rval = dict->RemoveAll();
-                if (rval != MBError::SUCCESS) {
-                    Logger::Log(LOG_LEVEL_ERROR, "failed to reset db: %s", MBError::get_error_str(rval));
-                    status = rval;
+                if (config.jemalloc_keep_db) {
+                    // Keep existing DB for warm restart when explicitly configured
+                    Logger::Log(LOG_LEVEL_DEBUG, "jemalloc mode: keeping existing db for warm restart");
+                } else {
+                    // Default behavior: reset db in jemalloc mode if header already exists
+                    Logger::Log(LOG_LEVEL_DEBUG, "reset db in jemalloc mode");
+                    int rval = dict->RemoveAll();
+                    if (rval != MBError::SUCCESS) {
+                        Logger::Log(LOG_LEVEL_ERROR, "failed to reset db: %s", MBError::get_error_str(rval));
+                        status = rval;
+                    }
                 }
             }
         } else {
