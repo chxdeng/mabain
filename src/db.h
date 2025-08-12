@@ -214,6 +214,12 @@ public:
     const iterator begin(const std::string& prefix) const;
     const iterator end() const;
 
+    // Prefix cache control
+    void EnablePrefixCache(int n, size_t capacity = 65536);
+    void DisablePrefixCache();
+    void DumpPrefixCacheStats(std::ostream& os = std::cout) const;
+    void ResetPrefixCacheStats() const;
+
 private:
     void InitDB(MBConfig& config);
     void InitDBEx(MBConfig& config);

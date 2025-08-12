@@ -40,6 +40,11 @@ public:
     static const int OPTION_SHMQ_RETRY;
     static const int OPTION_JEMALLOC;
 
+    // Max retries for lock-free reader retry loops before returning TRY_AGAIN
+    static const int LOCK_FREE_RETRY_LIMIT;
+    // Max steps allowed in Find traversal loop to avoid pathological spins
+    static const int FIND_TRAVERSAL_LIMIT;
+
     static int WriterOptions();
     static int ReaderOptions();
 };

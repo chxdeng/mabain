@@ -14,11 +14,22 @@ add_library(mabain SHARED ${SOURCES})
 # Specify include directories for this target
 target_include_directories(mabain PUBLIC ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/src/util ${JEMALLOC_INCLUDE_DIR})
 
+# Always enable traversal step guard in find loops
+target_compile_definitions(mabain PRIVATE MB_ENABLE_TRAVERSAL_LIMIT)
+
 # Set compile options
 target_compile_options(mabain PRIVATE
     -Wall -Werror -Wwrite-strings -Wsign-compare -Wcast-align -Wformat-security
     -fdiagnostics-show-option -g -ggdb -fPIC -O3 -std=c++17 -D__LOCK_FREE__
+    -march=native -fomit-frame-pointer
 )
+
+# Link-time optimization can improve inlining across TUs
+include(CheckIPOSupported)
+check_ipo_supported(RESULT lto_supported OUTPUT lto_output)
+if(lto_supported)
+  set_property(TARGET mabain PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+endif()
 
 # Conditionally add __DEBUG__ definition
 if(ENABLE_DEBUG)

@@ -44,6 +44,10 @@ static int key_type = 0;
 static bool sync_on_write = false;
 static unsigned long long memcap = 1024ULL * 1024 * 1024;
 static bool use_jemalloc = false;
+// Prefix cache controls (MABAIN only)
+static int pc_n = -1;            // prefix length; -1 means default
+static long long pc_cap = -1;    // capacity; -1 means default
+static bool pc_disable = false;  // disable prefix cache
 
 static void get_sha256_str(int key, char* sha256_str)
 {
@@ -212,6 +216,12 @@ static void InitDB(bool writer_mode = true)
         mconf.options = mabain::CONSTS::ReaderOptions();
     db = new mabain::DB(mconf);
     assert(db->is_open());
+    // Apply prefix cache overrides if provided
+    if (pc_disable) {
+        db->DisablePrefixCache();
+    } else if (pc_n > 0) {
+        db->EnablePrefixCache(pc_n, pc_cap > 0 ? static_cast<size_t>(pc_cap) : 100000);
+    }
 #endif
 }
 
@@ -371,6 +381,12 @@ static void Lookup(int n)
 
     std::cout << "found " << nfound << " key-value pairs\n";
     std::cout << "===== " << timediff * 1.0 / n << " micro seconds per lookup\n";
+#ifdef MABAIN
+    if (db) {
+        std::cout << "-- Cache stats after lookup --\n";
+        db->DumpPrefixCacheStats(std::cout);
+    }
+#endif
 }
 
 static void Delete(int n)
@@ -686,6 +702,14 @@ int main(int argc, char* argv[])
             memcap = atoi(argv[i]);
         } else if (strcmp(argv[i], "-j") == 0) {
             use_jemalloc = true;
+        } else if (strcmp(argv[i], "-pcn") == 0) {
+            if (++i >= argc) abort();
+            pc_n = atoi(argv[i]);
+        } else if (strcmp(argv[i], "-pcc") == 0) {
+            if (++i >= argc) abort();
+            pc_cap = atoll(argv[i]);
+        } else if (strcmp(argv[i], "-pc-off") == 0) {
+            pc_disable = true;
         } else {
             std::cerr << "invalid argument: " << argv[i] << "\n";
         }
@@ -697,6 +721,14 @@ int main(int argc, char* argv[])
     else
         std::cout << "===== Disk sync is off\n";
     std::cout << "===== Memcap is " << memcap << "\n";
+#ifdef MABAIN
+    if (pc_disable) {
+        std::cout << "===== Prefix cache disabled\n";
+    } else if (pc_n > 0) {
+        std::cout << "===== Prefix cache n=" << pc_n
+                  << ", cap=" << (pc_cap > 0 ? pc_cap : 100000) << "\n";
+    }
+#endif
 
     InitTestDir();
     RemoveDB();

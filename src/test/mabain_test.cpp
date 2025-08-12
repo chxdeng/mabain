@@ -17,6 +17,7 @@
 // @author Changxue Deng <chadeng@cisco.com>
 
 #include <assert.h>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -24,7 +25,6 @@
 #include <sys/time.h>
 #include <unistd.h>
 #include <vector>
-#include <filesystem>
 
 #include "../db.h"
 #include "../dict.h"
@@ -47,7 +47,7 @@ static void clean_db_dir()
                 std::filesystem::remove_all(entry.path());
             }
         }
-        
+
         // Remove files matching pattern2 in backup directory
         std::string backup_dir = std::string(MB_DIR) + "/backup";
         if (std::filesystem::exists(backup_dir)) {
@@ -537,7 +537,7 @@ static void backup_test(std::string& backup_dir, std::string& list_file, MBConfi
 static void SetTestStatus(bool success)
 {
     std::string success_file = std::string(MB_DIR) + "/_success";
-    
+
     try {
         if (success) {
             std::ofstream file(success_file);

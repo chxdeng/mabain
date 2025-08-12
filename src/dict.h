@@ -19,7 +19,9 @@
 #ifndef __DICT_H__
 #define __DICT_H__
 
+#include <memory>
 #include <stdint.h>
+#include <string.h>
 #include <string>
 
 #include "async_writer.h"
@@ -30,6 +32,10 @@
 #include "mb_pipe.h"
 #include "rollable_file.h"
 #include "shm_queue_mgr.h"
+// forward declare
+namespace mabain {
+class PrefixCache;
+}
 
 namespace mabain {
 
@@ -128,9 +134,34 @@ public:
     void Purge() const;
     int ExceptionRecovery();
 
+    // Optional: enable/disable prefix cache for Find
+    void EnablePrefixCache(int n, size_t capacity = 65536);
+    void DisablePrefixCache();
+    bool PrefixCacheEnabled() const { return static_cast<bool>(prefix_cache); }
+    void GetPrefixCacheStats(uint64_t& hit, uint64_t& miss, uint64_t& put,
+        size_t& entries, int& n) const;
+    void ResetPrefixCacheStats();
+    void PrintPrefixCacheStats(std::ostream& os) const;
+
 private:
-    int Find_Internal(size_t root_off, const uint8_t* key, int len, MBData& data);
-    int FindPrefix_Internal(size_t root_off, const uint8_t* key, int len, MBData& data);
+    int FindInternal(size_t root_off, const uint8_t* key, int len, MBData& data);
+    int FindPrefixInternal(size_t root_off, const uint8_t* key, int len, MBData& data);
+    int TraversePrefixFromEdge(const uint8_t* key_base, const uint8_t*& key_cursor, int& len,
+        EdgePtrs& edge_ptrs, MBData& data, int& last_prefix_rval, uint8_t last_node_buffer[NODE_EDGE_KEY_FIRST]);
+    // Helpers to refactor Find/FindInternal paths
+    int TryFindAtRoot(size_t root_off, const uint8_t* key, int len, MBData& data);
+    int LoadEdgeKey(const EdgePtrs& edge_ptrs, MBData& data, const uint8_t*& key_buff, int edge_len_m1) const;
+    int CompareCurrEdgeTail(const EdgePtrs& edge_ptrs, MBData& data, const uint8_t* p,
+        const uint8_t*& key_buff, int& edge_len, int& edge_len_m1) const;
+    int ResolveMatchOrInDict(MBData& data, EdgePtrs& edge_ptrs, bool at_root) const;
+    static inline bool RemainderMatches(const uint8_t* key_buff, const uint8_t* p, int rem_len)
+    {
+        return (rem_len <= 0) || (memcmp(key_buff, p + 1, rem_len) == 0);
+    }
+    static inline bool IsLeaf(const EdgePtrs& edge_ptrs)
+    {
+        return (edge_ptrs.flag_ptr[0] & EDGE_FLAG_DATA_OFF) != 0;
+    }
     int ReleaseBuffer(size_t offset);
     int UpdateDataBuffer(EdgePtrs& edge_ptrs, bool overwrite, MBData& mbd, bool& inc_count);
     int ReadDataFromEdge(MBData& data, const EdgePtrs& edge_ptrs) const;
@@ -163,6 +194,19 @@ private:
     MBPipe mbp;
     // Hold a reference to shared memory queue file so that the async thread can access it during process exit
     ShmQueueMgr qmgr;
+
+    // Optional lookup accelerator for Find
+    std::unique_ptr<PrefixCache> prefix_cache;
+
+    // Prefix-cache helpers (no side effects when cache disabled)
+    bool SeedFromCache(const uint8_t* key, int len, EdgePtrs& edge_ptrs,
+        MBData& data, const uint8_t*& key_cursor, int& len_remaining, int& consumed) const;
+    inline void MaybePutCache(const uint8_t* full_key, int full_len, int consumed,
+        const EdgePtrs& edge_ptrs) const;
+
+    // Traversal helper: continue matching from current edge_ptrs
+    int TraverseFromEdge(const uint8_t*& key_cursor, int& len, int& consumed,
+        const uint8_t* full_key, int full_len, EdgePtrs& edge_ptrs, MBData& data);
 };
 
 }
