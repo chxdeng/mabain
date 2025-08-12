@@ -28,6 +28,7 @@
 #include "integer_4b_5b.h"
 #include "mabain_consts.h"
 #include "util/prefix_cache.h"
+#include "util/prefix_cache_shared.h"
 
 #define DATA_HEADER_SIZE 32
 
@@ -90,6 +91,7 @@ Dict::Dict(const std::string& mbdir, bool init_header, int datasize,
     lfree.LockFreeInit(&header->lock_free, header, db_options);
     mm.InitLockFreePtr(&lfree);
     mbp = MBPipe(mbdir, 0);
+    mbdir_ = mbdir;
 
     // Open data file
     kv_file = new RollableFile(mbdir + "_mabain_d",
@@ -223,6 +225,7 @@ int Dict::Add(const uint8_t* key, int len, MBData& data, bool overwrite)
     uint8_t tmp_key_buff[NUM_ALPHABET];
     const uint8_t* key_cursor = key;
     int edge_len = edge_ptrs.len_ptr[0];
+    int orig_len = len;
     if (edge_len > LOCAL_EDGE_LEN) {
         if (mm.ReadData(tmp_key_buff, edge_len - 1, Get5BInteger(edge_ptrs.ptr)) != edge_len - 1)
             return MBError::READ_ERROR;
@@ -240,12 +243,15 @@ int Dict::Add(const uint8_t* key, int len, MBData& data, bool overwrite)
             bool next;
             key_cursor += edge_len;
             len -= edge_len;
+            // Writer populates shared prefix cache at boundary if configured
+            MaybePutCache(key, orig_len, orig_len - len, edge_ptrs);
             while ((next = mm.FindNext(key_cursor, len, match_len, edge_ptrs, tmp_key_buff))) {
                 if (match_len < edge_ptrs.len_ptr[0])
                     break;
 
                 key_cursor += match_len;
                 len -= match_len;
+                MaybePutCache(key, orig_len, orig_len - len, edge_ptrs);
                 if (len <= 0)
                     break;
             }
@@ -1026,6 +1032,10 @@ int Dict::Remove(const uint8_t* key, int len, MBData& data)
     int rval;
     rval = Find(key, len, data);
     if (rval == MBError::IN_DICT) {
+        // Invalidate shared prefix cache entry for this key's prefix and edge
+        if (prefix_cache_shared) {
+            prefix_cache_shared->InvalidateByPrefixAndEdge(key, len, data.edge_ptrs.offset);
+        }
         rval = DeleteDataFromEdge(data, data.edge_ptrs);
         while (rval == MBError::TRY_AGAIN) {
             data.Clear();
@@ -1035,6 +1045,9 @@ int Dict::Remove(const uint8_t* key, int len, MBData& data)
 #endif
             rval = Find(key, len, data);
             if (MBError::IN_DICT == rval) {
+                if (prefix_cache_shared) {
+                    prefix_cache_shared->InvalidateByPrefixAndEdge(key, len, data.edge_ptrs.offset);
+                }
                 rval = mm.RemoveEdgeByIndex(data.edge_ptrs, data);
             }
         }
@@ -1371,6 +1384,9 @@ void Dict::EnablePrefixCache(int n, size_t capacity)
 {
     if (n <= 0)
         return;
+    // Ensure only one cache mode is active at a time
+    if (prefix_cache_shared)
+        prefix_cache_shared.reset();
     prefix_cache = std::unique_ptr<PrefixCache>(new PrefixCache(n, capacity));
 }
 
@@ -1379,18 +1395,65 @@ void Dict::DisablePrefixCache()
     prefix_cache.reset();
 }
 
+void Dict::EnableSharedPrefixCache(int n, size_t capacity, uint32_t assoc)
+{
+    if (n <= 0)
+        return;
+    // Ensure only one cache mode is active at a time
+    if (prefix_cache)
+        prefix_cache.reset();
+    // Create or open shared cache depending on access mode
+    if (options & CONSTS::ACCESS_MODE_WRITER) {
+        prefix_cache_shared.reset(PrefixCacheShared::CreateWriter(mbdir_, n, capacity, assoc));
+    } else {
+        // Try open existing; if not present or mismatch, create exclusively; otherwise re-open.
+        std::unique_ptr<PrefixCacheShared> pcs(PrefixCacheShared::OpenReader(mbdir_));
+        if (!pcs || pcs->PrefixLen() != n) {
+            pcs.reset(PrefixCacheShared::CreateWriter(mbdir_, n, capacity, assoc));
+            if (!pcs) {
+                // Another thread/process likely created it; try open again
+                pcs.reset(PrefixCacheShared::OpenReader(mbdir_));
+            }
+        }
+        prefix_cache_shared = std::move(pcs);
+    }
+}
+
+void Dict::DisableSharedPrefixCache()
+{
+    prefix_cache_shared.reset();
+}
+
 bool Dict::SeedFromCache(const uint8_t* key, int len, EdgePtrs& edge_ptrs,
     MBData& data, const uint8_t*& key_cursor, int& len_remaining, int& consumed) const
 {
-    if (!prefix_cache)
-        return false;
-    int n = prefix_cache->PrefixLen();
-    if (len < n)
-        return false;
-
+    // Exactly one cache should be enabled based on config
     PrefixCacheEntry entry;
-    if (!prefix_cache->Get(key, len, entry))
+    int n = 0;
+    bool used_shared = false;
+    if (prefix_cache_shared) {
+        n = prefix_cache_shared->PrefixLen();
+        if (len < n || !prefix_cache_shared->Get(key, len, entry))
+            return false;
+        used_shared = true;
+    } else if (prefix_cache) {
+        n = prefix_cache->PrefixLen();
+        if (len < n || !prefix_cache->Get(key, len, entry))
+            return false;
+    } else {
         return false;
+    }
+
+    // Validate shared-cache hint against current edge content only when a writer is present
+    if (used_shared && header && header->num_writer > 0) {
+        uint8_t curr_edge[EDGE_SIZE];
+        if (mm.ReadData(curr_edge, EDGE_SIZE, entry.edge_offset) != EDGE_SIZE) {
+            return false;
+        }
+        if (memcmp(curr_edge, entry.edge_buff, EDGE_SIZE) != 0) {
+            return false;
+        }
+    }
 
     // Seed edge state from cache
     edge_ptrs.offset = entry.edge_offset;
@@ -1407,13 +1470,25 @@ bool Dict::SeedFromCache(const uint8_t* key, int len, EdgePtrs& edge_ptrs,
 inline void Dict::MaybePutCache(const uint8_t* full_key, int full_len, int consumed,
     const EdgePtrs& edge_ptrs) const
 {
-    if (!prefix_cache)
-        return;
-    if (consumed != prefix_cache->PrefixLen())
-        return;
-    PrefixCacheEntry e { edge_ptrs.offset, { 0 }, 0 };
-    memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
-    prefix_cache->Put(full_key, full_len, e);
+    // Only update the active cache
+    // Shared cache: writer populates; readers may populate only if not read-only
+    if (prefix_cache_shared && ((options & CONSTS::ACCESS_MODE_WRITER) || (!shared_pc_readonly))) {
+        if (consumed == prefix_cache_shared->PrefixLen()) {
+            // Skip Put if entry already exists to reduce contention
+            PrefixCacheEntry existing;
+            if (!prefix_cache_shared->Get(full_key, full_len, existing)) {
+                PrefixCacheEntry e { edge_ptrs.offset, { 0 }, 0 };
+                memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
+                prefix_cache_shared->Put(full_key, full_len, e);
+            }
+        }
+    } else if (prefix_cache) {
+        if (consumed == prefix_cache->PrefixLen()) {
+            PrefixCacheEntry e { edge_ptrs.offset, { 0 }, 0 };
+            memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
+            prefix_cache->Put(full_key, full_len, e);
+        }
+    }
 }
 
 void Dict::GetPrefixCacheStats(uint64_t& hit, uint64_t& miss, uint64_t& put,
@@ -1451,6 +1526,15 @@ void Dict::PrintPrefixCacheStats(std::ostream& os) const
        << " miss=" << miss
        << " put=" << put
        << std::endl;
+}
+
+void Dict::PrintSharedPrefixCacheStats(std::ostream& os) const
+{
+    if (prefix_cache_shared) {
+        prefix_cache_shared->DumpStats(os);
+    } else {
+        os << "PrefixCacheShared: disabled" << std::endl;
+    }
 }
 
 // Recovery from abnormal writer terminations (segfault, kill -9 etc)

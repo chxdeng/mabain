@@ -220,6 +220,12 @@ public:
     void DumpPrefixCacheStats(std::ostream& os = std::cout) const;
     void ResetPrefixCacheStats() const;
 
+    // Shared prefix cache control
+    void EnableSharedPrefixCache(int n, size_t capacity = 65536, uint32_t assoc = 4);
+    void DisableSharedPrefixCache();
+    void DumpSharedPrefixCacheStats(std::ostream& os = std::cout) const;
+    void SetSharedPrefixCacheReadOnly(bool ro);
+
 private:
     void InitDB(MBConfig& config);
     void InitDBEx(MBConfig& config);

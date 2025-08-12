@@ -35,6 +35,7 @@
 // forward declare
 namespace mabain {
 class PrefixCache;
+class PrefixCacheShared;
 }
 
 namespace mabain {
@@ -143,6 +144,13 @@ public:
     void ResetPrefixCacheStats();
     void PrintPrefixCacheStats(std::ostream& os) const;
 
+    // Shared prefix cache (multi-process, writer-managed updates)
+    void EnableSharedPrefixCache(int n, size_t capacity = 65536, uint32_t assoc = 4);
+    void DisableSharedPrefixCache();
+    bool SharedPrefixCacheEnabled() const { return static_cast<bool>(prefix_cache_shared); }
+    void PrintSharedPrefixCacheStats(std::ostream& os) const;
+    void SetSharedPrefixCacheReadOnly(bool ro) { shared_pc_readonly = ro; }
+
 private:
     int FindInternal(size_t root_off, const uint8_t* key, int len, MBData& data);
     int FindPrefixInternal(size_t root_off, const uint8_t* key, int len, MBData& data);
@@ -195,8 +203,11 @@ private:
     // Hold a reference to shared memory queue file so that the async thread can access it during process exit
     ShmQueueMgr qmgr;
 
-    // Optional lookup accelerator for Find
+    // Optional lookup accelerators for Find
     std::unique_ptr<PrefixCache> prefix_cache;
+    std::unique_ptr<PrefixCacheShared> prefix_cache_shared;
+    std::string mbdir_;
+    bool shared_pc_readonly = false;
 
     // Prefix-cache helpers (no side effects when cache disabled)
     bool SeedFromCache(const uint8_t* key, int len, EdgePtrs& edge_ptrs,

@@ -778,6 +778,30 @@ void DB::ResetPrefixCacheStats() const
         dict->ResetPrefixCacheStats();
 }
 
+void DB::EnableSharedPrefixCache(int n, size_t capacity, uint32_t assoc)
+{
+    if (dict)
+        dict->EnableSharedPrefixCache(n, capacity, assoc);
+}
+
+void DB::DisableSharedPrefixCache()
+{
+    if (dict)
+        dict->DisableSharedPrefixCache();
+}
+
+void DB::DumpSharedPrefixCacheStats(std::ostream& os) const
+{
+    if (dict)
+        dict->PrintSharedPrefixCacheStats(os);
+}
+
+void DB::SetSharedPrefixCacheReadOnly(bool ro)
+{
+    if (dict)
+        dict->SetSharedPrefixCacheReadOnly(ro);
+}
+
 int DB::CollectResource(int64_t min_index_rc_size, int64_t min_data_rc_size,
     int64_t max_dbsz, int64_t max_dbcnt)
 {

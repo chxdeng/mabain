@@ -6,6 +6,9 @@
 #include <openssl/sha.h>
 #include <openssl/evp.h>
 #include <string>
+#include <pthread.h>
+#include <sstream>
+#include <vector>
 #include <sys/syscall.h>
 #include <sys/time.h>
 #include <unistd.h>
@@ -48,6 +51,12 @@ static bool use_jemalloc = false;
 static int pc_n = -1;            // prefix length; -1 means default
 static long long pc_cap = -1;    // capacity; -1 means default
 static bool pc_disable = false;  // disable prefix cache
+static bool pc_shared = false;   // use shared prefix cache (MABAIN only)
+static int pc_assoc = 4;         // associativity for shared cache buckets
+
+// Buffer per-reader cache stats to avoid interleaved output
+static std::vector<std::string> g_reader_stats;
+static pthread_mutex_t g_stats_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static void get_sha256_str(int key, char* sha256_str)
 {
@@ -216,11 +225,16 @@ static void InitDB(bool writer_mode = true)
         mconf.options = mabain::CONSTS::ReaderOptions();
     db = new mabain::DB(mconf);
     assert(db->is_open());
-    // Apply prefix cache overrides if provided
+    // Apply prefix cache overrides (both writer and reader must use the same config)
     if (pc_disable) {
         db->DisablePrefixCache();
+        db->DisableSharedPrefixCache();
     } else if (pc_n > 0) {
-        db->EnablePrefixCache(pc_n, pc_cap > 0 ? static_cast<size_t>(pc_cap) : 100000);
+        if (pc_shared) {
+            db->EnableSharedPrefixCache(pc_n, pc_cap > 0 ? static_cast<size_t>(pc_cap) : 100000, pc_assoc);
+        } else {
+            db->EnablePrefixCache(pc_n, pc_cap > 0 ? static_cast<size_t>(pc_cap) : 100000);
+        }
     }
 #endif
 }
@@ -385,6 +399,9 @@ static void Lookup(int n)
     if (db) {
         std::cout << "-- Cache stats after lookup --\n";
         db->DumpPrefixCacheStats(std::cout);
+        if (pc_shared) {
+            db->DumpSharedPrefixCacheStats(std::cout);
+        }
     }
 #endif
 }
@@ -534,6 +551,19 @@ static void* Reader(void* arg)
         (unsigned long long)(0.6666667 * memcap),
         (unsigned long long)(0.3333333 * memcap));
     assert(db_r->is_open());
+    // Configure prefix cache for reader instance only
+    if (pc_disable) {
+        db_r->DisablePrefixCache();
+        db_r->DisableSharedPrefixCache();
+    } else if (pc_n > 0) {
+        if (pc_shared) {
+            db_r->EnableSharedPrefixCache(pc_n, pc_cap > 0 ? static_cast<size_t>(pc_cap) : 100000, pc_assoc);
+            // Temporarily force read-only during concurrency to guarantee no stalls
+            db_r->SetSharedPrefixCacheReadOnly(true);
+        } else {
+            db_r->EnablePrefixCache(pc_n, pc_cap > 0 ? static_cast<size_t>(pc_cap) : 100000);
+        }
+    }
 #endif
 
     std::cout << "\n[reader : " << tid << "] started" << std::endl;
@@ -580,6 +610,18 @@ static void* Reader(void* arg)
     }
 
 #if MABAIN
+    // Buffer per-reader cache stats before closing to avoid interleaving
+    {
+        std::ostringstream oss;
+        oss << "-- Cache stats for reader tid " << tid << " --\n";
+        db_r->DumpPrefixCacheStats(oss);
+        if (pc_shared) {
+            db_r->DumpSharedPrefixCacheStats(oss);
+        }
+        pthread_mutex_lock(&g_stats_mutex);
+        g_reader_stats.push_back(oss.str());
+        pthread_mutex_unlock(&g_stats_mutex);
+    }
     db_r->Close();
     delete db_r;
 #endif
@@ -598,6 +640,28 @@ static void ConcurrencyTest(int num, int n_r)
     pthread_t wid;
 
     auto start = std::chrono::high_resolution_clock::now();
+
+    // Clear buffered reader stats
+    pthread_mutex_lock(&g_stats_mutex);
+    g_reader_stats.clear();
+    pthread_mutex_unlock(&g_stats_mutex);
+
+    // No cache writes from readers during concurrency to avoid stalls
+
+    // For shared cache, pre-create mapping to avoid races between readers
+#ifdef MABAIN
+    if (pc_shared && !pc_disable && pc_n > 0) {
+        std::string db_dir_tmp = std::string(db_dir) + "/mabain/";
+        mabain::DB* seed = new mabain::DB(db_dir_tmp.c_str(), mabain::CONSTS::ReaderOptions(),
+            (unsigned long long)(0.6666667 * memcap),
+            (unsigned long long)(0.3333333 * memcap));
+        if (seed && seed->is_open()) {
+            seed->EnableSharedPrefixCache(pc_n, pc_cap > 0 ? static_cast<size_t>(pc_cap) : 100000, pc_assoc);
+            seed->Close();
+        }
+        delete seed;
+    }
+#endif
 
     // Start the writer
     if (pthread_create(&wid, NULL, Writer, &num) != 0) {
@@ -624,6 +688,21 @@ static void ConcurrencyTest(int num, int n_r)
 
     uint64_t timediff = std::chrono::duration_cast<std::chrono::microseconds>(stop - start).count();
     std::cout << "===== " << timediff * 1.0 / num_kv << " micro seconds per concurrent insertion/lookup\n";
+#ifdef MABAIN
+    if (db) {
+        std::cout << "-- Cache stats after concurrency --\n";
+        db->DumpPrefixCacheStats(std::cout);
+        if (pc_shared) {
+            db->DumpSharedPrefixCacheStats(std::cout);
+        }
+    }
+    // Print buffered per-reader cache stats
+    pthread_mutex_lock(&g_stats_mutex);
+    for (const auto& s : g_reader_stats) {
+        std::cout << s;
+    }
+    pthread_mutex_unlock(&g_stats_mutex);
+#endif
 }
 
 static void DestroyDB()
@@ -710,6 +789,11 @@ int main(int argc, char* argv[])
             pc_cap = atoll(argv[i]);
         } else if (strcmp(argv[i], "-pc-off") == 0) {
             pc_disable = true;
+        } else if (strcmp(argv[i], "-pc-shared") == 0) {
+            pc_shared = true;
+        } else if (strcmp(argv[i], "-pc-assoc") == 0) {
+            if (++i >= argc) abort();
+            pc_assoc = atoi(argv[i]);
         } else {
             std::cerr << "invalid argument: " << argv[i] << "\n";
         }
@@ -725,8 +809,14 @@ int main(int argc, char* argv[])
     if (pc_disable) {
         std::cout << "===== Prefix cache disabled\n";
     } else if (pc_n > 0) {
-        std::cout << "===== Prefix cache n=" << pc_n
-                  << ", cap=" << (pc_cap > 0 ? pc_cap : 100000) << "\n";
+        if (pc_shared) {
+            std::cout << "===== Shared Prefix cache n=" << pc_n
+                      << ", cap=" << (pc_cap > 0 ? pc_cap : 100000)
+                      << ", assoc=" << pc_assoc << "\n";
+        } else {
+            std::cout << "===== Prefix cache n=" << pc_n
+                      << ", cap=" << (pc_cap > 0 ? pc_cap : 100000) << "\n";
+        }
     }
 #endif
 
