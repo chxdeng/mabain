@@ -29,26 +29,13 @@
 #include "mabain_consts.h"
 #include "util/prefix_cache.h"
 #include "util/prefix_cache_shared.h"
+#include "detail/search_engine.h"
 
 #define DATA_HEADER_SIZE 32
 
-namespace mabain {
 
-#ifdef __LOCK_FREE__
-// RAII-style guard to pair reader start/stop safely
-struct ReaderLFGuard {
-    LockFree& lf;
-    MBData& data;
-    LockFreeData snap;
-    explicit ReaderLFGuard(LockFree& l, MBData& d)
-        : lf(l)
-        , data(d)
-    {
-        lf.ReaderLockFreeStart(snap);
-    }
-    inline int stop(size_t edge_off) { return lf.ReaderLockFreeStop(snap, edge_off, data); }
-};
-#endif
+
+namespace mabain {
 
 Dict::Dict(const std::string& mbdir, bool init_header, int datasize,
     int db_options, size_t memsize_index, size_t memsize_data,
@@ -185,6 +172,25 @@ void Dict::Destroy()
 int Dict::Status() const
 {
     return status;
+}
+
+// Thin wrappers to internal SearchEngine to keep dict.h small
+int Dict::Find(const uint8_t* key, int len, MBData& data)
+{
+    detail::SearchEngine engine(*this);
+    return engine.find(key, len, data);
+}
+
+int Dict::FindPrefix(const uint8_t* key, int len, MBData& data)
+{
+    detail::SearchEngine engine(*this);
+    return engine.findPrefix(key, len, data);
+}
+
+int Dict::FindLowerBound(const uint8_t* key, int len, MBData& data, std::string* bound_key)
+{
+    detail::SearchEngine engine(*this);
+    return engine.lowerBound(key, len, data, bound_key);
 }
 
 // Add a key-value pair
@@ -427,410 +433,11 @@ int Dict::ReadDataFromNode(MBData& data, const uint8_t* node_ptr) const
     return MBError::SUCCESS;
 }
 
-int Dict::FindPrefix(const uint8_t* key, int len, MBData& data)
-{
-    int rval;
-    MBData data_rc;
-    size_t rc_root_offset = header->rc_root_offset.load(MEMORY_ORDER_READER);
-    if (rc_root_offset != 0) {
-        reader_rc_off = rc_root_offset;
-        rval = FindPrefixInternal(rc_root_offset, key, len, data_rc);
-#ifdef __LOCK_FREE__
-        {
-            int attempts = 0;
-            while (rval == MBError::TRY_AGAIN && attempts++ < CONSTS::LOCK_FREE_RETRY_LIMIT) {
-                nanosleep((const struct timespec[]) { { 0, 10L } }, NULL);
-                data_rc.Clear();
-                rval = FindPrefixInternal(rc_root_offset, key, len, data_rc);
-            }
-        }
-#endif
-        if (rval != MBError::NOT_EXIST && rval != MBError::SUCCESS)
-            return rval;
-        data.options &= ~(CONSTS::OPTION_RC_MODE | CONSTS::OPTION_READ_SAVED_EDGE);
-    } else {
-        if (reader_rc_off != 0) {
-            reader_rc_off = 0;
-            RemoveUnused(0);
-            mm.RemoveUnused(0);
-        }
-    }
 
-    rval = FindPrefixInternal(0, key, len, data);
-#ifdef __LOCK_FREE__
-    {
-        int attempts = 0;
-        while (rval == MBError::TRY_AGAIN && attempts++ < CONSTS::LOCK_FREE_RETRY_LIMIT) {
-            nanosleep((const struct timespec[]) { { 0, 10L } }, NULL);
-            data.Clear();
-            rval = FindPrefixInternal(0, key, len, data);
-        }
-    }
-#endif
 
-    // The longer match wins.
-    if (data_rc.match_len > data.match_len) {
-        data_rc.TransferValueTo(data.buff, data.data_len);
-        rval = MBError::SUCCESS;
-    }
-    return rval;
-}
 
-int Dict::FindPrefixInternal(size_t root_off, const uint8_t* key, int len, MBData& data)
-{
-    int rval;
-    EdgePtrs& edge_ptrs = data.edge_ptrs;
-#ifdef __LOCK_FREE__
-    ReaderLFGuard lf_guard(lfree, data);
-#endif
 
-    // Use the provided root offset (rc root or main root) consistently
-    rval = mm.GetRootEdge(root_off, key[0], edge_ptrs);
-    if (rval != MBError::SUCCESS)
-        return MBError::READ_ERROR;
 
-    if (edge_ptrs.len_ptr[0] == 0) {
-#ifdef __LOCK_FREE__
-        {
-            int _r = lf_guard.stop(edge_ptrs.offset);
-            if (_r != MBError::SUCCESS)
-                return _r;
-        }
-#endif
-        return MBError::NOT_EXIST;
-    }
-
-    // Compare edge string
-    const uint8_t* key_buff;
-    uint8_t* node_buff = data.node_buff;
-    const uint8_t* key_cursor = key;
-    int edge_len = edge_ptrs.len_ptr[0];
-    int edge_len_m1 = edge_len - 1;
-    if (edge_len > LOCAL_EDGE_LEN) {
-        if (mm.ReadData(node_buff, edge_len_m1, Get5BInteger(edge_ptrs.ptr))
-            != edge_len_m1) {
-#ifdef __LOCK_FREE__
-            {
-                int _r = lf_guard.stop(edge_ptrs.offset);
-                if (_r != MBError::SUCCESS)
-                    return _r;
-            }
-#endif
-            return MBError::READ_ERROR;
-        }
-        key_buff = node_buff;
-    } else {
-        key_buff = edge_ptrs.ptr;
-    }
-
-    rval = MBError::NOT_EXIST;
-    if (edge_len < len) {
-        if (edge_len > 1 && memcmp(key_buff, key_cursor + 1, edge_len_m1) != 0) {
-#ifdef __LOCK_FREE__
-            {
-                int _r = lf_guard.stop(edge_ptrs.offset);
-                if (_r != MBError::SUCCESS)
-                    return _r;
-            }
-#endif
-            return MBError::NOT_EXIST;
-        }
-
-        len -= edge_len;
-        key_cursor += edge_len;
-
-        if (edge_ptrs.flag_ptr[0] & EDGE_FLAG_DATA_OFF) {
-            // prefix match for leaf node
-#ifdef __LOCK_FREE__
-            {
-                int _r = lf_guard.stop(edge_ptrs.offset);
-                if (_r != MBError::SUCCESS)
-                    return _r;
-            }
-#endif
-            data.match_len = key_cursor - key;
-            return ReadDataFromEdge(data, edge_ptrs);
-        }
-
-        uint8_t last_node_buffer[NODE_EDGE_KEY_FIRST];
-        int last_prefix_rval = MBError::NOT_EXIST;
-        rval = TraversePrefixFromEdge(key, key_cursor, len, edge_ptrs, data, last_prefix_rval, last_node_buffer);
-        if (rval == MBError::NOT_EXIST && last_prefix_rval != rval)
-            rval = ReadDataFromNode(data, last_node_buffer);
-    } else if (edge_len == len) {
-        if (edge_len_m1 == 0 || memcmp(key_buff, key + 1, edge_len_m1) == 0) {
-            data.match_len = len;
-            rval = ReadDataFromEdge(data, edge_ptrs);
-        }
-    }
-
-#ifdef __LOCK_FREE__
-    {
-        int _r = lf_guard.stop(edge_ptrs.offset);
-        if (_r != MBError::SUCCESS)
-            return _r;
-    }
-#endif
-    return rval;
-}
-
-int Dict::Find(const uint8_t* key, int len, MBData& data)
-{
-    int rval;
-    size_t rc_root_offset = header->rc_root_offset.load(MEMORY_ORDER_READER);
-
-    if (rc_root_offset != 0) {
-        reader_rc_off = rc_root_offset;
-        rval = TryFindAtRoot(rc_root_offset, key, len, data);
-        if (rval == MBError::SUCCESS) {
-            data.match_len = len;
-            return rval;
-        } else if (rval != MBError::NOT_EXIST) {
-            return rval;
-        }
-        data.options &= ~(CONSTS::OPTION_RC_MODE | CONSTS::OPTION_READ_SAVED_EDGE);
-    } else {
-        if (reader_rc_off != 0) {
-            reader_rc_off = 0;
-            RemoveUnused(0);
-            mm.RemoveUnused(0);
-        }
-    }
-
-    rval = TryFindAtRoot(0, key, len, data);
-    if (rval == MBError::SUCCESS)
-        data.match_len = len;
-
-    return rval;
-}
-
-int Dict::TryFindAtRoot(size_t root_off, const uint8_t* key, int len, MBData& data)
-{
-    int r = FindInternal(root_off, key, len, data);
-#ifdef __LOCK_FREE__
-    int attempts = 0;
-    while (r == MBError::TRY_AGAIN && attempts++ < CONSTS::LOCK_FREE_RETRY_LIMIT) {
-        nanosleep((const struct timespec[]) { { 0, 10L } }, NULL);
-        r = FindInternal(root_off, key, len, data);
-    }
-#endif
-    return r;
-}
-
-int Dict::FindInternal(size_t root_off, const uint8_t* key, int len, MBData& data)
-{
-    EdgePtrs& edge_ptrs = data.edge_ptrs;
-    int rval;
-    // Attempt to use prefix cache if available
-    const uint8_t* key_cursor = key;
-    int orig_len = len;
-    int consumed = 0;
-    const uint8_t* key_buff;
-    bool used_cache = SeedFromCache(key, len, edge_ptrs, data, key_cursor, len, consumed);
-
-    if (!used_cache) {
-#ifdef __LOCK_FREE__
-        ReaderLFGuard lf_guard(lfree, data);
-#endif
-        rval = mm.GetRootEdge(root_off, key[0], edge_ptrs);
-        if (rval != MBError::SUCCESS)
-            return MBError::READ_ERROR;
-        if (edge_ptrs.len_ptr[0] == 0) {
-#ifdef __LOCK_FREE__
-            {
-                int _r = lf_guard.stop(edge_ptrs.offset);
-                if (_r != MBError::SUCCESS)
-                    return _r;
-            }
-#endif
-            return MBError::NOT_EXIST;
-        }
-
-        int edge_len = edge_ptrs.len_ptr[0];
-        int edge_len_m1 = edge_len - 1;
-        rval = MBError::NOT_EXIST;
-        if ((rval = LoadEdgeKey(edge_ptrs, data, key_buff, edge_len_m1)) != MBError::SUCCESS) {
-#ifdef __LOCK_FREE__
-            {
-                int _r = lf_guard.stop(edge_ptrs.offset);
-                if (_r != MBError::SUCCESS)
-                    return _r;
-            }
-#endif
-            return rval;
-        }
-
-        if (edge_len < len) {
-            // Compare remainder of the edge string when present; if leaf, cannot descend
-            if (!RemainderMatches(key_buff, key_cursor, edge_len_m1) || IsLeaf(edge_ptrs)) {
-#ifdef __LOCK_FREE__
-                {
-                    int _r = lf_guard.stop(edge_ptrs.offset);
-                    if (_r != MBError::SUCCESS)
-                        return _r;
-                }
-#endif
-                return MBError::NOT_EXIST;
-            }
-
-            len -= edge_len;
-            key_cursor += edge_len;
-            consumed += edge_len;
-            // Store in cache if we exactly reached the boundary
-            MaybePutCache(key, orig_len, consumed, edge_ptrs);
-        } else if (edge_len == len) {
-            if (!RemainderMatches(key_buff, key_cursor, len - 1)) {
-                rval = MBError::NOT_EXIST;
-            } else {
-                rval = ResolveMatchOrInDict(data, edge_ptrs, true);
-            }
-#ifdef __LOCK_FREE__
-            {
-                int _r = lf_guard.stop(edge_ptrs.offset);
-                if (_r != MBError::SUCCESS)
-                    return _r;
-            }
-#endif
-            return rval;
-        } else {
-#ifdef __LOCK_FREE__
-            {
-                int _r = lf_guard.stop(edge_ptrs.offset);
-                if (_r != MBError::SUCCESS)
-                    return _r;
-            }
-#endif
-            return MBError::NOT_EXIST;
-        }
-    } else {
-        // Starting from cached edge_ptrs; if nothing left, resolve now
-        if (len <= 0) {
-            return ResolveMatchOrInDict(data, edge_ptrs, false);
-        }
-        if (IsLeaf(edge_ptrs)) {
-            return MBError::NOT_EXIST;
-        }
-    }
-
-    // Continue traversal from current edge_ptrs
-    return TraverseFromEdge(key_cursor, len, consumed, key, orig_len, edge_ptrs, data);
-}
-
-int Dict::TraverseFromEdge(const uint8_t*& key_cursor, int& len, int& consumed,
-    const uint8_t* full_key, int full_len, EdgePtrs& edge_ptrs, MBData& data)
-{
-    const uint8_t* key_buff;
-    uint8_t* node_buff = data.node_buff;
-    int rval = MBError::SUCCESS;
-#ifdef __LOCK_FREE__
-    ReaderLFGuard lf_guard(lfree, data);
-    size_t edge_offset_prev = edge_ptrs.offset;
-#else
-    size_t edge_offset_prev = edge_ptrs.offset;
-#endif
-    int steps = 0;
-    while (true) {
-        if (++steps > CONSTS::FIND_TRAVERSAL_LIMIT) {
-#ifdef __LOCK_FREE__
-            {
-                int _r = lf_guard.stop(edge_ptrs.offset);
-                if (_r != MBError::SUCCESS)
-                    return _r;
-            }
-#endif
-            return MBError::UNKNOWN_ERROR;
-        }
-        rval = mm.NextEdge(key_cursor, edge_ptrs, node_buff, data);
-        if (rval != MBError::SUCCESS)
-            break;
-
-#ifdef __LOCK_FREE__
-        {
-            int _r = lf_guard.stop(edge_offset_prev);
-            if (_r != MBError::SUCCESS)
-                return _r;
-        }
-#endif
-        int edge_len = edge_ptrs.len_ptr[0];
-        int edge_len_m1 = edge_len - 1;
-        // match edge string
-        rval = CompareCurrEdgeTail(edge_ptrs, data, key_cursor, key_buff, edge_len, edge_len_m1);
-        if (rval == MBError::READ_ERROR)
-            break;
-        if (rval == MBError::NOT_EXIST) {
-            rval = MBError::NOT_EXIST;
-            break;
-        }
-
-        len -= edge_len;
-        if (len <= 0) {
-            rval = ResolveMatchOrInDict(data, edge_ptrs, false);
-            break;
-        }
-        if (IsLeaf(edge_ptrs)) {
-            // Reach a leaf node and no match found
-            rval = MBError::NOT_EXIST;
-            break;
-        }
-
-        key_cursor += edge_len;
-        consumed += edge_len;
-        MaybePutCache(full_key, full_len, consumed, edge_ptrs);
-#ifdef __LOCK_FREE__
-        edge_offset_prev = edge_ptrs.offset;
-#else
-        edge_offset_prev = edge_ptrs.offset;
-#endif
-    }
-
-#ifdef __LOCK_FREE__
-    {
-        int _r = lf_guard.stop(edge_ptrs.offset);
-        if (_r != MBError::SUCCESS)
-            return _r;
-    }
-#endif
-    return rval;
-}
-
-int Dict::CompareCurrEdgeTail(const EdgePtrs& edge_ptrs, MBData& data, const uint8_t* p,
-    const uint8_t*& key_buff, int& edge_len, int& edge_len_m1) const
-{
-    // Zero-length edge is invalid for traversal; avoid infinite loop
-    if (edge_len <= 0)
-        return MBError::NOT_EXIST;
-    int ret = LoadEdgeKey(edge_ptrs, data, key_buff, edge_len_m1);
-    if (ret != MBError::SUCCESS)
-        return ret;
-    return RemainderMatches(key_buff, p, edge_len_m1) ? MBError::SUCCESS : MBError::NOT_EXIST;
-}
-
-int Dict::ResolveMatchOrInDict(MBData& data, EdgePtrs& edge_ptrs, bool at_root) const
-{
-    if (data.options & CONSTS::OPTION_FIND_AND_STORE_PARENT) {
-        if (at_root) {
-            data.edge_ptrs.curr_node_offset = mm.GetRootOffset();
-            data.edge_ptrs.curr_nt = 1;
-            data.edge_ptrs.curr_edge_index = 0;
-            data.edge_ptrs.parent_offset = data.edge_ptrs.offset;
-        }
-        return MBError::IN_DICT;
-    }
-    return ReadDataFromEdge(data, edge_ptrs);
-}
-
-int Dict::LoadEdgeKey(const EdgePtrs& edge_ptrs, MBData& data, const uint8_t*& key_buff, int edge_len_m1) const
-{
-    if (edge_len_m1 > LOCAL_EDGE_LEN_M1) {
-        size_t edge_str_off = Get5BInteger(edge_ptrs.ptr);
-        if (mm.ReadData(data.node_buff, edge_len_m1, edge_str_off) != edge_len_m1)
-            return MBError::READ_ERROR;
-        key_buff = data.node_buff;
-    } else {
-        key_buff = edge_ptrs.ptr;
-    }
-    return MBError::SUCCESS;
-}
 
 void Dict::PrintStats(std::ostream* out_stream) const
 {
@@ -1424,63 +1031,17 @@ void Dict::DisableSharedPrefixCache()
     prefix_cache_shared.reset();
 }
 
-bool Dict::SeedFromCache(const uint8_t* key, int len, EdgePtrs& edge_ptrs,
-    MBData& data, const uint8_t*& key_cursor, int& len_remaining, int& consumed) const
-{
-    // Exactly one cache should be enabled based on config
-    PrefixCacheEntry entry;
-    int n = 0;
-    bool used_shared = false;
-    if (prefix_cache_shared) {
-        n = prefix_cache_shared->PrefixLen();
-        if (len < n || !prefix_cache_shared->Get(key, len, entry))
-            return false;
-        used_shared = true;
-    } else if (prefix_cache) {
-        n = prefix_cache->PrefixLen();
-        if (len < n || !prefix_cache->Get(key, len, entry))
-            return false;
-    } else {
-        return false;
-    }
 
-    // Validate shared-cache hint against current edge content only when a writer is present
-    if (used_shared && header && header->num_writer > 0) {
-        uint8_t curr_edge[EDGE_SIZE];
-        if (mm.ReadData(curr_edge, EDGE_SIZE, entry.edge_offset) != EDGE_SIZE) {
-            return false;
-        }
-        if (memcmp(curr_edge, entry.edge_buff, EDGE_SIZE) != 0) {
-            return false;
-        }
-    }
-
-    // Seed edge state from cache
-    edge_ptrs.offset = entry.edge_offset;
-    memcpy(edge_ptrs.edge_buff, entry.edge_buff, EDGE_SIZE);
-    InitTempEdgePtrs(edge_ptrs);
-    data.options |= CONSTS::OPTION_READ_SAVED_EDGE;
-
-    key_cursor = key + n;
-    len_remaining -= n;
-    consumed += n;
-    return true;
-}
-
-inline void Dict::MaybePutCache(const uint8_t* full_key, int full_len, int consumed,
+void Dict::MaybePutCache(const uint8_t* full_key, int full_len, int consumed,
     const EdgePtrs& edge_ptrs) const
 {
     // Only update the active cache
-    // Shared cache: writer populates; readers may populate only if not read-only
-    if (prefix_cache_shared && ((options & CONSTS::ACCESS_MODE_WRITER) || (!shared_pc_readonly))) {
+    // Shared cache is writer-managed only to minimize reader overhead
+    if (prefix_cache_shared && (options & CONSTS::ACCESS_MODE_WRITER)) {
         if (consumed == prefix_cache_shared->PrefixLen()) {
-            // Skip Put if entry already exists to reduce contention
-            PrefixCacheEntry existing;
-            if (!prefix_cache_shared->Get(full_key, full_len, existing)) {
-                PrefixCacheEntry e { edge_ptrs.offset, { 0 }, 0 };
-                memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
-                prefix_cache_shared->Put(full_key, full_len, e);
-            }
+            PrefixCacheEntry e { edge_ptrs.offset, { 0 }, 0 };
+            memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
+            prefix_cache_shared->Put(full_key, full_len, e);
         }
     } else if (prefix_cache) {
         if (consumed == prefix_cache->PrefixLen()) {
@@ -1667,88 +1228,6 @@ int Dict::ReadDataByOffset(size_t offset, MBData& data) const
     return MBError::SUCCESS;
 }
 
-int Dict::TraversePrefixFromEdge(const uint8_t* key_base, const uint8_t*& key_cursor, int& len,
-    EdgePtrs& edge_ptrs, MBData& data, int& last_prefix_rval, uint8_t last_node_buffer[NODE_EDGE_KEY_FIRST])
-{
-    int rval;
-    uint8_t* node_buff = data.node_buff;
-#ifdef __LOCK_FREE__
-    ReaderLFGuard lf_guard(lfree, data);
-    size_t edge_offset_prev = edge_ptrs.offset;
-#else
-    size_t edge_offset_prev = edge_ptrs.offset;
-#endif
-    const uint8_t* key_buff;
-    int steps = 0;
-    while (true) {
-        if (++steps > CONSTS::FIND_TRAVERSAL_LIMIT) {
-#ifdef __LOCK_FREE__
-            {
-                int _r = lf_guard.stop(edge_ptrs.offset);
-                if (_r != MBError::SUCCESS)
-                    return _r;
-            }
-#endif
-            return MBError::UNKNOWN_ERROR;
-        }
-        rval = mm.NextEdge(key_cursor, edge_ptrs, node_buff, data);
-        if (rval != MBError::READ_ERROR) {
-            if (node_buff[0] & FLAG_NODE_MATCH) {
-                data.match_len = key_cursor - key_base;
-                memcpy(last_node_buffer, node_buff, NODE_EDGE_KEY_FIRST);
-                last_prefix_rval = MBError::SUCCESS;
-            }
-        }
-
-        if (rval != MBError::SUCCESS)
-            break;
-
-#ifdef __LOCK_FREE__
-        {
-            int _r = lf_guard.stop(edge_offset_prev);
-            if (_r != MBError::SUCCESS)
-                return _r;
-        }
-#endif
-        int edge_len = edge_ptrs.len_ptr[0];
-        int edge_len_m1 = edge_len - 1;
-        // match edge string
-        if (edge_len > LOCAL_EDGE_LEN) {
-            if (mm.ReadData(node_buff, edge_len_m1, Get5BInteger(edge_ptrs.ptr)) != edge_len_m1) {
-                rval = MBError::READ_ERROR;
-                break;
-            }
-            key_buff = node_buff;
-        } else {
-            key_buff = edge_ptrs.ptr;
-        }
-
-        // Compare remainder of the edge string when present and ensure edge is valid
-        if (edge_len == 0 || (edge_len_m1 > 0 && memcmp(key_buff, key_cursor + 1, edge_len_m1) != 0)) {
-            rval = MBError::NOT_EXIST;
-            break;
-        }
-
-        len -= edge_len;
-        key_cursor += edge_len;
-        if (len <= 0 || (edge_ptrs.flag_ptr[0] & EDGE_FLAG_DATA_OFF)) {
-            data.match_len = key_cursor - key_base;
-            rval = ReadDataFromEdge(data, edge_ptrs);
-            break;
-        }
-#ifdef __LOCK_FREE__
-        edge_offset_prev = edge_ptrs.offset;
-#endif
-    }
-
-#ifdef __LOCK_FREE__
-    {
-        int _r = lf_guard.stop(edge_ptrs.offset);
-        if (_r != MBError::SUCCESS)
-            return _r;
-    }
-#endif
-    return rval;
-}
+// Prefix traversal moved to SearchEngine
 
 }

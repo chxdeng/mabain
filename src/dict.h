@@ -34,6 +34,7 @@
 #include "shm_queue_mgr.h"
 // forward declare
 namespace mabain {
+namespace detail { class SearchEngine; }
 class PrefixCache;
 class PrefixCacheShared;
 }
@@ -77,7 +78,9 @@ public:
     int Find(const uint8_t* key, int len, MBData& data);
     // Find value by key using longest prefix match
     int FindPrefix(const uint8_t* key, int len, MBData& data);
-    int FindBound(size_t root_off, const uint8_t* key, int len, MBData& data, std::string* bound_key);
+    // Lower-bound wrapper (internal engine)
+    int FindLowerBound(const uint8_t* key, int len, MBData& data, std::string* bound_key);
+    // Bound search implemented internally in SearchEngine.
     int ReadDataByOffset(size_t offset, MBData& data) const;
 
     // Delete entry by key
@@ -152,24 +155,11 @@ public:
     void SetSharedPrefixCacheReadOnly(bool ro) { shared_pc_readonly = ro; }
 
 private:
-    int FindInternal(size_t root_off, const uint8_t* key, int len, MBData& data);
-    int FindPrefixInternal(size_t root_off, const uint8_t* key, int len, MBData& data);
-    int TraversePrefixFromEdge(const uint8_t* key_base, const uint8_t*& key_cursor, int& len,
-        EdgePtrs& edge_ptrs, MBData& data, int& last_prefix_rval, uint8_t last_node_buffer[NODE_EDGE_KEY_FIRST]);
-    // Helpers to refactor Find/FindInternal paths
-    int TryFindAtRoot(size_t root_off, const uint8_t* key, int len, MBData& data);
-    int LoadEdgeKey(const EdgePtrs& edge_ptrs, MBData& data, const uint8_t*& key_buff, int edge_len_m1) const;
-    int CompareCurrEdgeTail(const EdgePtrs& edge_ptrs, MBData& data, const uint8_t* p,
-        const uint8_t*& key_buff, int& edge_len, int& edge_len_m1) const;
-    int ResolveMatchOrInDict(MBData& data, EdgePtrs& edge_ptrs, bool at_root) const;
-    static inline bool RemainderMatches(const uint8_t* key_buff, const uint8_t* p, int rem_len)
-    {
-        return (rem_len <= 0) || (memcmp(key_buff, p + 1, rem_len) == 0);
-    }
-    static inline bool IsLeaf(const EdgePtrs& edge_ptrs)
-    {
-        return (edge_ptrs.flag_ptr[0] & EDGE_FLAG_DATA_OFF) != 0;
-    }
+    // Allow internal SearchEngine to orchestrate lookups without exposing members publicly
+    friend class detail::SearchEngine;
+    // Search internals moved to detail::SearchEngine
+    // Prefix traversal helpers moved to SearchEngine.
+    // Helpers removed from header; SearchEngine owns traversal.
     int ReleaseBuffer(size_t offset);
     int UpdateDataBuffer(EdgePtrs& edge_ptrs, bool overwrite, MBData& mbd, bool& inc_count);
     int ReadDataFromEdge(MBData& data, const EdgePtrs& edge_ptrs) const;
@@ -179,11 +169,7 @@ private:
     int SHMQ_PrepareSlot(AsyncNode* node_ptr);
     AsyncNode* SHMQ_AcquireSlot(int& err) const;
 
-    int ReadLowerBound(EdgePtrs& edge_ptrs, MBData& data, std::string* bound_key, int le_edge_key) const;
-    int ReadBoundFromRootEdge(EdgePtrs& edge_ptrs, MBData& data, int root_key, std::string* bound_key) const;
-    void AppendEdgeKey(std::string* key, int edge_key, const EdgePtrs& edge_ptrs) const;
-    int TraverseToLowerBound(const uint8_t* key, int len, EdgePtrs& edge_ptrs, MBData& data,
-        EdgePtrs& bound_edge_ptrs, BoundSearchState& state) const;
+    // Bound traversal helpers moved to SearchEngine.
     void reserveDataFL(const uint8_t* buff, int size, size_t& offset);
     int ReleaseBuffer(size_t offset, int size);
     void ReleaseAlignmentBuffer(size_t offset, size_t alignment_off);
@@ -210,14 +196,8 @@ private:
     bool shared_pc_readonly = false;
 
     // Prefix-cache helpers (no side effects when cache disabled)
-    bool SeedFromCache(const uint8_t* key, int len, EdgePtrs& edge_ptrs,
-        MBData& data, const uint8_t*& key_cursor, int& len_remaining, int& consumed) const;
-    inline void MaybePutCache(const uint8_t* full_key, int full_len, int consumed,
+    void MaybePutCache(const uint8_t* full_key, int full_len, int consumed,
         const EdgePtrs& edge_ptrs) const;
-
-    // Traversal helper: continue matching from current edge_ptrs
-    int TraverseFromEdge(const uint8_t*& key_cursor, int& len, int& consumed,
-        const uint8_t* full_key, int full_len, EdgePtrs& edge_ptrs, MBData& data);
 };
 
 }

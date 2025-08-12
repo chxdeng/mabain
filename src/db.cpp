@@ -29,6 +29,7 @@
 #include "error.h"
 #include "integer_4b_5b.h"
 #include "logger.h"
+#include "detail/search_engine.h"
 #include "mb_backup.h"
 #include "mb_lsq.h"
 #include "mb_rc.h"
@@ -39,8 +40,8 @@
 
 namespace mabain {
 
-// Current mabain version 1.5.3
-uint16_t version[4] = { 1, 5, 3, 0 };
+// Current mabain version 1.6.0
+uint16_t version[4] = { 1, 6, 0, 0 };
 
 DB::~DB()
 {
@@ -517,7 +518,7 @@ int DB::FindLowerBound(const char* key, int len, MBData& data, std::string* boun
     data.options = 0;
     if (bound_key != nullptr)
         bound_key->reserve(CONSTS::MAX_KEY_LENGHTH);
-    return dict->FindBound(0, reinterpret_cast<const uint8_t*>(key), len, data, bound_key);
+    return dict->FindLowerBound(reinterpret_cast<const uint8_t*>(key), len, data, bound_key);
 }
 
 // Find the longest prefix match
