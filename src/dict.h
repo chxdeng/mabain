@@ -32,6 +32,7 @@
 #include "mb_pipe.h"
 #include "rollable_file.h"
 #include "shm_queue_mgr.h"
+#include "util/prefix_cache_iface.h"
 // forward declare
 namespace mabain {
 namespace detail { class SearchEngine; }
@@ -74,13 +75,7 @@ public:
     int Init(uint32_t id);
     // Add key-value pair
     int Add(const uint8_t* key, int len, MBData& data, bool overwrite);
-    // Find value by key
-    int Find(const uint8_t* key, int len, MBData& data);
-    // Find value by key using longest prefix match
-    int FindPrefix(const uint8_t* key, int len, MBData& data);
-    // Lower-bound wrapper (internal engine)
-    int FindLowerBound(const uint8_t* key, int len, MBData& data, std::string* bound_key);
-    // Bound search implemented internally in SearchEngine.
+    // Bound search implemented internally in SearchEngine (DB uses SearchEngine directly).
     int ReadDataByOffset(size_t offset, MBData& data) const;
 
     // Delete entry by key
@@ -152,6 +147,7 @@ public:
     void DisableSharedPrefixCache();
     bool SharedPrefixCacheEnabled() const { return static_cast<bool>(prefix_cache_shared); }
     void PrintSharedPrefixCacheStats(std::ostream& os) const;
+    PrefixCacheIface* ActivePrefixCache() const;
     void SetSharedPrefixCacheReadOnly(bool ro) { shared_pc_readonly = ro; }
 
 private:

@@ -35,6 +35,7 @@ public:
     static const int OPTION_RC_MODE;
     static const int OPTION_READ_SAVED_EDGE; // Used internally only
     static const int OPTION_INTERNAL_NODE_BOUND;
+    static const int OPTION_KEY_ONLY; // Skip value read in bound lookups
     static const int MAX_KEY_LENGHTH;
     static const int MAX_DATA_SIZE;
     static const int OPTION_SHMQ_RETRY;

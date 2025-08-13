@@ -11,23 +11,19 @@
 #include <vector>
 
 #include "drm_base.h" // for EDGE_SIZE
+#include "util/prefix_cache_iface.h"
 
 namespace mabain {
 
-struct PrefixCacheEntry {
-    size_t edge_offset; // Edge offset for the cached prefix
-    uint8_t edge_buff[EDGE_SIZE]; // Snapshot of the edge content
-    uint32_t lf_counter; // Optional: writer counter observed when cached
-};
-
-class PrefixCache {
+class PrefixCache : public PrefixCacheIface {
 public:
     explicit PrefixCache(int prefix_len, size_t capacity = 65536);
 
-    bool Get(const uint8_t* key, int len, PrefixCacheEntry& out);
-    void Put(const uint8_t* key, int len, const PrefixCacheEntry& in);
+    bool Get(const uint8_t* key, int len, PrefixCacheEntry& out) const override;
+    void Put(const uint8_t* key, int len, const PrefixCacheEntry& in) override;
 
-    int PrefixLen() const { return n; }
+    int PrefixLen() const override { return n; }
+    bool IsShared() const override { return false; }
     size_t Size() const;
     void Clear();
 
@@ -44,9 +40,9 @@ private:
     const int n;
     const size_t cap;
     std::unordered_map<uint64_t, PrefixCacheEntry> map;
-    uint64_t hit_count = 0;
-    uint64_t miss_count = 0;
-    uint64_t put_count = 0;
+    mutable uint64_t hit_count = 0;
+    mutable uint64_t miss_count = 0;
+    mutable uint64_t put_count = 0;
 
     // Fast-path for n == 4: direct index into fixed array of 65536 slots
     bool fast4;

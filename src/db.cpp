@@ -472,7 +472,8 @@ bool DB::InDB(const char* key, int len, int& err)
         return false;
     }
     MBData data(0, CONSTS::OPTION_FIND_AND_STORE_PARENT);
-    int rval = dict->Find(reinterpret_cast<const uint8_t*>(key), len, data);
+    detail::SearchEngine engine(*dict);
+    int rval = engine.find(reinterpret_cast<const uint8_t*>(key), len, data);
     if (rval == MBError::IN_DICT) {
         return true; // found it
     } else if (rval != MBError::NOT_EXIST) {
@@ -481,18 +482,18 @@ bool DB::InDB(const char* key, int len, int& err)
     return false;
 }
 
-// Find the exact key match
+// Find the exact key match (delegate to SearchEngine)
 int DB::Find(const char* key, int len, MBData& mdata) const
 {
     if (key == NULL)
         return MBError::INVALID_ARG;
     if (status != MBError::SUCCESS)
         return MBError::NOT_INITIALIZED;
-    // Writer in async mode cannot be used for lookup
     if (options & CONSTS::ASYNC_WRITER_MODE)
         return MBError::NOT_ALLOWED;
 
-    return dict->Find(reinterpret_cast<const uint8_t*>(key), len, mdata);
+    detail::SearchEngine engine(*dict);
+    return engine.find(reinterpret_cast<const uint8_t*>(key), len, mdata);
 }
 
 int DB::Find(const std::string& key, MBData& mdata) const
@@ -511,14 +512,14 @@ int DB::FindLowerBound(const char* key, int len, MBData& data, std::string* boun
         return MBError::INVALID_ARG;
     if (status != MBError::SUCCESS)
         return MBError::NOT_INITIALIZED;
-    // Writer in async mode cannot be used for lookup
     if (options & CONSTS::ASYNC_WRITER_MODE)
         return MBError::NOT_ALLOWED;
 
     data.options = 0;
     if (bound_key != nullptr)
         bound_key->reserve(CONSTS::MAX_KEY_LENGHTH);
-    return dict->FindLowerBound(reinterpret_cast<const uint8_t*>(key), len, data, bound_key);
+    detail::SearchEngine engine(*dict);
+    return engine.lowerBound(reinterpret_cast<const uint8_t*>(key), len, data, bound_key);
 }
 
 // Find the longest prefix match
@@ -528,13 +529,12 @@ int DB::FindLongestPrefix(const char* key, int len, MBData& data) const
         return MBError::INVALID_ARG;
     if (status != MBError::SUCCESS)
         return MBError::NOT_INITIALIZED;
-    // Writer in async mode cannot be used for lookup
     if (options & CONSTS::ASYNC_WRITER_MODE)
         return MBError::NOT_ALLOWED;
 
     data.match_len = 0;
-
-    return dict->FindPrefix(reinterpret_cast<const uint8_t*>(key), len, data);
+    detail::SearchEngine engine(*dict);
+    return engine.findPrefix(reinterpret_cast<const uint8_t*>(key), len, data);
 }
 
 int DB::FindLongestPrefix(const std::string& key, MBData& data) const

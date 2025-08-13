@@ -30,6 +30,8 @@
 #include "util/prefix_cache.h"
 #include "util/prefix_cache_shared.h"
 #include "detail/search_engine.h"
+#include "util/prefix_cache.h"
+#include "util/prefix_cache_shared.h"
 
 #define DATA_HEADER_SIZE 32
 
@@ -174,24 +176,7 @@ int Dict::Status() const
     return status;
 }
 
-// Thin wrappers to internal SearchEngine to keep dict.h small
-int Dict::Find(const uint8_t* key, int len, MBData& data)
-{
-    detail::SearchEngine engine(*this);
-    return engine.find(key, len, data);
-}
-
-int Dict::FindPrefix(const uint8_t* key, int len, MBData& data)
-{
-    detail::SearchEngine engine(*this);
-    return engine.findPrefix(key, len, data);
-}
-
-int Dict::FindLowerBound(const uint8_t* key, int len, MBData& data, std::string* bound_key)
-{
-    detail::SearchEngine engine(*this);
-    return engine.lowerBound(key, len, data, bound_key);
-}
+// Search wrappers removed; DB now calls SearchEngine directly.
 
 // Add a key-value pair
 // if overwrite is true and an entry with input key already exists, the old data will
@@ -637,7 +622,10 @@ int Dict::Remove(const uint8_t* key, int len, MBData& data)
         return MBError::INVALID_ARG;
 
     int rval;
-    rval = Find(key, len, data);
+    {
+        detail::SearchEngine engine(*this);
+        rval = engine.find(key, len, data);
+    }
     if (rval == MBError::IN_DICT) {
         // Invalidate shared prefix cache entry for this key's prefix and edge
         if (prefix_cache_shared) {
@@ -650,7 +638,10 @@ int Dict::Remove(const uint8_t* key, int len, MBData& data)
 #ifdef __DEBUG__
             assert(len > 0);
 #endif
-            rval = Find(key, len, data);
+            {
+                detail::SearchEngine engine(*this);
+                rval = engine.find(key, len, data);
+            }
             if (MBError::IN_DICT == rval) {
                 if (prefix_cache_shared) {
                     prefix_cache_shared->InvalidateByPrefixAndEdge(key, len, data.edge_ptrs.offset);
@@ -1011,6 +1002,9 @@ void Dict::EnableSharedPrefixCache(int n, size_t capacity, uint32_t assoc)
         prefix_cache.reset();
     // Create or open shared cache depending on access mode
     if (options & CONSTS::ACCESS_MODE_WRITER) {
+        // Ensure cache file is fresh to avoid stale entries between runs
+        std::string shm_path = PrefixCacheShared::ShmPath(mbdir_);
+        ::unlink(shm_path.c_str());
         prefix_cache_shared.reset(PrefixCacheShared::CreateWriter(mbdir_, n, capacity, assoc));
     } else {
         // Try open existing; if not present or mismatch, create exclusively; otherwise re-open.
@@ -1096,6 +1090,15 @@ void Dict::PrintSharedPrefixCacheStats(std::ostream& os) const
     } else {
         os << "PrefixCacheShared: disabled" << std::endl;
     }
+}
+
+PrefixCacheIface* Dict::ActivePrefixCache() const
+{
+    if (prefix_cache_shared)
+        return prefix_cache_shared.get();
+    if (prefix_cache)
+        return prefix_cache.get();
+    return nullptr;
 }
 
 // Recovery from abnormal writer terminations (segfault, kill -9 etc)

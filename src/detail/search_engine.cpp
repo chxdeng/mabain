@@ -110,7 +110,7 @@ int SearchEngine::lowerBound(const uint8_t* key, int len, MBData& data, std::str
 
     auto do_bound = [&](size_t root_off) -> int {
         int root_key = key[0];
-        int ret = dict.mm.GetRootEdge(root_off, root_key, edge_ptrs);
+        int ret = getRootEdgeFast(root_off, root_key, edge_ptrs);
         if (ret != MBError::SUCCESS)
             return ret;
         if (edge_ptrs.len_ptr[0] == 0) {
@@ -228,7 +228,7 @@ int SearchEngine::findPrefixInternal(size_t root_off, const uint8_t* key, int le
     ReaderLFGuard lf_guard(dict.lfree, data);
 #endif
 
-    rval = dict.mm.GetRootEdge(root_off, key[0], edge_ptrs);
+    rval = getRootEdgeFast(root_off, key[0], edge_ptrs);
     if (rval != MBError::SUCCESS)
         return MBError::READ_ERROR;
 
@@ -439,8 +439,13 @@ int SearchEngine::readLowerBound(EdgePtrs& edge_ptrs, MBData& data, std::string*
         appendEdgeKey(bound_key, le_edge_key, edge_ptrs);
     }
 
-    if (rval == MBError::SUCCESS || rval == MBError::NOT_EXIST)
+    if (rval == MBError::SUCCESS || rval == MBError::NOT_EXIST) {
+        if (data.options & CONSTS::OPTION_KEY_ONLY) {
+            // Key-only path: caller only needs bound position/key (bound_key handled by caller)
+            return MBError::SUCCESS;
+        }
         rval = dict.ReadDataFromEdge(data, edge_ptrs);
+    }
     return rval;
 }
 
@@ -450,7 +455,7 @@ int SearchEngine::readBoundFromRootEdge(EdgePtrs& edge_ptrs, MBData& data,
     int rval = MBError::NOT_EXIST;
     int ret;
     for (int i = root_key - 1; i >= 0; i--) {
-        ret = dict.mm.GetRootEdge(0, i, edge_ptrs);
+        ret = getRootEdgeFast(0, i, edge_ptrs);
         if (ret != MBError::SUCCESS)
             return ret;
         if (edge_ptrs.len_ptr[0] != 0) {

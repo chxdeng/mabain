@@ -14,7 +14,7 @@
 #include <ostream>
 
 #include "drm_base.h"          // EDGE_SIZE
-#include "util/prefix_cache.h" // PrefixCacheEntry for compatibility
+#include "util/prefix_cache_iface.h"
 
 namespace mabain {
 
@@ -41,7 +41,7 @@ struct PrefixCacheSharedEntry {
     uint32_t _pad;               // padding
 };
 
-class PrefixCacheShared {
+class PrefixCacheShared : public PrefixCacheIface {
 public:
     static PrefixCacheShared* CreateWriter(const std::string& mbdir,
                                            int prefix_len,
@@ -51,15 +51,16 @@ public:
     ~PrefixCacheShared();
 
     // Multi-process lock-free read
-    bool Get(const uint8_t* key, int len, PrefixCacheEntry& out) const;
+    bool Get(const uint8_t* key, int len, PrefixCacheEntry& out) const override;
     // Multi-process writers (any process can call these)
-    void Put(const uint8_t* key, int len, const PrefixCacheEntry& in);
+    void Put(const uint8_t* key, int len, const PrefixCacheEntry& in) override;
     void InvalidateByEdgeOffset(size_t edge_offset);
     // Targeted invalidation using the key's prefix: scans only its bucket
     void InvalidateByPrefixAndEdge(const uint8_t* key, int len, size_t edge_offset);
 
     void DumpStats(std::ostream& os) const;
-    int PrefixLen() const { return hdr_ ? hdr_->n : 0; }
+    int PrefixLen() const override { return hdr_ ? hdr_->n : 0; }
+    bool IsShared() const override { return true; }
     size_t Buckets() const { return hdr_ ? hdr_->nbuckets : 0; }
     uint32_t Assoc() const { return hdr_ ? hdr_->assoc : 0; }
 

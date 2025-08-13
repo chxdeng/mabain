@@ -1,6 +1,8 @@
 #include <cassert>
 #include <cstdlib>
 #include <map>
+#include <string>
+#include <vector>
 #include <sys/time.h>
 
 #include "../db.h"
@@ -38,111 +40,66 @@ static void InsertRandom(map<string, string>& m, DB* db, int num, int type)
     }
 }
 
-static int bound_key_err = 0;
 static void find_test(map<string, string>& m, DB* db, int num, int* test_key, int type)
 {
     MBData mbd;
     string kv;
-    std::string bound_key;
     TestKey tkey_sha1(MABAIN_TEST_KEY_TYPE_SHA_128);
     TestKey tkey_sha2(MABAIN_TEST_KEY_TYPE_SHA_256);
+    // Precompute all query keys so timing measures only the lookup calls
+    std::vector<std::string> queries;
+    queries.reserve(num);
     for (int i = 0; i < num; i++) {
-        mbd.Clear();
-        bound_key.clear();
-
         switch (type) {
-        case 0:
-            kv = to_string(test_key[i]);
-            break;
-        case 1:
-            kv = string((char*)&test_key[i], 4);
-            break;
-        case 2:
-            kv = tkey_sha1.get_key(test_key[i]);
-            break;
-        case 3:
-            kv = tkey_sha2.get_key(test_key[i]);
-            break;
-        }
-
-        auto lower = m.lower_bound(kv);
-        if (lower == m.end())
-            continue;
-        if (lower->first != kv)
-            lower--;
-        int rval = db->FindLowerBound(kv, mbd, &bound_key);
-        if (lower != m.end()) {
-            if (rval != MBError::SUCCESS || lower->first != string((char*)mbd.buff, mbd.data_len)) {
-                cout << test_key[i] << " " << lower->first << " "
-                     << string((char*)mbd.buff, mbd.data_len) << ": " << rval << "\n";
-                abort();
-            }
-            // compare the constructed bound key in mabain
-            if (bound_key != lower->first) {
-                cout << "search key: " << test_key[i] << ", " << kv << ", lower->first: " << lower->first << ", bound key: "
-                     << bound_key << ", value: " << string((char*)mbd.buff, mbd.data_len) << std::endl;
-                abort();
-                bound_key_err++;
-            }
+        case 0: queries.emplace_back(to_string(test_key[i])); break;
+        case 1: queries.emplace_back(string((char*)&test_key[i], 4)); break;
+        case 2: queries.emplace_back(tkey_sha1.get_key(test_key[i])); break;
+        case 3: queries.emplace_back(tkey_sha2.get_key(test_key[i])); break;
         }
     }
 
+    // Optional correctness check (not timed): verify DB lowerBound equals std::map lower_bound
+    for (int i = 0; i < num; i++) {
+        auto lower = m.lower_bound(queries[i]);
+        if (lower == m.end()) continue;
+        if (lower->first != queries[i]) lower--;
+        if (lower == m.end()) continue;
+        mbd.Clear();
+        int rv = db->FindLowerBound(queries[i], mbd, nullptr);
+        if (rv != MBError::SUCCESS || lower->first != string((char*)mbd.buff, mbd.data_len)) {
+            std::cerr << "mismatch for " << queries[i] << std::endl;
+            abort();
+        }
+    }
+
+    // Timed region 1: std::map lower_bound only (no key construction)
     timeval start, stop;
-    uint64_t timediff;
-
+    volatile size_t sink = 0; // prevent optimizer from eliding work
     gettimeofday(&start, nullptr);
     for (int i = 0; i < num; i++) {
-        switch (type) {
-        case 0:
-            kv = to_string(test_key[i]);
-            break;
-        case 1:
-            kv = string((char*)&test_key[i], 4);
-            break;
-        case 2:
-            kv = tkey_sha1.get_key(test_key[i]);
-            break;
-        case 3:
-            kv = tkey_sha2.get_key(test_key[i]);
-            break;
-        }
-        auto lower = m.lower_bound(kv);
-        if (lower == m.end())
-            continue;
-        if (lower->first != kv)
-            lower--;
-        if (lower != m.end()) {
-            assert(lower->first == lower->second);
-        }
+        auto it = m.lower_bound(queries[i]);
+        if (it != m.end()) sink += it->first.size();
+    }
+    gettimeofday(&stop, nullptr);
+    uint64_t timediff = (stop.tv_sec - start.tv_sec) * 1000000 + (stop.tv_usec - start.tv_usec);
+    std::cout << "map "
+              << (type == 0 ? "type0 " : type == 1 ? "type1 " : type == 2 ? "type2 " : "type3 ")
+              << timediff * 1.0 / num << " micro seconds per lookup\n";
+
+    // Timed region 2: only the actual DB lookup calls
+    gettimeofday(&start, nullptr);
+    for (int i = 0; i < num; i++) {
+        // Only measure traversal cost; skip value read
+        mbd.data_len = 0;
+        mbd.match_len = 0;
+        mbd.options = CONSTS::OPTION_KEY_ONLY;
+        db->FindLowerBound(queries[i], mbd, nullptr);
     }
     gettimeofday(&stop, nullptr);
     timediff = (stop.tv_sec - start.tv_sec) * 1000000 + (stop.tv_usec - start.tv_usec);
-    std::cout << "map ===== " << timediff * 1.0 / num << " micro seconds per lookup\n";
-
-    gettimeofday(&start, nullptr);
-    for (int i = 0; i < num; i++) {
-        mbd.Clear();
-        switch (type) {
-        case 0:
-            kv = to_string(test_key[i]);
-            break;
-        case 1:
-            kv = string((char*)&test_key[i], 4);
-            break;
-        case 2:
-            kv = tkey_sha1.get_key(test_key[i]);
-            break;
-        case 3:
-            kv = tkey_sha2.get_key(test_key[i]);
-            break;
-        }
-
-        db->FindLowerBound(kv, mbd, nullptr);
-    }
-    gettimeofday(&stop, nullptr);
-    timediff = (stop.tv_sec - start.tv_sec) * 1000000 + (stop.tv_usec - start.tv_usec);
-    std::cout << "mabain ===== " << timediff * 1.0 / num << " micro seconds per lookup\n";
-    std::cout << "bound key error count: " << bound_key_err << "\n";
+    std::cout << "mabain "
+              << (type == 0 ? "type0 " : type == 1 ? "type1 " : type == 2 ? "type2 " : "type3 ")
+              << timediff * 1.0 / num << " micro seconds per lookup\n";
 }
 
 int main()

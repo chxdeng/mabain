@@ -136,6 +136,7 @@ inline int RollableFile::find_block_index(void* ptr) const
     // should not reach here
     Logger::Log(LOG_LEVEL_ERROR, "failed to find block index for %p", ptr);
     assert(false);
+    return -1;
 }
 
 // Get the shared memory offset of the given pointer
@@ -153,6 +154,7 @@ inline size_t RollableFile::get_shm_offset(void* ptr) const
     // should not reach here
     Logger::Log(LOG_LEVEL_ERROR, "failed to get shm offset for %p", ptr);
     assert(false);
+    return static_cast<size_t>(-1);
 }
 
 // Get the aligned offset of the given pointer relative to the beginning of the block
@@ -169,6 +171,7 @@ inline size_t RollableFile::get_aligned_offset(void* ptr) const
     // should not reach here
     Logger::Log(LOG_LEVEL_ERROR, "failed to get aligned offset for %p", ptr);
     assert(false);
+    return static_cast<size_t>(-1);
 }
 
 }

@@ -59,7 +59,7 @@ bool PrefixCache::BuildIndex4(const uint8_t* key, int len, uint32_t& idx) const
     return true;
 }
 
-bool PrefixCache::Get(const uint8_t* key, int len, PrefixCacheEntry& out)
+bool PrefixCache::Get(const uint8_t* key, int len, PrefixCacheEntry& out) const
 {
     if (fast4) {
         uint32_t idx;
