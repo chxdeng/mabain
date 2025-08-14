@@ -17,6 +17,7 @@
 // @author Changxue Deng <chadeng@cisco.com>
 
 #include <assert.h>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -24,7 +25,6 @@
 #include <sys/time.h>
 #include <unistd.h>
 #include <vector>
-#include <filesystem>
 
 #include "../db.h"
 #include "../dict.h"
@@ -35,7 +35,7 @@
 
 using namespace mabain;
 
-#define BLOCK_SIZE (16 * 1024 * 1024LL)  // 16MB
+#define BLOCK_SIZE (16 * 1024 * 1024LL) // 16MB
 #define MAX_NUM_DATA_BLOCKS 30
 #define MAX_NUM_INDEX_BLOCKS 30
 
@@ -44,7 +44,8 @@ static bool debug = false;
 static DB* global_db = nullptr;
 
 // Helper function to create MBConfig with specified options
-static MBConfig create_mbconfig(const MBConfig& base_conf, int options) {
+static MBConfig create_mbconfig(const MBConfig& base_conf, int options)
+{
     MBConfig conf;
     memcpy(&conf, &base_conf, sizeof(conf));
     conf.options = options;
@@ -58,7 +59,8 @@ static MBConfig create_mbconfig(const MBConfig& base_conf, int options) {
 }
 
 // Helper function to create or get global DB instance
-static DB* get_or_create_global_db(const MBConfig& mbconf) {
+static DB* get_or_create_global_db(const MBConfig& mbconf)
+{
     if (global_db == nullptr) {
         MBConfig conf = create_mbconfig(mbconf, CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC);
         global_db = new DB(conf);
@@ -72,7 +74,7 @@ static void clean_db_dir()
 {
     std::string pattern1 = std::string(MB_DIR) + "/_mabain_*";
     std::string pattern2 = std::string(MB_DIR) + "/backup/_mabain_*";
-    
+
     try {
         // Remove files matching pattern1
         for (const auto& entry : std::filesystem::directory_iterator(MB_DIR)) {
@@ -80,7 +82,7 @@ static void clean_db_dir()
                 std::filesystem::remove_all(entry.path());
             }
         }
-        
+
         // Remove files matching pattern2 in backup directory
         std::string backup_dir = std::string(MB_DIR) + "/backup";
         if (std::filesystem::exists(backup_dir)) {
@@ -98,7 +100,7 @@ static void clean_db_dir()
 static void SetTestStatus(bool success)
 {
     std::string success_file = std::string(MB_DIR) + "/_success";
-    
+
     try {
         if (success) {
             std::ofstream file(success_file);
@@ -178,7 +180,7 @@ static void iterator_test(MBConfig& mbconf, int64_t expected_count)
 static void jemalloc_remove_all_test(std::string& list_file, const MBConfig& mbconf, int64_t expected_count)
 {
     std::cout << "jemalloc remove all test: " << list_file << "\n";
-    
+
     // Use global DB instance if it exists, otherwise create a new one
     global_db = get_or_create_global_db(mbconf);
 
@@ -201,7 +203,7 @@ static void jemalloc_remove_all_test(std::string& list_file, const MBConfig& mbc
 
     // For lookup and iterator tests, we need to create temporary reader instances
     MBConfig conf = create_mbconfig(mbconf, CONSTS::ACCESS_MODE_READER);
-    
+
     lookup_test(list_file, conf, 0);
     iterator_test(conf, 0);
 
@@ -218,7 +220,7 @@ static void jemalloc_remove_all_test(std::string& list_file, const MBConfig& mbc
 static void jemalloc_test(std::string& list_file, const MBConfig& mbconf, int64_t expected_count)
 {
     std::cout << "Jemalloc test: " << list_file << "\n";
-    
+
     // Use global DB instance if it exists, otherwise create a new one
     global_db = get_or_create_global_db(mbconf);
 
@@ -236,10 +238,10 @@ static void jemalloc_test(std::string& list_file, const MBConfig& mbconf, int64_
     in.close();
 
     std::cout << "iterating test with jemalloc loading " << list_file << "\n";
-    
+
     // For lookup and iterator tests, we need to create temporary reader instances
     MBConfig conf = create_mbconfig(mbconf, CONSTS::ACCESS_MODE_READER);
-    
+
     lookup_test(list_file, conf, keys.size());
     iterator_test(conf, keys.size());
 
@@ -255,7 +257,7 @@ static void jemalloc_test(std::string& list_file, const MBConfig& mbconf, int64_
 static void tracking_buffer_test(std::string& list_file, const MBConfig& mbconf, int64_t expected_count)
 {
     std::cout << "Tracking buffer test: " << list_file << "\n";
-    
+
     // Use global DB instance if it exists, otherwise create a new one
     global_db = get_or_create_global_db(mbconf);
 
@@ -346,7 +348,7 @@ int main(int argc, char* argv[])
         } else {
             remove_db = false;
         }
-        
+
         if (mode.compare("jemalloc") == 0) {
             jemalloc_test(file, mbconf, expected_count);
         } else if (mode.compare("remove_all") == 0) {
@@ -371,14 +373,14 @@ int main(int argc, char* argv[])
     }
 
     test_in.close();
-    
+
     // Clean up global DB instance
     if (global_db != nullptr) {
         global_db->Close();
         delete global_db;
         global_db = nullptr;
     }
-    
+
     DB::CloseLogFile();
     SetTestStatus(true);
     return 0;

@@ -1,6 +1,8 @@
 # Define the library
-file(GLOB SOURCES "*.cpp" "util/*.cpp")
-file(GLOB HEADERS "*.h" "util/*.h")
+file(GLOB SOURCES "*.cpp" "util/*.cpp" "detail/*.cpp")
+# Explicitly exclude experimental lb_range_cache_shared from build
+list(REMOVE_ITEM SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/util/lb_range_cache_shared.cpp)
+file(GLOB HEADERS "*.h" "util/*.h" "detail/*.h")
 
 find_path(JEMALLOC_INCLUDE_DIR jemalloc/jemalloc.h PATHS /usr/include /usr/local/include)
 find_library(JEMALLOC_LIBRARY jemalloc PATHS /usr/lib /usr/local/lib)
@@ -14,11 +16,30 @@ add_library(mabain SHARED ${SOURCES})
 # Specify include directories for this target
 target_include_directories(mabain PUBLIC ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/src/util ${JEMALLOC_INCLUDE_DIR})
 
+# Always enable traversal step guard in find loops
+target_compile_definitions(mabain PRIVATE MB_ENABLE_TRAVERSAL_LIMIT)
+
 # Set compile options
+option(MB_WERROR "Treat warnings as errors" OFF)
+set(MB_WARN_OPTS -Wall -Wwrite-strings -Wsign-compare -Wcast-align -Wformat-security -fdiagnostics-show-option)
+if(MB_WERROR)
+    list(APPEND MB_WARN_OPTS -Werror)
+endif()
 target_compile_options(mabain PRIVATE
-    -Wall -Werror -Wwrite-strings -Wsign-compare -Wcast-align -Wformat-security
-    -fdiagnostics-show-option -g -ggdb -fPIC -O3 -std=c++17 -D__LOCK_FREE__
+    ${MB_WARN_OPTS}
+    -g -ggdb -fPIC -O3 -std=c++17 -D__LOCK_FREE__
+    -march=native -fomit-frame-pointer
 )
+
+# Link-time optimization (optional)
+option(ENABLE_IPO "Enable interprocedural optimization" OFF)
+if(ENABLE_IPO)
+  include(CheckIPOSupported)
+  check_ipo_supported(RESULT lto_supported OUTPUT lto_output)
+  if(lto_supported)
+    set_property(TARGET mabain PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+  endif()
+endif()
 
 # Conditionally add __DEBUG__ definition
 if(ENABLE_DEBUG)
@@ -32,3 +53,6 @@ target_link_libraries(mabain pthread ${JEMALLOC_LIBRARY})
 set_target_properties(mabain PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
 )
+cmake_minimum_required(VERSION 3.13)
+project(mabain CXX)
+cmake_policy(SET CMP0069 NEW)

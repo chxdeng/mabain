@@ -34,9 +34,14 @@ const int CONSTS::OPTION_READ_SAVED_EDGE = 0x8;
 const int CONSTS::OPTION_INTERNAL_NODE_BOUND = 0x10;
 const int CONSTS::OPTION_SHMQ_RETRY = 0x20;
 const int CONSTS::OPTION_JEMALLOC = 0x40;
+const int CONSTS::OPTION_KEY_ONLY = 0x80;
 
 const int CONSTS::MAX_KEY_LENGHTH = 256;
 const int CONSTS::MAX_DATA_SIZE = 0x7FFF;
+
+// Limit how many times readers retry when lock-free snapshot reports TRY_AGAIN
+const int CONSTS::LOCK_FREE_RETRY_LIMIT = 1000;
+const int CONSTS::FIND_TRAVERSAL_LIMIT = 1000;
 
 int CONSTS::WriterOptions()
 {

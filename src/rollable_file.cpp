@@ -506,6 +506,13 @@ size_t RollableFile::MemWrite(const void* src, size_t size, size_t offset)
     if (relative_offset + size > block_size) {
         throw (int)MBError::OUT_OF_BOUND;
     }
+    // Ensure the target block is opened/mapped in jemalloc mode
+    if (block_order >= (int)files.size() || files[block_order] == nullptr) {
+        int rval = CheckAndOpenFile(block_order, false);
+        if (rval != MBError::SUCCESS || files[block_order] == nullptr) {
+            throw (int)MBError::MMAP_FAILED;
+        }
+    }
     memcpy(files[block_order]->GetMapAddr() + relative_offset, src, size);
     return size;
 }
@@ -516,6 +523,13 @@ size_t RollableFile::MemRead(void* dst, size_t size, size_t offset)
     size_t relative_offset = offset % block_size;
     if (relative_offset + size > block_size) {
         throw (int)MBError::OUT_OF_BOUND;
+    }
+    // Ensure the source block is opened/mapped in jemalloc mode
+    if (block_order >= (int)files.size() || files[block_order] == nullptr) {
+        int rval = CheckAndOpenFile(block_order, false);
+        if (rval != MBError::SUCCESS || files[block_order] == nullptr) {
+            return 0; // signal read error to caller
+        }
     }
     memcpy(dst, files[block_order]->GetMapAddr() + relative_offset, size);
     return size;

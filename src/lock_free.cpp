@@ -62,14 +62,16 @@ void LockFree::WriterLockFreeStop()
 //////////////////////////////////////////////////
 // DO NOT CHANGE THE LOAD ORDER IN THIS FUNCTION.
 //////////////////////////////////////////////////
+//////////////////////////////////////////////////
+// DO NOT CHANGE THE LOAD ORDER IN THIS FUNCTION.
+//////////////////////////////////////////////////
 int LockFree::ReaderLockFreeStop(const LockFreeData& snapshot, size_t reader_offset,
     MBData& mbdata)
 {
-    LockFreeData curr;
-    curr.offset = shm_data_ptr->offset.load(MEMORY_ORDER_READER);
-    curr.counter = shm_data_ptr->counter.load(MEMORY_ORDER_READER);
+    size_t curr_offset = shm_data_ptr->offset.load(MEMORY_ORDER_READER);
+    uint32_t curr_counter = shm_data_ptr->counter.load(MEMORY_ORDER_READER);
 
-    if (curr.offset == reader_offset) {
+    if (curr_offset == reader_offset) {
         if (mbdata.options & CONSTS::OPTION_READ_SAVED_EDGE) {
             if (reader_offset == mbdata.edge_ptrs.offset) {
                 mbdata.options &= ~CONSTS::OPTION_READ_SAVED_EDGE;
@@ -89,12 +91,12 @@ int LockFree::ReaderLockFreeStop(const LockFreeData& snapshot, size_t reader_off
         case EXCEP_STATUS_RC_EDGE_STR:
         case EXCEP_STATUS_RC_DATA:
             memcpy(mbdata.edge_ptrs.edge_buff, header->excep_buff, EDGE_SIZE);
-            mbdata.edge_ptrs.offset = shm_data_ptr->offset.load(MEMORY_ORDER_READER);
+            mbdata.edge_ptrs.offset = curr_offset;
             break;
         case EXCEP_STATUS_CLEAR_EDGE:
         default:
             memset(mbdata.edge_ptrs.edge_buff, 0, EDGE_SIZE);
-            mbdata.edge_ptrs.offset = shm_data_ptr->offset.load(MEMORY_ORDER_READER);
+            mbdata.edge_ptrs.offset = curr_offset;
             break;
         }
         if (mbdata.edge_ptrs.offset == reader_offset) {
@@ -110,7 +112,7 @@ int LockFree::ReaderLockFreeStop(const LockFreeData& snapshot, size_t reader_off
         mbdata.options &= ~CONSTS::OPTION_READ_SAVED_EDGE;
 
     // Note it is expected that count_diff can overflow.
-    uint32_t count_diff = curr.counter - snapshot.counter;
+    uint32_t count_diff = curr_counter - snapshot.counter;
     if (count_diff == 0)
         return MBError::SUCCESS; // Writer was doing nothing. Reader can proceed.
     if (count_diff >= MAX_OFFSET_CACHE)

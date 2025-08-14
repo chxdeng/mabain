@@ -85,7 +85,7 @@ DictMem::DictMem(const std::string& mbdir, bool init_header, size_t memsize,
         map_hdr,
         create_hdr);
     if (header_file == NULL) {
-        std::cerr << "failed top open header file: " << mbdir + "_mabain_h\n";
+        std::cerr << "failed to open header file: " << mbdir + "_mabain_h\n";
         return;
     }
     header = reinterpret_cast<IndexHeader*>(header_file->GetMapAddr());
@@ -122,9 +122,9 @@ DictMem::DictMem(const std::string& mbdir, bool init_header, size_t memsize,
         return;
     }
 
-    ////////////////////////////////////
-    // Writor only initialization below
-    ////////////////////////////////////
+    ///////////////////////////////////
+    // Writer only initialization below
+    ///////////////////////////////////
 
     node_size = new int[NUM_ALPHABET];
     for (int i = 0; i < NUM_ALPHABET; i++) {
@@ -145,7 +145,7 @@ DictMem::DictMem(const std::string& mbdir, bool init_header, size_t memsize,
         // Set up inode number and create queue
         header->shm_queue_id = get_file_inode(mbdir + "_mabain_h");
         // Cannot set is_valid to true.
-        // More init to be dobe in InitRootNode.
+        // More init to be done in InitRootNode.
     } else {
         is_valid = true;
     }
@@ -153,8 +153,8 @@ DictMem::DictMem(const std::string& mbdir, bool init_header, size_t memsize,
         header->version[0], header->version[1], header->version[2]);
 }
 
-// The whole edge is initizlized to zero.
-const uint8_t DictMem::empty_edge[] = { 0 };
+// The whole edge is initialized to zero.
+const uint8_t DictMem::empty_edge[EDGE_SIZE] = { 0 };
 
 void DictMem::InitRootNode()
 {
@@ -163,7 +163,7 @@ void DictMem::InitRootNode()
 
     if (options & CONSTS::OPTION_JEMALLOC) {
         // Initialize the memory manager and set the initial offset to account for the root node.
-        // This will guranatee that the root node is always at offset 0.
+        // This will guarantee that the root node is always at offset 0.
         root_node = (uint8_t*)kv_file->PreAlloc(node_size[NUM_ALPHABET - 1]);
     } else {
         header->m_index_offset = 0;
@@ -440,7 +440,7 @@ int DictMem::AddLink(EdgePtrs& edge_ptrs, int match_len, const uint8_t* key,
 }
 
 // Add a new edge in current node
-// This invloves creating a new node and copying data from old node to the new node
+// This involves creating a new node and copying data from old node to the new node
 // and updating the child node offset in edge_ptrs (parent edge).
 int DictMem::UpdateNode(EdgePtrs& edge_ptrs, const uint8_t* key, int key_len,
     size_t data_off)
@@ -576,7 +576,7 @@ bool DictMem::FindNext(const unsigned char* key, int keylen, int& match_len,
     }
 
     for (i = 1; i < keylen; i++) {
-        if (key_string_ptr[i - 1] != key[i] || i > len)
+        if (i > len || key_string_ptr[i - 1] != key[i])
             break;
         match_len++;
     }

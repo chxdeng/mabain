@@ -35,10 +35,16 @@ public:
     static const int OPTION_RC_MODE;
     static const int OPTION_READ_SAVED_EDGE; // Used internally only
     static const int OPTION_INTERNAL_NODE_BOUND;
+    static const int OPTION_KEY_ONLY; // Skip value read in bound lookups
     static const int MAX_KEY_LENGHTH;
     static const int MAX_DATA_SIZE;
     static const int OPTION_SHMQ_RETRY;
     static const int OPTION_JEMALLOC;
+
+    // Max retries for lock-free reader retry loops before returning TRY_AGAIN
+    static const int LOCK_FREE_RETRY_LIMIT;
+    // Max steps allowed in Find traversal loop to avoid pathological spins
+    static const int FIND_TRAVERSAL_LIMIT;
 
     static int WriterOptions();
     static int ReaderOptions();

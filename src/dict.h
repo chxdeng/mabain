@@ -19,7 +19,9 @@
 #ifndef __DICT_H__
 #define __DICT_H__
 
+#include <memory>
 #include <stdint.h>
+#include <string.h>
 #include <string>
 
 #include "async_writer.h"
@@ -30,6 +32,15 @@
 #include "mb_pipe.h"
 #include "rollable_file.h"
 #include "shm_queue_mgr.h"
+#include "util/prefix_cache_iface.h"
+// forward declare
+namespace mabain {
+namespace detail {
+    class SearchEngine;
+}
+class PrefixCache;
+class PrefixCacheShared;
+}
 
 namespace mabain {
 
@@ -37,17 +48,6 @@ struct _AsyncNode;
 typedef struct _AsyncNode AsyncNode;
 struct _shm_lock_and_queue;
 typedef struct _shm_lock_and_queue shm_lock_and_queue;
-
-// bound search
-struct BoundSearchState {
-    const uint8_t* key;
-    uint8_t* node_buff;
-    std::string* bound_key;
-
-    int le_match_len = 0;
-    int le_edge_key = -1;
-    bool use_curr_edge = false;
-};
 
 // dictionary class
 // This is the work horse class for basic db operations (add, find and remove).
@@ -66,11 +66,7 @@ public:
     int Init(uint32_t id);
     // Add key-value pair
     int Add(const uint8_t* key, int len, MBData& data, bool overwrite);
-    // Find value by key
-    int Find(const uint8_t* key, int len, MBData& data);
-    // Find value by key using longest prefix match
-    int FindPrefix(const uint8_t* key, int len, MBData& data);
-    int FindBound(size_t root_off, const uint8_t* key, int len, MBData& data, std::string* bound_key);
+    // Bound search implemented internally in SearchEngine (DB uses SearchEngine directly).
     int ReadDataByOffset(size_t offset, MBData& data) const;
 
     // Delete entry by key
@@ -128,9 +124,29 @@ public:
     void Purge() const;
     int ExceptionRecovery();
 
+    // Optional: enable/disable prefix cache for Find
+    void EnablePrefixCache(int n, size_t capacity = 65536);
+    void DisablePrefixCache();
+    bool PrefixCacheEnabled() const { return static_cast<bool>(prefix_cache); }
+    void GetPrefixCacheStats(uint64_t& hit, uint64_t& miss, uint64_t& put,
+        size_t& entries, int& n) const;
+    void ResetPrefixCacheStats();
+    void PrintPrefixCacheStats(std::ostream& os) const;
+
+    // Shared prefix cache (multi-process, writer-managed updates)
+    void EnableSharedPrefixCache(int n, size_t capacity = 65536, uint32_t assoc = 4);
+    void DisableSharedPrefixCache();
+    bool SharedPrefixCacheEnabled() const { return static_cast<bool>(prefix_cache_shared); }
+    void PrintSharedPrefixCacheStats(std::ostream& os) const;
+    PrefixCacheIface* ActivePrefixCache() const;
+    void SetSharedPrefixCacheReadOnly(bool ro) { shared_pc_readonly = ro; }
+
 private:
-    int Find_Internal(size_t root_off, const uint8_t* key, int len, MBData& data);
-    int FindPrefix_Internal(size_t root_off, const uint8_t* key, int len, MBData& data);
+    // Allow internal SearchEngine to orchestrate lookups without exposing members publicly
+    friend class detail::SearchEngine;
+    // Search internals moved to detail::SearchEngine
+    // Prefix traversal helpers moved to SearchEngine.
+    // Helpers removed from header; SearchEngine owns traversal.
     int ReleaseBuffer(size_t offset);
     int UpdateDataBuffer(EdgePtrs& edge_ptrs, bool overwrite, MBData& mbd, bool& inc_count);
     int ReadDataFromEdge(MBData& data, const EdgePtrs& edge_ptrs) const;
@@ -140,11 +156,7 @@ private:
     int SHMQ_PrepareSlot(AsyncNode* node_ptr);
     AsyncNode* SHMQ_AcquireSlot(int& err) const;
 
-    int ReadLowerBound(EdgePtrs& edge_ptrs, MBData& data, std::string* bound_key, int le_edge_key) const;
-    int ReadBoundFromRootEdge(EdgePtrs& edge_ptrs, MBData& data, int root_key, std::string* bound_key) const;
-    void AppendEdgeKey(std::string* key, int edge_key, const EdgePtrs& edge_ptrs) const;
-    int TraverseToLowerBound(const uint8_t* key, int len, EdgePtrs& edge_ptrs, MBData& data,
-        EdgePtrs& bound_edge_ptrs, BoundSearchState& state) const;
+    // Bound traversal helpers moved to SearchEngine.
     void reserveDataFL(const uint8_t* buff, int size, size_t& offset);
     int ReleaseBuffer(size_t offset, int size);
     void ReleaseAlignmentBuffer(size_t offset, size_t alignment_off);
@@ -163,6 +175,16 @@ private:
     MBPipe mbp;
     // Hold a reference to shared memory queue file so that the async thread can access it during process exit
     ShmQueueMgr qmgr;
+
+    // Optional lookup accelerators for Find
+    std::unique_ptr<PrefixCache> prefix_cache;
+    std::unique_ptr<PrefixCacheShared> prefix_cache_shared;
+    std::string mbdir_;
+    bool shared_pc_readonly = false;
+
+    // Prefix-cache helpers (no side effects when cache disabled)
+    void MaybePutCache(const uint8_t* full_key, int full_len, int consumed,
+        const EdgePtrs& edge_ptrs) const;
 };
 
 }

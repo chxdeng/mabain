@@ -17,6 +17,7 @@
 // @author Changxue Deng <chadeng@cisco.com>
 
 #include "db.h"
+#include "detail/search_engine.h"
 #include "dict.h"
 #include "integer_4b_5b.h"
 #include "mbt_base.h"
@@ -205,9 +206,10 @@ int DB::iterator::get_node_offset(const std::string& node_key,
 
     node_offset = 0;
     value.options |= CONSTS::OPTION_FIND_AND_STORE_PARENT;
+    detail::SearchEngine engine(*db_ref.dict);
     while (true) {
-        rval = db_ref.dict->Find((const uint8_t*)node_key.data(),
-            node_key.size(), value);
+        rval = engine.find(reinterpret_cast<const uint8_t*>(node_key.data()),
+            static_cast<int>(node_key.size()), value);
         if (rval != MBError::TRY_AGAIN)
             break;
         nanosleep((const struct timespec[]) { { 0, 10L } }, NULL);

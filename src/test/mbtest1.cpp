@@ -1,10 +1,10 @@
 #include <assert.h>
 #include <atomic>
+#include <filesystem>
 #include <fstream>
 #include <stdlib.h>
 #include <time.h>
 #include <unistd.h>
-#include <filesystem>
 
 #include "../db.h"
 
@@ -360,7 +360,7 @@ static void* run_mb_test(void* arg)
 static void SetTestStatus(bool success)
 {
     std::string success_file = std::string(mbdir) + "/_success";
-    
+
     try {
         if (success) {
             std::ofstream file(success_file);

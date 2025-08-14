@@ -1,0 +1,21 @@
+#!/bin/bash
+
+export LD_LIBRARY_PATH=/home/chadeng/mabain/build/lib
+
+cd build
+make || exit 1
+cd ..
+
+cd db_comparisons
+make || exit 1
+
+./db_comp_mb -pcn 4 -pcc 500000 -pc-shared -pc-assoc 4 -k sha1 -j
+
+./db_comp_mb -pcn 4 -pcc 100000 -pc-shared -pc-assoc 4 -j
+
+cd ../src/test
+make || exit 1
+
+./mb_bound_test -pcn 4 -pcc 131072 -pc-shared -pc-assoc 8
+
+cd ../../

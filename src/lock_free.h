@@ -32,14 +32,13 @@ namespace mabain {
 
 #define MAX_OFFSET_CACHE 4
 #define MEMORY_ORDER_WRITER std::memory_order_release
-#define MEMORY_ORDER_READER std::memory_order_consume
+#define MEMORY_ORDER_READER std::memory_order_acquire
 
 struct _IndexHeader;
 typedef struct _IndexHeader IndexHeader;
 
 typedef struct _LockFreeData {
     uint32_t counter;
-    size_t offset;
 } LockFreeData;
 
 typedef struct _LockFreeShmData {
@@ -75,6 +74,8 @@ inline void LockFree::ReaderLockFreeStart(LockFreeData& snapshot)
 {
     snapshot.counter = shm_data_ptr->counter.load(MEMORY_ORDER_READER);
 }
+
+// inline ReaderLockFreeStop is defined in lock_free.cpp
 
 }
 
