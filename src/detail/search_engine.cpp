@@ -142,7 +142,7 @@ namespace detail {
         EdgePtrs& edge_ptrs = data.edge_ptrs;
 
         // Always operate on the main root (no rc_root_offset diversion)
-        int ret = getRootEdgeFast(0, root_key, edge_ptrs);
+        int ret = dict.mm.GetRootEdge(0, root_key, edge_ptrs);
         if (ret != MBError::SUCCESS)
             return ret;
         if (edge_ptrs.len_ptr[0] == 0) {
@@ -209,9 +209,10 @@ namespace detail {
         ReaderLFGuard lf_guard(dict.lfree, data);
 #endif
 
-        rval = getRootEdgeFast(root_off, key[0], edge_ptrs);
-        if (rval != MBError::SUCCESS)
+        rval = dict.mm.GetRootEdge(root_off, key[0], edge_ptrs);
+        if (rval != MBError::SUCCESS) {
             return MBError::READ_ERROR;
+        }
 
         if (edge_ptrs.len_ptr[0] == 0) {
 #ifdef __LOCK_FREE__
@@ -311,9 +312,9 @@ namespace detail {
 #ifdef __LOCK_FREE__
             ReaderLFGuard lf_guard(dict.lfree, data);
 #endif
-            rval = getRootEdgeFast(root_off, key[0], edge_ptrs);
-            if (rval != MBError::SUCCESS)
-                return MBError::READ_ERROR;
+        rval = dict.mm.GetRootEdge(root_off, key[0], edge_ptrs);
+        if (rval != MBError::SUCCESS)
+            return MBError::READ_ERROR;
             if (edge_ptrs.len_ptr[0] == 0) {
 #ifdef __LOCK_FREE__
                 {
@@ -621,7 +622,7 @@ namespace detail {
         int rval = MBError::NOT_EXIST;
         int ret;
         for (int i = root_key - 1; i >= 0; i--) {
-            ret = getRootEdgeFast(0, i, edge_ptrs);
+            ret = dict.mm.GetRootEdge(0, i, edge_ptrs);
             if (ret != MBError::SUCCESS)
                 return ret;
             if (edge_ptrs.len_ptr[0] != 0) {

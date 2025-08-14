@@ -61,14 +61,14 @@ namespace detail {
             EdgePtrs& edge_ptrs, MBData& data, int& last_prefix_rval, uint8_t last_node_buffer[NODE_EDGE_KEY_FIRST]) const;
 
         // Small helpers
+        // Exact-match path helper: always copy edge tail into node_buff
         int loadEdgeKey(const EdgePtrs& edge_ptrs, MBData& data, const uint8_t*& key_buff, int edge_len_m1) const;
         inline bool remainderMatches(const uint8_t* key_buff, const uint8_t* p, int rem_len) const;
         inline bool isLeaf(const EdgePtrs& edge_ptrs) const;
         inline int compareCurrEdgeTail(const EdgePtrs& edge_ptrs, MBData& data, const uint8_t* p,
             const uint8_t*& key_buff, int& edge_len, int& edge_len_m1) const;
         inline int resolveMatchOrInDict(MBData& data, EdgePtrs& edge_ptrs, bool at_root) const;
-        // Fast root-edge accessor with tiny thread-local cache when no writers
-        inline int getRootEdgeFast(size_t root_off, int nt, EdgePtrs& edge_ptrs) const;
+        // Root-edge accessor (reads directly from DictMem)
         inline bool seedFromCache(const uint8_t* key, int len, EdgePtrs& edge_ptrs,
             MBData& data, const uint8_t*& key_cursor, int& len_remaining, int& consumed) const;
         inline void maybePutCache(const uint8_t* full_key, int full_len, int consumed,
@@ -154,54 +154,15 @@ namespace detail {
 
     // Tiny per-thread cache of root edges to avoid a ReadData on hot prefixes.
     // Safe only when no writers are active; guarded by header->num_writer == 0.
-    inline int SearchEngine::getRootEdgeFast(size_t root_off, int nt, EdgePtrs& edge_ptrs) const
-    {
-        struct RootEdgeCacheEntry {
-            size_t base;
-            uint8_t edge_buff[EDGE_SIZE];
-            bool valid;
-        };
-        // One slot per first-byte key
-        thread_local static RootEdgeCacheEntry cache[NUM_ALPHABET];
-
-        const bool no_writers = dict.GetHeaderPtr()->num_writer == 0;
-        const size_t base = (root_off != 0) ? root_off : dict.mm.GetRootOffset();
-
-        RootEdgeCacheEntry& slot = cache[nt];
-        if (no_writers && slot.valid && slot.base == base) {
-            // Fill EdgePtrs from cached edge buffer
-            // Compute offset exactly as DictMem::GetRootEdge would
-            edge_ptrs.offset = base + NODE_EDGE_KEY_FIRST + NUM_ALPHABET + nt * EDGE_SIZE;
-            memcpy(edge_ptrs.edge_buff, slot.edge_buff, EDGE_SIZE);
-            InitTempEdgePtrs(edge_ptrs);
-            return MBError::SUCCESS;
-        }
-
-        int ret = dict.mm.GetRootEdge(root_off, nt, edge_ptrs);
-        if (ret != MBError::SUCCESS)
-            return ret;
-
-        if (no_writers) {
-            slot.base = base;
-            memcpy(slot.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
-            slot.valid = true;
-        }
-        return MBError::SUCCESS;
-    }
+    // (getRootEdgeFast removed; callers read via dict.mm.GetRootEdge)
 
     inline int SearchEngine::loadEdgeKey(const EdgePtrs& edge_ptrs, MBData& data, const uint8_t*& key_buff, int edge_len_m1) const
     {
         if (edge_len_m1 > LOCAL_EDGE_LEN_M1) {
             size_t edge_str_off = Get5BInteger(edge_ptrs.ptr);
-            // Try to get a direct pointer to shared memory to avoid a copy
-            uint8_t* shm_ptr = dict.mm.GetShmPtr(edge_str_off, edge_len_m1);
-            if (shm_ptr != nullptr) {
-                key_buff = shm_ptr;
-            } else {
-                if (dict.mm.ReadData(data.node_buff, edge_len_m1, edge_str_off) != edge_len_m1)
-                    return MBError::READ_ERROR;
-                key_buff = data.node_buff;
-            }
+            if (dict.mm.ReadData(data.node_buff, edge_len_m1, edge_str_off) != edge_len_m1)
+                return MBError::READ_ERROR;
+            key_buff = data.node_buff;
         } else {
             key_buff = edge_ptrs.ptr;
         }
