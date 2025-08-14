@@ -313,9 +313,10 @@ namespace detail {
             ReaderLFGuard lf_guard(dict.lfree, data);
 #endif
         rval = dict.mm.GetRootEdge(root_off, key[0], edge_ptrs);
-        if (rval != MBError::SUCCESS)
+        if (rval != MBError::SUCCESS) {
             return MBError::READ_ERROR;
-            if (edge_ptrs.len_ptr[0] == 0) {
+        }
+        if (edge_ptrs.len_ptr[0] == 0) {
 #ifdef __LOCK_FREE__
                 {
                     int _r = lf_guard.stop(edge_ptrs.offset);
