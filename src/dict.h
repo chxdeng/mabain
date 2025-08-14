@@ -47,16 +47,6 @@ typedef struct _AsyncNode AsyncNode;
 struct _shm_lock_and_queue;
 typedef struct _shm_lock_and_queue shm_lock_and_queue;
 
-// bound search
-struct BoundSearchState {
-    const uint8_t* key;
-    uint8_t* node_buff;
-    std::string* bound_key;
-
-    int le_match_len = 0;
-    int le_edge_key = -1;
-    bool use_curr_edge = false;
-};
 
 // dictionary class
 // This is the work horse class for basic db operations (add, find and remove).
