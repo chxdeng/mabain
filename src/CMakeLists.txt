@@ -1,5 +1,7 @@
 # Define the library
 file(GLOB SOURCES "*.cpp" "util/*.cpp" "detail/*.cpp")
+# Explicitly exclude experimental lb_range_cache_shared from build
+list(REMOVE_ITEM SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/util/lb_range_cache_shared.cpp)
 file(GLOB HEADERS "*.h" "util/*.h" "detail/*.h")
 
 find_path(JEMALLOC_INCLUDE_DIR jemalloc/jemalloc.h PATHS /usr/include /usr/local/include)

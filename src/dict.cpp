@@ -22,6 +22,7 @@
 
 #include "async_writer.h"
 #include "db.h"
+#include "detail/search_engine.h"
 #include "dict.h"
 #include "dict_mem.h"
 #include "error.h"
@@ -29,13 +30,8 @@
 #include "mabain_consts.h"
 #include "util/prefix_cache.h"
 #include "util/prefix_cache_shared.h"
-#include "detail/search_engine.h"
-#include "util/prefix_cache.h"
-#include "util/prefix_cache_shared.h"
 
 #define DATA_HEADER_SIZE 32
-
-
 
 namespace mabain {
 
@@ -417,12 +413,6 @@ int Dict::ReadDataFromNode(MBData& data, const uint8_t* node_ptr) const
     data.bucket_index = data_len[1];
     return MBError::SUCCESS;
 }
-
-
-
-
-
-
 
 void Dict::PrintStats(std::ostream* out_stream) const
 {
@@ -1024,7 +1014,6 @@ void Dict::DisableSharedPrefixCache()
 {
     prefix_cache_shared.reset();
 }
-
 
 void Dict::MaybePutCache(const uint8_t* full_key, int full_len, int consumed,
     const EdgePtrs& edge_ptrs) const

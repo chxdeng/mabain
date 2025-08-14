@@ -24,12 +24,12 @@
 
 #include "async_writer.h"
 #include "db.h"
+#include "detail/search_engine.h"
 #include "dict.h"
 #include "drm_base.h"
 #include "error.h"
 #include "integer_4b_5b.h"
 #include "logger.h"
-#include "detail/search_engine.h"
 #include "mb_backup.h"
 #include "mb_lsq.h"
 #include "mb_rc.h"

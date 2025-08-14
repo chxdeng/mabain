@@ -3,13 +3,13 @@
  */
 #include "util/prefix_cache_shared.h"
 
+#include <algorithm>
 #include <cerrno>
 #include <cstring>
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#include <algorithm>
 
 namespace mabain {
 
@@ -17,14 +17,14 @@ static constexpr uint32_t kMagic = 0x50F1CACE;
 static constexpr uint16_t kVersion = 1;
 
 PrefixCacheShared* PrefixCacheShared::CreateWriter(const std::string& mbdir,
-                                                   int prefix_len,
-                                                   size_t capacity,
-                                                   uint32_t associativity)
+    int prefix_len,
+    size_t capacity,
+    uint32_t associativity)
 {
     if (prefix_len <= 0 || prefix_len > 8 || capacity == 0 || associativity == 0)
         return nullptr;
     auto* pc = new PrefixCacheShared();
-    if (!pc->map_file(ShmPath(mbdir), /*create*/true, prefix_len, capacity, associativity)) {
+    if (!pc->map_file(ShmPath(mbdir), /*create*/ true, prefix_len, capacity, associativity)) {
         delete pc;
         return nullptr;
     }
@@ -34,7 +34,7 @@ PrefixCacheShared* PrefixCacheShared::CreateWriter(const std::string& mbdir,
 PrefixCacheShared* PrefixCacheShared::OpenReader(const std::string& mbdir)
 {
     auto* pc = new PrefixCacheShared();
-    if (!pc->map_file(ShmPath(mbdir), /*create*/false, /*n*/0, /*cap*/0, /*assoc*/0)) {
+    if (!pc->map_file(ShmPath(mbdir), /*create*/ false, /*n*/ 0, /*cap*/ 0, /*assoc*/ 0)) {
         delete pc;
         return nullptr;
     }
@@ -79,9 +79,11 @@ bool PrefixCacheShared::Get(const uint8_t* key, int len, PrefixCacheEntry& out) 
         size_t s = base + ((s0 + probe) % hdr_->assoc);
         const PrefixCacheSharedEntry* e = &entries_[s];
         uint32_t seq1 = e->seq.load(std::memory_order_acquire);
-        if (seq1 & 1) continue; // writer in progress
+        if (seq1 & 1)
+            continue; // writer in progress
         uint8_t plen = e->prefix_len;
-        if (plen == 0 || plen != hdr_->n) continue;
+        if (plen == 0 || plen != hdr_->n)
+            continue;
         uint8_t pbuf[8];
         size_t edge_off;
         uint8_t eb[EDGE_SIZE];
@@ -89,8 +91,10 @@ bool PrefixCacheShared::Get(const uint8_t* key, int len, PrefixCacheEntry& out) 
         edge_off = e->edge_offset;
         memcpy(eb, e->edge_buff, EDGE_SIZE);
         uint32_t seq2 = e->seq.load(std::memory_order_acquire);
-        if (seq1 != seq2 || (seq2 & 1)) continue; // unstable read
-        if (memcmp(pbuf, pfx, hdr_->n) != 0) continue;
+        if (seq1 != seq2 || (seq2 & 1))
+            continue; // unstable read
+        if (memcmp(pbuf, pfx, hdr_->n) != 0)
+            continue;
         // Hit
         out.edge_offset = edge_off;
         memcpy(out.edge_buff, eb, EDGE_SIZE);
@@ -118,10 +122,7 @@ void PrefixCacheShared::Put(const uint8_t* key, int len, const PrefixCacheEntry&
         PrefixCacheSharedEntry* e = &entries_[s];
         uint32_t expected = e->seq.load(std::memory_order_acquire);
         // Attempt to flip even->odd
-        if ((expected & 1) == 0 &&
-            e->seq.compare_exchange_weak(expected, expected + 1,
-                                         std::memory_order_acq_rel,
-                                         std::memory_order_acquire)) {
+        if ((expected & 1) == 0 && e->seq.compare_exchange_weak(expected, expected + 1, std::memory_order_acq_rel, std::memory_order_acquire)) {
             // Write body
             e->prefix_len = static_cast<uint8_t>(hdr_->n);
             memset(e->prefix, 0, sizeof(e->prefix));
@@ -139,7 +140,8 @@ void PrefixCacheShared::Put(const uint8_t* key, int len, const PrefixCacheEntry&
 
 void PrefixCacheShared::InvalidateByEdgeOffset(size_t edge_offset)
 {
-    if (!hdr_ || !entries_) return;
+    if (!hdr_ || !entries_)
+        return;
     uint64_t inv = 0;
     size_t total = hdr_->nbuckets * hdr_->assoc;
     for (size_t i = 0; i < total; ++i) {
@@ -148,10 +150,7 @@ void PrefixCacheShared::InvalidateByEdgeOffset(size_t edge_offset)
         if (off == edge_offset) {
             // Acquire with CAS: even->odd
             uint32_t expected = e->seq.load(std::memory_order_acquire);
-            if ((expected & 1) == 0 &&
-                e->seq.compare_exchange_weak(expected, expected + 1,
-                                             std::memory_order_acq_rel,
-                                             std::memory_order_acquire)) {
+            if ((expected & 1) == 0 && e->seq.compare_exchange_weak(expected, expected + 1, std::memory_order_acq_rel, std::memory_order_acquire)) {
                 if (e->edge_offset == edge_offset && e->prefix_len != 0) {
                     e->prefix_len = 0;
                     e->edge_offset = 0;
@@ -164,12 +163,14 @@ void PrefixCacheShared::InvalidateByEdgeOffset(size_t edge_offset)
             }
         }
     }
-    if (inv) hdr_->invalidated.fetch_add(inv, std::memory_order_relaxed);
+    if (inv)
+        hdr_->invalidated.fetch_add(inv, std::memory_order_relaxed);
 }
 
 void PrefixCacheShared::InvalidateByPrefixAndEdge(const uint8_t* key, int len, size_t edge_offset)
 {
-    if (!hdr_ || !entries_ || len < static_cast<int>(hdr_->n)) return;
+    if (!hdr_ || !entries_ || len < static_cast<int>(hdr_->n))
+        return;
     const uint8_t* pfx = key;
     size_t b = bucket_of(pfx, hdr_->n);
     size_t base = b * hdr_->assoc;
@@ -177,16 +178,19 @@ void PrefixCacheShared::InvalidateByPrefixAndEdge(const uint8_t* key, int len, s
     for (uint32_t i = 0; i < hdr_->assoc; ++i) {
         PrefixCacheSharedEntry* e = &entries_[base + i];
         uint32_t expected = e->seq.load(std::memory_order_acquire);
-        if (expected & 1) continue; // writer in progress, skip
-        if (e->prefix_len != hdr_->n) continue;
-        if (memcmp(e->prefix, pfx, hdr_->n) != 0) continue;
-        if (e->edge_offset != edge_offset) continue;
+        if (expected & 1)
+            continue; // writer in progress, skip
+        if (e->prefix_len != hdr_->n)
+            continue;
+        if (memcmp(e->prefix, pfx, hdr_->n) != 0)
+            continue;
+        if (e->edge_offset != edge_offset)
+            continue;
         // Acquire slot and clear
         if (e->seq.compare_exchange_weak(expected, expected + 1,
-                                         std::memory_order_acq_rel,
-                                         std::memory_order_acquire)) {
-            if (e->edge_offset == edge_offset && e->prefix_len == hdr_->n &&
-                memcmp(e->prefix, pfx, hdr_->n) == 0) {
+                std::memory_order_acq_rel,
+                std::memory_order_acquire)) {
+            if (e->edge_offset == edge_offset && e->prefix_len == hdr_->n && memcmp(e->prefix, pfx, hdr_->n) == 0) {
                 e->prefix_len = 0;
                 e->edge_offset = 0;
                 memset(e->edge_buff, 0, EDGE_SIZE);
@@ -196,7 +200,8 @@ void PrefixCacheShared::InvalidateByPrefixAndEdge(const uint8_t* key, int len, s
             e->seq.fetch_add(1, std::memory_order_release);
         }
     }
-    if (inv) hdr_->invalidated.fetch_add(inv, std::memory_order_relaxed);
+    if (inv)
+        hdr_->invalidated.fetch_add(inv, std::memory_order_relaxed);
 }
 
 void PrefixCacheShared::DumpStats(std::ostream& os) const
@@ -216,7 +221,7 @@ void PrefixCacheShared::DumpStats(std::ostream& os) const
 }
 
 bool PrefixCacheShared::map_file(const std::string& path, bool create,
-                                 int n, size_t capacity, uint32_t assoc)
+    int n, size_t capacity, uint32_t assoc)
 {
     int fd = -1;
     if (create) {
@@ -231,7 +236,8 @@ bool PrefixCacheShared::map_file(const std::string& path, bool create,
     } else {
         fd = ::open(path.c_str(), O_RDWR, 0644);
     }
-    if (fd < 0) return false;
+    if (fd < 0)
+        return false;
 
     if (create) {
         uint64_t nbuckets = std::max<uint64_t>(1, capacity / std::max<uint32_t>(1, assoc));

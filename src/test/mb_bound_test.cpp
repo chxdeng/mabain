@@ -2,8 +2,8 @@
 #include <cstdlib>
 #include <map>
 #include <string>
-#include <vector>
 #include <sys/time.h>
+#include <vector>
 
 #include "../db.h"
 
@@ -51,19 +51,30 @@ static void find_test(map<string, string>& m, DB* db, int num, int* test_key, in
     queries.reserve(num);
     for (int i = 0; i < num; i++) {
         switch (type) {
-        case 0: queries.emplace_back(to_string(test_key[i])); break;
-        case 1: queries.emplace_back(string((char*)&test_key[i], 4)); break;
-        case 2: queries.emplace_back(tkey_sha1.get_key(test_key[i])); break;
-        case 3: queries.emplace_back(tkey_sha2.get_key(test_key[i])); break;
+        case 0:
+            queries.emplace_back(to_string(test_key[i]));
+            break;
+        case 1:
+            queries.emplace_back(string((char*)&test_key[i], 4));
+            break;
+        case 2:
+            queries.emplace_back(tkey_sha1.get_key(test_key[i]));
+            break;
+        case 3:
+            queries.emplace_back(tkey_sha2.get_key(test_key[i]));
+            break;
         }
     }
 
     // Optional correctness check (not timed): verify DB lowerBound equals std::map lower_bound
     for (int i = 0; i < num; i++) {
         auto lower = m.lower_bound(queries[i]);
-        if (lower == m.end()) continue;
-        if (lower->first != queries[i]) lower--;
-        if (lower == m.end()) continue;
+        if (lower == m.end())
+            continue;
+        if (lower->first != queries[i])
+            lower--;
+        if (lower == m.end())
+            continue;
         mbd.Clear();
         int rv = db->FindLowerBound(queries[i], mbd, nullptr);
         if (rv != MBError::SUCCESS || lower->first != string((char*)mbd.buff, mbd.data_len)) {
@@ -78,12 +89,15 @@ static void find_test(map<string, string>& m, DB* db, int num, int* test_key, in
     gettimeofday(&start, nullptr);
     for (int i = 0; i < num; i++) {
         auto it = m.lower_bound(queries[i]);
-        if (it != m.end()) sink += it->first.size();
+        if (it != m.end())
+            sink += it->first.size();
     }
     gettimeofday(&stop, nullptr);
     uint64_t timediff = (stop.tv_sec - start.tv_sec) * 1000000 + (stop.tv_usec - start.tv_usec);
     std::cout << "map "
-              << (type == 0 ? "type0 " : type == 1 ? "type1 " : type == 2 ? "type2 " : "type3 ")
+              << (type == 0 ? "type0 " : type == 1 ? "type1 "
+                         : type == 2               ? "type2 "
+                                                   : "type3 ")
               << timediff * 1.0 / num << " micro seconds per lookup\n";
 
     // Timed region 2: only the actual DB lookup calls
@@ -98,7 +112,9 @@ static void find_test(map<string, string>& m, DB* db, int num, int* test_key, in
     gettimeofday(&stop, nullptr);
     timediff = (stop.tv_sec - start.tv_sec) * 1000000 + (stop.tv_usec - start.tv_usec);
     std::cout << "mabain "
-              << (type == 0 ? "type0 " : type == 1 ? "type1 " : type == 2 ? "type2 " : "type3 ")
+              << (type == 0 ? "type0 " : type == 1 ? "type1 "
+                         : type == 2               ? "type2 "
+                                                   : "type3 ")
               << timediff * 1.0 / num << " micro seconds per lookup\n";
 }
 

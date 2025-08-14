@@ -35,7 +35,9 @@
 #include "util/prefix_cache_iface.h"
 // forward declare
 namespace mabain {
-namespace detail { class SearchEngine; }
+namespace detail {
+    class SearchEngine;
+}
 class PrefixCache;
 class PrefixCacheShared;
 }
@@ -46,7 +48,6 @@ struct _AsyncNode;
 typedef struct _AsyncNode AsyncNode;
 struct _shm_lock_and_queue;
 typedef struct _shm_lock_and_queue shm_lock_and_queue;
-
 
 // dictionary class
 // This is the work horse class for basic db operations (add, find and remove).

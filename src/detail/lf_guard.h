@@ -26,4 +26,3 @@ struct ReaderLFGuard {
 } // namespace mabain
 
 #endif // __LOCK_FREE__
-

@@ -17,10 +17,10 @@
 // @author Changxue Deng <chadeng@cisco.com>
 
 #include "db.h"
+#include "detail/search_engine.h"
 #include "dict.h"
 #include "integer_4b_5b.h"
 #include "mbt_base.h"
-#include "detail/search_engine.h"
 
 namespace mabain {
 
