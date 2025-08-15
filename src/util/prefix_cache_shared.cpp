@@ -1,7 +1,14 @@
 /**
  * Writer-managed shared prefix cache (implementation, multi-process safe)
  */
+#ifndef _XOPEN_SOURCE
+#define _XOPEN_SOURCE 600
+#endif
 #include "util/prefix_cache_shared.h"
+//
+#ifdef MB_HAVE_XXHASH
+#include <xxhash.h>
+#endif
 
 #include <algorithm>
 #include <cerrno>
@@ -15,6 +22,25 @@ namespace mabain {
 
 static constexpr uint32_t kMagic = 0x50F1CACE;
 static constexpr uint16_t kVersion = 1;
+
+// Ensure the backing file has fully allocated space to avoid SIGBUS on write
+// when disk is full. Prefer posix_fallocate (portable); fall back to ftruncate
+// only when allocation is unsupported.
+static bool ensure_file_size(int fd, size_t length)
+{
+#if defined(__linux__)
+    // Try Linux fallocate first for efficient, non-sparse allocation
+    if (fallocate(fd, 0, 0, static_cast<off_t>(length)) == 0)
+        return true;
+    // fall back to posix_fallocate if fallocate is not supported by FS
+#endif
+    int rc = posix_fallocate(fd, 0, static_cast<off_t>(length));
+    if (rc == 0)
+        return true;
+    // Do not fall back to ftruncate: sparse files risk SIGBUS on full disks
+    // Only treat "not supported" as a hard failure (caller will bail out)
+    return false;
+}
 
 PrefixCacheShared* PrefixCacheShared::CreateWriter(const std::string& mbdir,
     int prefix_len,
@@ -56,9 +82,32 @@ uint64_t PrefixCacheShared::fnv1a64(const uint8_t* p, size_t n)
     return h;
 }
 
+inline uint64_t PrefixCacheShared::prefix_hash64(const uint8_t* p, size_t n)
+{
+#ifdef MB_HAVE_XXHASH
+    // Prefer XXH3_64bits when available; otherwise fall back to XXH64 with seed 0
+#ifdef XXH3_64BITS
+    return XXH3_64bits(p, n);
+#else
+    return XXH64(p, n, 0);
+#endif
+#else
+    return fnv1a64(p, n);
+#endif
+}
+
+inline const char* PrefixCacheShared::hash_name()
+{
+#ifdef MB_HAVE_XXHASH
+    return "xxhash";
+#else
+    return "fnv1a";
+#endif
+}
+
 inline size_t PrefixCacheShared::bucket_of(const uint8_t* pfx, size_t n) const
 {
-    return static_cast<size_t>(fnv1a64(pfx, n) % hdr_->nbuckets);
+    return static_cast<size_t>(prefix_hash64(pfx, n) % hdr_->nbuckets);
 }
 
 inline size_t PrefixCacheShared::slot_of(uint64_t h) const
@@ -72,7 +121,7 @@ bool PrefixCacheShared::Get(const uint8_t* key, int len, PrefixCacheEntry& out) 
         return false;
     const uint8_t* pfx = key;
     size_t b = bucket_of(pfx, hdr_->n);
-    uint64_t h = fnv1a64(pfx, hdr_->n);
+    uint64_t h = prefix_hash64(pfx, hdr_->n);
     size_t s0 = slot_of(h);
     size_t base = b * hdr_->assoc;
     for (uint32_t probe = 0; probe < hdr_->assoc; ++probe) {
@@ -111,7 +160,7 @@ void PrefixCacheShared::Put(const uint8_t* key, int len, const PrefixCacheEntry&
     if (!hdr_ || !entries_ || len < static_cast<int>(hdr_->n))
         return;
     const uint8_t* pfx = key;
-    uint64_t h = fnv1a64(pfx, hdr_->n);
+    uint64_t h = prefix_hash64(pfx, hdr_->n);
     size_t b = static_cast<size_t>(h % hdr_->nbuckets);
     size_t base = b * hdr_->assoc;
     size_t preferred = base + slot_of(h);
@@ -213,12 +262,15 @@ void PrefixCacheShared::DumpStats(std::ostream& os) const
     os << "PrefixCacheShared: n=" << hdr_->n
        << " buckets=" << hdr_->nbuckets
        << " assoc=" << hdr_->assoc
+       << " hash=" << hash_name()
        << " hit=" << hdr_->hit.load()
        << " miss=" << hdr_->miss.load()
        << " put=" << hdr_->put.load()
        << " invalidated=" << hdr_->invalidated.load()
        << std::endl;
 }
+
+// (no entry dump in library; tests should validate via public APIs)
 
 bool PrefixCacheShared::map_file(const std::string& path, bool create,
     int n, size_t capacity, uint32_t assoc)
@@ -242,7 +294,7 @@ bool PrefixCacheShared::map_file(const std::string& path, bool create,
     if (create) {
         uint64_t nbuckets = std::max<uint64_t>(1, capacity / std::max<uint32_t>(1, assoc));
         size_ = sizeof(PrefixCacheSharedHeader) + nbuckets * assoc * sizeof(PrefixCacheSharedEntry);
-        if (ftruncate(fd, static_cast<off_t>(size_)) != 0) {
+        if (!ensure_file_size(fd, size_)) {
             ::close(fd);
             return false;
         }

@@ -1,17 +1,23 @@
 #!/bin/bash
 
-export LD_LIBRARY_PATH=/home/chadeng/mabain/build/lib
+set -e
+
+export LD_LIBRARY_PATH=/home/chadeng/mabain/build/lib${LD_LIBRARY_PATH+:$LD_LIBRARY_PATH}
 
 cd build
-make || exit 1
+# Configure with xxHash enabled (falls back to FNV-1a if lib not found)
+cmake .. -DMB_USE_XXHASH=OFF -DENABLE_DEBUG=OFF >/dev/null
+make -j"${JOBS:-2}" || exit 1
 cd ..
 
 cd db_comparisons
 make || exit 1
 
-./db_comp_mb -pcn 4 -pcc 500000 -pc-shared -pc-assoc 4 -k sha1 -j
+./db_comp_mb -pcn 4 -pcc 500000 -pc-shared -pc-assoc 8 -j
 
-./db_comp_mb -pcn 4 -pcc 100000 -pc-shared -pc-assoc 4 -j
+./db_comp_mb -pcn 4 -pcc 500000 -pc-shared -pc-assoc 8 -k sha1 -j
+
+./db_comp_mb -pcn 4 -pcc 500000 -pc-shared -pc-assoc 8 -k sha2 -j
 
 cd ../src/test
 make || exit 1

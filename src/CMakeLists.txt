@@ -16,6 +16,21 @@ add_library(mabain SHARED ${SOURCES})
 # Specify include directories for this target
 target_include_directories(mabain PUBLIC ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/src/util ${JEMALLOC_INCLUDE_DIR})
 
+# Optional: use xxHash for prefix hashing in shared prefix cache
+option(MB_USE_XXHASH "Use xxHash for prefix hashing" OFF)
+if(MB_USE_XXHASH)
+    find_path(XXHASH_INCLUDE_DIR NAMES xxhash.h PATHS /usr/include /usr/local/include)
+    find_library(XXHASH_LIBRARY NAMES xxhash PATHS /usr/lib /usr/local/lib)
+    if(XXHASH_INCLUDE_DIR AND XXHASH_LIBRARY)
+        target_include_directories(mabain PUBLIC ${XXHASH_INCLUDE_DIR})
+        target_link_libraries(mabain ${XXHASH_LIBRARY})
+        target_compile_definitions(mabain PRIVATE MB_HAVE_XXHASH)
+        message(STATUS "Using xxHash for prefix hashing")
+    else()
+        message(WARNING "MB_USE_XXHASH=ON but xxhash library not found; falling back to FNV1a")
+    endif()
+endif()
+
 # Always enable traversal step guard in find loops
 target_compile_definitions(mabain PRIVATE MB_ENABLE_TRAVERSAL_LIMIT)
 
