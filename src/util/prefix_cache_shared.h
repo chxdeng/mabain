@@ -57,6 +57,8 @@ public:
     void InvalidateByEdgeOffset(size_t edge_offset);
     // Targeted invalidation using the key's prefix: scans only its bucket
     void InvalidateByPrefixAndEdge(const uint8_t* key, int len, size_t edge_offset);
+    // Broad invalidation by prefix only: scans bucket and clears any matching prefix
+    void InvalidateByPrefix(const uint8_t* key, int len);
 
     void DumpStats(std::ostream& os) const;
     int PrefixLen() const override { return hdr_ ? hdr_->n : 0; }

@@ -618,7 +618,10 @@ int Dict::Remove(const uint8_t* key, int len, MBData& data)
     if (rval == MBError::IN_DICT) {
         // Invalidate shared prefix cache entry for this key's prefix and edge
         if (prefix_cache_shared) {
-            prefix_cache_shared->InvalidateByPrefixAndEdge(key, len, data.edge_ptrs.offset);
+            // Invalidate any cached entry for this key's prefix; the precise
+            // (prefix, edge) pair may no longer exist after structural changes,
+            // so clear by-prefix to avoid stale seeds.
+            prefix_cache_shared->InvalidateByPrefix(key, len);
         }
         rval = DeleteDataFromEdge(data, data.edge_ptrs);
         while (rval == MBError::TRY_AGAIN) {
@@ -633,7 +636,7 @@ int Dict::Remove(const uint8_t* key, int len, MBData& data)
             }
             if (MBError::IN_DICT == rval) {
                 if (prefix_cache_shared) {
-                    prefix_cache_shared->InvalidateByPrefixAndEdge(key, len, data.edge_ptrs.offset);
+                    prefix_cache_shared->InvalidateByPrefix(key, len);
                 }
                 rval = mm.RemoveEdgeByIndex(data.edge_ptrs, data);
             }

@@ -253,6 +253,40 @@ void PrefixCacheShared::InvalidateByPrefixAndEdge(const uint8_t* key, int len, s
         hdr_->invalidated.fetch_add(inv, std::memory_order_relaxed);
 }
 
+void PrefixCacheShared::InvalidateByPrefix(const uint8_t* key, int len)
+{
+    if (!hdr_ || !entries_ || len < static_cast<int>(hdr_->n))
+        return;
+    const uint8_t* pfx = key;
+    size_t b = bucket_of(pfx, hdr_->n);
+    size_t base = b * hdr_->assoc;
+    uint64_t inv = 0;
+    for (uint32_t i = 0; i < hdr_->assoc; ++i) {
+        PrefixCacheSharedEntry* e = &entries_[base + i];
+        uint32_t expected = e->seq.load(std::memory_order_acquire);
+        if (expected & 1)
+            continue; // writer in progress, skip
+        if (e->prefix_len != hdr_->n)
+            continue;
+        if (memcmp(e->prefix, pfx, hdr_->n) != 0)
+            continue;
+        if (e->seq.compare_exchange_weak(expected, expected + 1,
+                std::memory_order_acq_rel,
+                std::memory_order_acquire)) {
+            if (e->prefix_len == hdr_->n && memcmp(e->prefix, pfx, hdr_->n) == 0) {
+                e->prefix_len = 0;
+                e->edge_offset = 0;
+                memset(e->edge_buff, 0, EDGE_SIZE);
+                memset(e->prefix, 0, sizeof(e->prefix));
+                ++inv;
+            }
+            e->seq.fetch_add(1, std::memory_order_release);
+        }
+    }
+    if (inv)
+        hdr_->invalidated.fetch_add(inv, std::memory_order_relaxed);
+}
+
 void PrefixCacheShared::DumpStats(std::ostream& os) const
 {
     if (!hdr_) {

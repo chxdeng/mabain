@@ -60,4 +60,4 @@ shared_prefix_cache_concurrency_test: shared_prefix_cache_concurrency_test.cpp .
 
 
 clean:
-	-rm -rf *.o mb_test* multi_writer_bug_test mb_bound_test mb_header_test mb_mm_test mb_mm_prune_test sigbus_disk_pressure_test jemalloc_test
+	-rm -rf *.o mb_test* multi_writer_bug_test mb_bound_test mb_header_test mb_mm_test mb_mm_prune_test sigbus_disk_pressure_test jemalloc_test shared_prefix_cache_concurrency_test

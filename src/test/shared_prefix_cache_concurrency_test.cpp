@@ -41,7 +41,7 @@ static std::string make_key(uint32_t i)
 }
 
 struct TestConfig {
-    std::string dbdir = "./tmp_shared_pfx";
+    std::string dbdir = "/var/tmp/mabain_test";
     int nkeys = 100000;
     int nreaders = 4;
     int pfx_n = 4;
