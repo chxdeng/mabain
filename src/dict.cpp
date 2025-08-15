@@ -348,7 +348,6 @@ int Dict::DeleteDataFromEdge(MBData& data, EdgePtrs& edge_ptrs)
             rel_size = free_lists->GetAlignmentSize(data_len + DATA_HDR_BYTE);
         }
         ReleaseBuffer(data_off, rel_size);
-
         rval = mm.RemoveEdgeByIndex(edge_ptrs, data);
     } else {
         // No exception handling in this case
@@ -619,7 +618,10 @@ int Dict::Remove(const uint8_t* key, int len, MBData& data)
     if (rval == MBError::IN_DICT) {
         // Invalidate shared prefix cache entry for this key's prefix and edge
         if (prefix_cache_shared) {
-            prefix_cache_shared->InvalidateByPrefixAndEdge(key, len, data.edge_ptrs.offset);
+            // Invalidate any cached entry for this key's prefix; the precise
+            // (prefix, edge) pair may no longer exist after structural changes,
+            // so clear by-prefix to avoid stale seeds.
+            prefix_cache_shared->InvalidateByPrefix(key, len);
         }
         rval = DeleteDataFromEdge(data, data.edge_ptrs);
         while (rval == MBError::TRY_AGAIN) {
@@ -634,7 +636,7 @@ int Dict::Remove(const uint8_t* key, int len, MBData& data)
             }
             if (MBError::IN_DICT == rval) {
                 if (prefix_cache_shared) {
-                    prefix_cache_shared->InvalidateByPrefixAndEdge(key, len, data.edge_ptrs.offset);
+                    prefix_cache_shared->InvalidateByPrefix(key, len);
                 }
                 rval = mm.RemoveEdgeByIndex(data.edge_ptrs, data);
             }
@@ -839,15 +841,14 @@ int Dict::UpdateDataBuffer(EdgePtrs& edge_ptrs, bool overwrite, MBData& mbd, boo
         mbd.data_offset = Get6BInteger(edge_ptrs.offset_ptr);
         if (!overwrite)
             return MBError::IN_DICT;
-
         if (ReleaseBuffer(mbd.data_offset) != MBError::SUCCESS)
             Logger::Log(LOG_LEVEL_WARN, "failed to release data buffer: %llu", mbd.data_offset);
         ReserveData(mbd.buff, mbd.data_len, mbd.data_offset);
         Write6BInteger(edge_ptrs.offset_ptr, mbd.data_offset);
 
-        header->excep_lf_offset = edge_ptrs.offset;
         memcpy(header->excep_buff, edge_ptrs.offset_ptr, OFFSET_SIZE);
 #ifdef __LOCK_FREE__
+        header->excep_lf_offset = edge_ptrs.offset;
         lfree.WriterLockFreeStart(edge_ptrs.offset);
 #endif
         header->excep_updating_status = EXCEP_STATUS_ADD_DATA_OFF;
@@ -870,7 +871,6 @@ int Dict::UpdateDataBuffer(EdgePtrs& edge_ptrs, bool overwrite, MBData& mbd, boo
                 return MBError::IN_DICT;
             if (ReleaseBuffer(mbd.data_offset) != MBError::SUCCESS)
                 Logger::Log(LOG_LEVEL_WARN, "failed to release data buffer %llu", mbd.data_offset);
-
             node_buff[NODE_EDGE_KEY_FIRST] = 0;
         } else {
             // set the match flag

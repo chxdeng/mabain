@@ -57,6 +57,8 @@ public:
     void InvalidateByEdgeOffset(size_t edge_offset);
     // Targeted invalidation using the key's prefix: scans only its bucket
     void InvalidateByPrefixAndEdge(const uint8_t* key, int len, size_t edge_offset);
+    // Broad invalidation by prefix only: scans bucket and clears any matching prefix
+    void InvalidateByPrefix(const uint8_t* key, int len);
 
     void DumpStats(std::ostream& os) const;
     int PrefixLen() const override { return hdr_ ? hdr_->n : 0; }
@@ -72,6 +74,9 @@ public:
 private:
     PrefixCacheShared() = default;
     static uint64_t fnv1a64(const uint8_t* p, size_t n);
+    // Unified 64-bit hash for prefix: xxHash if available, else FNV-1a
+    static inline uint64_t prefix_hash64(const uint8_t* p, size_t n);
+    static inline const char* hash_name();
     inline size_t bucket_of(const uint8_t* pfx, size_t n) const;
     inline size_t slot_of(uint64_t h) const; // deterministic preferred slot
 

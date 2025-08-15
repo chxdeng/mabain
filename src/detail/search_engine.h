@@ -194,7 +194,11 @@ namespace detail {
         edge_ptrs.offset = entry.edge_offset;
         memcpy(edge_ptrs.edge_buff, entry.edge_buff, EDGE_SIZE);
         InitTempEdgePtrs(edge_ptrs);
-        data.options |= CONSTS::OPTION_READ_SAVED_EDGE;
+        // Do not set READ_SAVED_EDGE here: that flag is reserved for
+        // lock-free saved-edge handoff. Shared-cache seeding already
+        // supplies a stable edge entry via edge_ptrs and does its own
+        // writer-in-progress validation, so enabling the flag here can
+        // cause unintended interaction with the lock-free path.
 
         key_cursor = key + n;
         len_remaining -= n;
