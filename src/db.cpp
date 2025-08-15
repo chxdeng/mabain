@@ -803,7 +803,6 @@ void DB::SetSharedPrefixCacheReadOnly(bool ro)
         dict->SetSharedPrefixCacheReadOnly(ro);
 }
 
-
 int DB::CollectResource(int64_t min_index_rc_size, int64_t min_data_rc_size,
     int64_t max_dbsz, int64_t max_dbcnt)
 {
