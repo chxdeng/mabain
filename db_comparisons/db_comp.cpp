@@ -9,6 +9,8 @@
 #include <pthread.h>
 #include <sstream>
 #include <vector>
+#include <unordered_map>
+#include <time.h>
 #include <sys/syscall.h>
 #include <sys/time.h>
 #include <unistd.h>
@@ -249,6 +251,7 @@ static void Add(int n)
 #endif
 
     uint64_t total_time = 0;
+
     for (int i = 0; i < n; i++) {
         std::string key, val;
         if (key_type == 0) {
@@ -332,6 +335,9 @@ static void Lookup(int n)
 #endif
 
     uint64_t total_time = 0;
+#ifdef MABAIN
+    uint64_t total_time_ns = 0; // accumulate in nanoseconds for precision
+#endif
     for (int i = 0; i < n; i++) {
         std::string key;
         if (key_type == 0) {
@@ -373,11 +379,13 @@ static void Lookup(int n)
             // std::cout<<key<<":"<<std::string((char*)lmdb_value.mv_data, lmdb_value.mv_size)<<"\n";
 #elif MABAIN
         mabain::MBData mbd;
-        auto start = std::chrono::high_resolution_clock::now();
+        // Use CLOCK_MONOTONIC_RAW for lower-jitter, high-resolution timing
+        struct timespec ts1, ts2;
+        clock_gettime(CLOCK_MONOTONIC_RAW, &ts1);
         int rval = db->Find(key, mbd);
-        auto stop = std::chrono::high_resolution_clock::now();
-        total_time += std::chrono::duration_cast<std::chrono::microseconds>(stop - start).count();
-        // std::cout<<key<<":"<<std::string((char*)mbd.buff, mbd.data_len)<<"\n";
+        clock_gettime(CLOCK_MONOTONIC_RAW, &ts2);
+        uint64_t delta_ns = (uint64_t)(ts2.tv_sec - ts1.tv_sec) * 1000000000ULL + (uint64_t)(ts2.tv_nsec - ts1.tv_nsec);
+        total_time_ns += delta_ns; // accumulate in nanoseconds, convert at print
         if (rval == 0)
             nfound++;
 #endif
@@ -392,9 +400,69 @@ static void Lookup(int n)
     mdb_txn_abort(txn);
 #endif
     uint64_t timediff = total_time;
+#ifdef MABAIN
+    timediff = total_time_ns / 1000ULL; // convert ns to us at the end
+#endif
 
     std::cout << "found " << nfound << " key-value pairs\n";
     std::cout << "===== " << timediff * 1.0 / n << " micro seconds per lookup\n";
+#ifdef MABAIN
+    // After Mabain test, run a similar lookup benchmark using std::unordered_map
+    // Build the map using the same keys/values used during Add()
+    std::unordered_map<std::string, std::string> u;
+    u.reserve(static_cast<size_t>(n * 1.3));
+    for (int i = 0; i < n; ++i) {
+        std::string k, v;
+        if (key_type == 0) {
+            k = std::to_string(i);
+            v = k;
+        } else {
+            if (key_type == 1) {
+                get_sha1_str(i, kv);
+            } else {
+                get_sha256_str(i, kv);
+            }
+            k = kv;
+            v = kv;
+        }
+        u.emplace(std::move(k), std::move(v));
+    }
+
+    // Lookup benchmark for unordered_map
+    int um_found = 0;
+    uint64_t um_total_ns = 0;
+    size_t um_checksum = 0; // validate that we actually touch values
+    for (int i = 0; i < n; ++i) {
+        std::string k;
+        if (key_type == 0) {
+            k = std::to_string(i);
+        } else {
+            if (key_type == 1) {
+                get_sha1_str(i, kv);
+            } else {
+                get_sha256_str(i, kv);
+            }
+            k = kv;
+        }
+        struct timespec ts1, ts2;
+        clock_gettime(CLOCK_MONOTONIC_RAW, &ts1);
+        auto it = u.find(k);
+        // Validate by touching the value to prevent optimization
+        if (it != u.end()) {
+            um_found++;
+            // simple validation that value matches key used when building map
+            if (it->second == k) {
+                um_checksum += it->second.size();
+            }
+        }
+        clock_gettime(CLOCK_MONOTONIC_RAW, &ts2);
+        uint64_t delta_ns = (uint64_t)(ts2.tv_sec - ts1.tv_sec) * 1000000000ULL + (uint64_t)(ts2.tv_nsec - ts1.tv_nsec);
+        um_total_ns += delta_ns;
+    }
+    std::cout << "found (unordered_map) " << um_found << " key-value pairs\n";
+    std::cout << "checksum (unordered_map) " << um_checksum << "\n";
+    std::cout << "===== " << (um_total_ns / 1000.0) / n << " micro seconds per lookup (unordered_map)\n";
+#endif
 #ifdef MABAIN
     if (db) {
         std::cout << "-- Cache stats after lookup --\n";
