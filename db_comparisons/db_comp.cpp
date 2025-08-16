@@ -206,6 +206,9 @@ static void InitDB(bool writer_mode = true)
     mconf.options = mabain::CONSTS::WriterOptions();
     if (use_jemalloc) {
         mconf.options |= mabain::CONSTS::OPTION_JEMALLOC;
+        // Keep DB contents across writer reopens within this benchmark run
+        // so subsequent phases (lookup/delete) see inserted keys.
+        mconf.jemalloc_keep_db = true;
         mconf.block_size_index = 128LL * 1024 * 1024;
         mconf.block_size_data = 128LL * 1024 * 1024;
         mconf.memcap_index = 10 * mconf.block_size_index;
@@ -485,6 +488,9 @@ static void Delete(int n)
 #endif
 
     uint64_t total_time = 0;
+#ifdef MABAIN
+    uint64_t total_time_ns = 0; // accumulate in nanoseconds for precision
+#endif
     for (int i = 0; i < n; i++) {
         std::string key;
         if (key_type == 0) {
@@ -535,10 +541,12 @@ static void Delete(int n)
                 nfound++;
         }
 #elif MABAIN
-        auto start = std::chrono::high_resolution_clock::now();
+        struct timespec ts1, ts2;
+        clock_gettime(CLOCK_MONOTONIC_RAW, &ts1);
         int rval = db->Remove(key);
-        auto stop = std::chrono::high_resolution_clock::now();
-        total_time += std::chrono::duration_cast<std::chrono::microseconds>(stop - start).count();
+        clock_gettime(CLOCK_MONOTONIC_RAW, &ts2);
+        uint64_t delta_ns = (uint64_t)(ts2.tv_sec - ts1.tv_sec) * 1000000000ULL + (uint64_t)(ts2.tv_nsec - ts1.tv_nsec);
+        total_time_ns += delta_ns;
         if (rval == 0)
             nfound++;
 #endif
@@ -555,6 +563,9 @@ static void Delete(int n)
 
     std::cout << "deleted " << nfound << " key-value pairs\n";
     uint64_t timediff = total_time;
+#ifdef MABAIN
+    timediff = total_time_ns / 1000ULL; // convert ns to us
+#endif
     std::cout << "===== " << timediff * 1.0 / n << " micro seconds per deletion\n";
 }
 
