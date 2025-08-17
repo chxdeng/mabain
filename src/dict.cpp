@@ -1027,10 +1027,12 @@ void Dict::MaybePutCache(const uint8_t* full_key, int full_len, int consumed,
             prefix_cache_shared->Put(full_key, full_len, e);
         }
     } else if (prefix_cache) {
-        if (consumed == prefix_cache->PrefixLen()) {
+        // For non-shared cache, cache for any prefix length m where m <= n
+        if (consumed > 0 && consumed <= prefix_cache->PrefixLen()) {
             PrefixCacheEntry e { edge_ptrs.offset, { 0 }, 0 };
             memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
-            prefix_cache->Put(full_key, full_len, e);
+            // Use 'consumed' as the logical prefix length for this entry
+            prefix_cache->Put(full_key, consumed, e);
         }
     }
 }

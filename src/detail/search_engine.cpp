@@ -369,8 +369,12 @@ namespace detail {
                 }
                 maybePutCache(key, orig_len, consumed, edge_ptrs);
             } else if (edge_len == len) {
-                if (remainderMatches(key_buff, key_cursor, edge_len_m1))
+                if (remainderMatches(key_buff, key_cursor, edge_len_m1)) {
+                    // Final segment matches; ensure we consider putting into prefix cache
+                    // when consumed + edge_len reaches the configured prefix length.
+                    maybePutCache(key, orig_len, consumed + edge_len, edge_ptrs);
                     return resolveMatchOrInDict(data, edge_ptrs, true);
+                }
 #ifdef __LOCK_FREE__
                 {
                     int _r = lf_guard.stop(edge_ptrs.offset);
@@ -455,6 +459,8 @@ namespace detail {
 
             len -= edge_len;
             if (len <= 0) {
+                // Final segment consumed; attempt to put into prefix cache using total consumed
+                maybePutCache(full_key, full_len, consumed + edge_len, edge_ptrs);
                 rval = resolveMatchOrInDict(data, edge_ptrs, false);
                 break;
             }

@@ -331,7 +331,10 @@ static void Lookup(int n)
     mdb_cursor_open(txn, db, &cursor);
 #endif
 
-    uint64_t total_time = 0;
+    uint64_t total_time = 0; // microseconds for non-Mabain backends
+#ifdef MABAIN
+    uint64_t total_ns = 0;   // nanoseconds for Mabain timing accuracy
+#endif
     for (int i = 0; i < n; i++) {
         std::string key;
         if (key_type == 0) {
@@ -376,8 +379,17 @@ static void Lookup(int n)
         auto start = std::chrono::high_resolution_clock::now();
         int rval = db->Find(key, mbd);
         auto stop = std::chrono::high_resolution_clock::now();
-        total_time += std::chrono::duration_cast<std::chrono::microseconds>(stop - start).count();
-        // std::cout<<key<<":"<<std::string((char*)mbd.buff, mbd.data_len)<<"\n";
+        // Accumulate nanoseconds for more accurate per-op timing
+        total_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(stop - start).count();
+
+        // Validate value outside the timing window to prevent optimization-out
+        if (rval == 0 && mbd.buff != nullptr && mbd.data_len > 0) {
+            std::string value_copy((const char*)mbd.buff, (size_t)mbd.data_len);
+            if (value_copy != key) {
+                std::cerr << "VALUE NOT MATCH for key:" << key << ":" << value_copy << "\n";
+                abort();
+            }
+        }
         if (rval == 0)
             nfound++;
 #endif
@@ -392,6 +404,10 @@ static void Lookup(int n)
     mdb_txn_abort(txn);
 #endif
     uint64_t timediff = total_time;
+#ifdef MABAIN
+    // Convert accumulated nanoseconds to microseconds for reporting
+    timediff = static_cast<uint64_t>(total_ns / 1000);
+#endif
 
     std::cout << "found " << nfound << " key-value pairs\n";
     std::cout << "===== " << timediff * 1.0 / n << " micro seconds per lookup\n";
