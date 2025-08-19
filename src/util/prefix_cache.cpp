@@ -4,133 +4,176 @@
 
 #include "util/prefix_cache.h"
 #include <algorithm>
-#include <cctype>
 
 namespace mabain {
 
-PrefixCache::PrefixCache(int prefix_len, size_t capacity)
-    : n(prefix_len)
-    , cap(capacity)
-    , fast4(false) // disable fast4 path for stability; fallback to map path
+static inline size_t floor_pow2(size_t x) {
+    if (x == 0) return 0;
+    // Round down to the highest power of two <= x
+    size_t p = 1;
+    while ((p << 1) && ((p << 1) <= x)) p <<= 1;
+    return p;
+}
+
+static inline size_t cap3_from_capacity(size_t capacity)
 {
-    map.reserve(cap);
-    if (fast4) {
-        slots4.resize(65536);
-        filled4.assign(65536, 0);
+    // Allocate 3-byte table only for capacity in excess of 2-byte coverage (65536)
+    if (capacity <= 65536) return 0;
+    size_t excess = capacity - 65536;
+    size_t capped = std::min<size_t>(excess, (1u << 24));
+    size_t p2 = floor_pow2(capped);
+    return p2; // may be 0 if excess < 1
+}
+
+PrefixCache::PrefixCache(size_t capacity)
+    : cap2(0)
+    , cap3(0)
+{
+    // Validation: capacity cannot exceed total number of 3-byte prefixes (2^24)
+    size_t norm_cap = std::min<size_t>(capacity, (1u << 24));
+
+    size_t base2 = std::min<size_t>(norm_cap, (size_t)65536);
+    size_t c2 = floor_pow2(base2);
+    // Minimum table2 size is 10240 when capacity > 0
+    if (norm_cap > 0 && c2 < 10240) c2 = 10240;
+    const_cast<size_t&>(cap2) = c2;
+    const_cast<size_t&>(cap3) = cap3_from_capacity(norm_cap);
+
+    if (cap2 == 0) {
+        // Should not happen because Dict::EnablePrefixCache checks capacity>0
+        table2.resize(1);
+        filled2.assign(1, 0);
+        mask2 = 0;
+        use_mask2 = true;
+    } else {
+        table2.resize(cap2);
+        filled2.assign(cap2, 0);
+        keys2.assign(cap2, 0);
+        // Use bitmask when power-of-two; otherwise use modulo
+        use_mask2 = ((cap2 & (cap2 - 1)) == 0);
+        mask2 = use_mask2 ? cap2 - 1 : 0;
+    }
+    if (cap3 > 0) {
+        table3.resize(cap3); // 3-byte direct table sized by power-of-two capacity
+        filled3.assign(cap3, 0);
+        keys3.assign(cap3, 0);
+        mask3 = cap3 - 1;
+    } else {
+        mask3 = 0;
     }
 }
 
-bool PrefixCache::BuildKey(const uint8_t* key, int len, uint64_t& out) const
+inline bool PrefixCache::build2(const uint8_t* key, int len, uint16_t& p2) const
 {
-    if (key == nullptr || len < n || n <= 0 || n > 8)
+    if (key == nullptr || len < 2)
         return false;
-    // Pack first n bytes into low bytes of u64
-    uint64_t v = 0;
-    for (int i = 0; i < n; i++) {
-        v |= static_cast<uint64_t>(key[i]) << (i * 8);
-    }
-    out = v;
+    // Big endian: key[0] is most significant
+    p2 = static_cast<uint16_t>((static_cast<uint16_t>(key[0]) << 8) |
+                               static_cast<uint16_t>(key[1]));
     return true;
 }
 
-static inline int hex_val(uint8_t c)
+inline bool PrefixCache::build3(const uint8_t* key, int len, uint32_t& p3) const
 {
-    if (c >= '0' && c <= '9')
-        return c - '0';
-    if (c >= 'a' && c <= 'f')
-        return c - 'a' + 10;
-    if (c >= 'A' && c <= 'F')
-        return c - 'A' + 10;
-    return -1;
-}
-
-bool PrefixCache::BuildIndex4(const uint8_t* key, int len, uint32_t& idx) const
-{
-    if (!fast4 || key == nullptr || len < 4)
+    if (key == nullptr || len < 3)
         return false;
-    // Map 4 hex characters (nibbles) into a 16-bit index (0..65535)
-    int h0 = hex_val(key[0]);
-    int h1 = hex_val(key[1]);
-    int h2 = hex_val(key[2]);
-    int h3 = hex_val(key[3]);
-    if ((h0 | h1 | h2 | h3) < 0)
-        return false;
-    idx = static_cast<uint32_t>((h0 << 12) | (h1 << 8) | (h2 << 4) | h3);
+    p3 = (static_cast<uint32_t>(key[0]) << 16) |
+         (static_cast<uint32_t>(key[1]) << 8)  |
+         (static_cast<uint32_t>(key[2]));
     return true;
 }
 
 bool PrefixCache::Get(const uint8_t* key, int len, PrefixCacheEntry& out) const
 {
-    if (fast4) {
-        uint32_t idx;
-        if (BuildIndex4(key, len, idx)) {
-            if (!filled4[idx]) {
-                ++miss_count;
-                return false;
-            }
-            out = slots4[idx];
+    uint32_t p3;
+    if (cap3 > 0 && build3(key, len, p3)) {
+        size_t idx3 = static_cast<size_t>(p3) & mask3;
+        if (filled3[idx3] && keys3[idx3] == p3) {
+            out = table3[idx3];
             ++hit_count;
             return true;
         }
-        // fall through to map path if non-hex
     }
-    {
-        uint64_t skey;
-        if (!BuildKey(key, len, skey))
-            return false;
-        auto it = map.find(skey);
-        if (it == map.end()) {
-            ++miss_count;
-            return false;
+    uint16_t p2;
+    if (build2(key, len, p2)) {
+        size_t idx2 = use_mask2 ? (static_cast<size_t>(p2) & mask2)
+                                : (static_cast<size_t>(p2) % cap2);
+        if (filled2[idx2] && keys2[idx2] == p2) {
+            out = table2[idx2];
+            ++hit_count;
+            return true;
         }
-        out = it->second;
-        ++hit_count;
-        return true;
     }
+    ++miss_count;
+    return false;
+}
+
+int PrefixCache::GetDepth(const uint8_t* key, int len, PrefixCacheEntry& out) const
+{
+    uint32_t p3;
+    if (cap3 > 0 && build3(key, len, p3)) {
+        size_t idx3 = static_cast<size_t>(p3) & mask3;
+        if (filled3[idx3] && keys3[idx3] == p3) {
+            out = table3[idx3];
+            ++hit_count;
+            return 3;
+        }
+    }
+    uint16_t p2;
+    if (build2(key, len, p2)) {
+        size_t idx2 = use_mask2 ? (static_cast<size_t>(p2) & mask2)
+                                : (static_cast<size_t>(p2) % cap2);
+        if (filled2[idx2] && keys2[idx2] == p2) {
+            out = table2[idx2];
+            ++hit_count;
+            return 2;
+        }
+    }
+    ++miss_count;
+    return 0;
 }
 
 void PrefixCache::Put(const uint8_t* key, int len, const PrefixCacheEntry& in)
 {
-    if (fast4) {
-        uint32_t idx;
-        if (BuildIndex4(key, len, idx)) {
-            if (!filled4[idx]) {
-                filled4[idx] = 1;
-                ++put_count;
-            }
-            slots4[idx] = in;
-            return;
+    // Insert into 3-byte table if we have at least 3 bytes
+    uint32_t p3;
+    if (cap3 > 0 && build3(key, len, p3)) {
+        size_t idx3 = static_cast<size_t>(p3) & mask3;
+        if (!filled3[idx3]) {
+            filled3[idx3] = 1;
+            ++size3;
         }
-        // fall through to map path if non-hex
+        keys3[idx3] = p3;
+        table3[idx3] = in;
+        ++put_count;
     }
-    {
-        uint64_t skey;
-        if (!BuildKey(key, len, skey))
-            return;
-        if (map.size() >= cap) {
-            // Simple eviction: erase an arbitrary element (first in bucket)
-            auto it = map.begin();
-            if (it != map.end())
-                map.erase(it);
+    // Also insert into 2-byte table if we have at least 2 bytes
+    uint16_t p2;
+    if (build2(key, len, p2)) {
+        size_t idx2 = use_mask2 ? (static_cast<size_t>(p2) & mask2)
+                                : (static_cast<size_t>(p2) % cap2);
+        if (!filled2[idx2]) {
+            filled2[idx2] = 1;
+            if (size2 < cap2) ++size2;
         }
-        map[skey] = in;
+        keys2[idx2] = p2;
+        table2[idx2] = in;
         ++put_count;
     }
 }
 
 size_t PrefixCache::Size() const
 {
-    return fast4 ? static_cast<size_t>(std::count(filled4.begin(), filled4.end(), 1))
-                 : map.size();
+    size_t s2 = static_cast<size_t>(std::count(filled2.begin(), filled2.end(), 1));
+    return s2 + size3;
 }
 
 void PrefixCache::Clear()
 {
-    if (fast4) {
-        std::fill(filled4.begin(), filled4.end(), 0);
-    } else {
-        map.clear();
-    }
+    std::fill(filled2.begin(), filled2.end(), 0);
+    size2 = 0;
+    std::fill(filled3.begin(), filled3.end(), 0);
+    size3 = 0;
 }
 
 } // namespace mabain

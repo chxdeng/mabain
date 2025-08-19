@@ -6,7 +6,7 @@ all: db_comp_mb
 
 CPP=g++
 
-CFLAGS = -O2 -g -std=c++17 -Wall -I/usr/local/include -I$(MABAIN_INSTALL_DIR)/include
+CFLAGS = -O3 -DNDEBUG -march=native -std=c++17 -Wall -I/usr/local/include -I$(MABAIN_INSTALL_DIR)/include
 
 LDFLAGS = -lpthread -lcrypto -L$(MABAIN_INSTALL_DIR)/lib -lmabain
 

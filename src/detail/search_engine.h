@@ -177,10 +177,20 @@ namespace detail {
             return false;
 
         PrefixCacheEntry entry;
-        const int n = pc->PrefixLen();
-        if (len < n || !pc->Get(key, len, entry))
-            return false;
+        int n = 0;
+        if (pc->IsShared()) {
+            n = pc->PrefixLen();
+            if (len < n || !pc->Get(key, len, entry))
+                return false;
+        } else {
+            // Non-shared cache can return either 3-byte or 2-byte seed; ask for depth
+            n = pc->GetDepth(key, len, entry);
+            if (n == 0)
+                return false;
+        }
 
+        // Validate cached edge content only for shared cache while a writer may be present.
+        // Non-shared cache lives within a single process; entries are consistent without re-reads.
         if (pc->IsShared() && dict.GetHeaderPtr() && dict.GetHeaderPtr()->num_writer > 0) {
             uint8_t curr_edge[EDGE_SIZE];
             if (dict.mm.ReadData(curr_edge, EDGE_SIZE, entry.edge_offset) != EDGE_SIZE) {

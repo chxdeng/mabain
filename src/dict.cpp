@@ -970,12 +970,13 @@ void Dict::Purge() const
 
 void Dict::EnablePrefixCache(int n, size_t capacity)
 {
-    if (n <= 0)
+    if (capacity == 0)
         return;
     // Ensure only one cache mode is active at a time
     if (prefix_cache_shared)
         prefix_cache_shared.reset();
-    prefix_cache = std::unique_ptr<PrefixCache>(new PrefixCache(n, capacity));
+    // New non-shared prefix cache uses 2- and 3-byte tables; ignore n
+    prefix_cache = std::unique_ptr<PrefixCache>(new PrefixCache(capacity));
 }
 
 void Dict::DisablePrefixCache()
@@ -1027,10 +1028,12 @@ void Dict::MaybePutCache(const uint8_t* full_key, int full_len, int consumed,
             prefix_cache_shared->Put(full_key, full_len, e);
         }
     } else if (prefix_cache) {
-        if (consumed == prefix_cache->PrefixLen()) {
+        // For non-shared cache, only cache at exact 2-byte or 3-byte boundaries
+        // so seeds point to the correct internal node for that prefix.
+        if (consumed == 3 || consumed == 2) {
             PrefixCacheEntry e { edge_ptrs.offset, { 0 }, 0 };
             memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
-            prefix_cache->Put(full_key, full_len, e);
+            prefix_cache->Put(full_key, consumed, e);
         }
     }
 }
@@ -1064,7 +1067,6 @@ void Dict::PrintPrefixCacheStats(std::ostream& os) const
     int pn;
     GetPrefixCacheStats(hit, miss, put, entries, pn);
     os << "PrefixCache: enabled=" << (PrefixCacheEnabled() ? 1 : 0)
-       << " n=" << pn
        << " entries=" << entries
        << " hit=" << hit
        << " miss=" << miss

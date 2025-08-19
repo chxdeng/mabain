@@ -19,6 +19,9 @@ public:
     virtual ~PrefixCacheIface() = default;
     virtual bool Get(const uint8_t* key, int len, PrefixCacheEntry& out) const = 0;
     virtual void Put(const uint8_t* key, int len, const PrefixCacheEntry& in) = 0;
+    // Return matched prefix length on hit (e.g., 3 or 2 for non-shared cache), 0 on miss.
+    // Default implementation bridges to Get() if overridden only in one side.
+    virtual int GetDepth(const uint8_t* key, int len, PrefixCacheEntry& out) const = 0;
     virtual int PrefixLen() const = 0;
     virtual bool IsShared() const = 0;
 };

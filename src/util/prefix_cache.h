@@ -7,7 +7,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <unordered_map>
 #include <vector>
 
 #include "drm_base.h" // for EDGE_SIZE
@@ -17,14 +16,19 @@ namespace mabain {
 
 class PrefixCache : public PrefixCacheIface {
 public:
-    explicit PrefixCache(int prefix_len, size_t capacity = 65536);
+    // capacity: overall budget; must be <= total 3-byte prefix count (2^24).
+    // - table2: direct table sized to floor_pow2(min(capacity, 65536)).
+    // - table3: direct table sized to floor_pow2(max(capacity - 65536, 0)).
+    explicit PrefixCache(size_t capacity = 65536);
 
     bool Get(const uint8_t* key, int len, PrefixCacheEntry& out) const override;
     void Put(const uint8_t* key, int len, const PrefixCacheEntry& in) override;
+    int GetDepth(const uint8_t* key, int len, PrefixCacheEntry& out) const override;
 
-    int PrefixLen() const override { return n; }
+    // Report the maximum prefix length this cache can seed from (3 bytes)
+    int PrefixLen() const override { return 3; }
     bool IsShared() const override { return false; }
-    size_t Size() const;
+    size_t Size() const; // total entries across both tables
     void Clear();
 
     // Simple counters for diagnostics (single-threaded use)
@@ -34,20 +38,31 @@ public:
     void ResetStats() { hit_count = miss_count = put_count = 0; }
 
 private:
-    inline bool BuildKey(const uint8_t* key, int len, uint64_t& out) const;
-    inline bool BuildIndex4(const uint8_t* key, int len, uint32_t& idx) const;
+    inline bool build2(const uint8_t* key, int len, uint16_t& p2) const;
+    inline bool build3(const uint8_t* key, int len, uint32_t& p3) const;
 
-    const int n;
-    const size_t cap;
-    std::unordered_map<uint64_t, PrefixCacheEntry> map;
+    const size_t cap2;
+    const size_t cap3;
+    size_t mask3 = 0; // cap3-1 when cap3 is power-of-two
+
+    // 2-byte table: direct index sized by capacity (power-of-two up to 65536)
+    std::vector<PrefixCacheEntry> table2;
+    std::vector<uint8_t> filled2;
+    std::vector<uint16_t> keys2; // stored 2-byte prefixes for validation
+    size_t size2 = 0;
+    size_t mask2 = 0; // cap2-1 when using mask
+    bool use_mask2 = true; // true when cap2 is power-of-two
+
+    // 3-byte table: sparse hash map keyed by top 3 bytes (big endian)
+    // 3-byte table: direct index (0..16,777,215)
+    std::vector<PrefixCacheEntry> table3;
+    std::vector<uint8_t> filled3;
+    std::vector<uint32_t> keys3; // stored 3-byte prefixes for validation
+    size_t size3 = 0;
+
     mutable uint64_t hit_count = 0;
     mutable uint64_t miss_count = 0;
     mutable uint64_t put_count = 0;
-
-    // Fast-path for n == 4: direct index into fixed array of 65536 slots
-    bool fast4;
-    std::vector<PrefixCacheEntry> slots4;
-    std::vector<uint8_t> filled4;
 };
 
 } // namespace mabain

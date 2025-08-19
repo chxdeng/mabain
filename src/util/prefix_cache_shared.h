@@ -54,6 +54,10 @@ public:
     bool Get(const uint8_t* key, int len, PrefixCacheEntry& out) const override;
     // Multi-process writers (any process can call these)
     void Put(const uint8_t* key, int len, const PrefixCacheEntry& in) override;
+    // For shared cache, matched depth equals configured PrefixLen() on hit
+    int GetDepth(const uint8_t* key, int len, PrefixCacheEntry& out) const override {
+        return Get(key, len, out) ? PrefixLen() : 0;
+    }
     void InvalidateByEdgeOffset(size_t edge_offset);
     // Targeted invalidation using the key's prefix: scans only its bucket
     void InvalidateByPrefixAndEdge(const uint8_t* key, int len, size_t edge_offset);

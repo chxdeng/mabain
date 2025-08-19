@@ -405,7 +405,99 @@ namespace detail {
             if (isLeaf(edge_ptrs))
                 return MBError::NOT_EXIST;
         }
-        return traverseFromEdge(key_cursor, len, consumed, key, orig_len, edge_ptrs, data);
+        int r = traverseFromEdge(key_cursor, len, consumed, key, orig_len, edge_ptrs, data);
+        if (used_cache && r == MBError::NOT_EXIST) {
+#ifdef __LOCK_FREE__
+            ReaderLFGuard lf_guard(dict.lfree, data);
+#endif
+            int rval_nc = dict.mm.GetRootEdge(root_off, key[0], edge_ptrs);
+            if (rval_nc != MBError::SUCCESS) {
+                return MBError::READ_ERROR;
+            }
+            if (edge_ptrs.len_ptr[0] == 0) {
+#ifdef __LOCK_FREE__
+                {
+                    int _r = lf_guard.stop(edge_ptrs.offset);
+                    if (_r != MBError::SUCCESS)
+                        return _r;
+                }
+#endif
+                return MBError::NOT_EXIST;
+            }
+            int edge_len = edge_ptrs.len_ptr[0];
+            int edge_len_m1 = edge_len - 1;
+            const uint8_t* key_buff_nc;
+            if ((rval_nc = loadEdgeKey(edge_ptrs, data, key_buff_nc, edge_len_m1)) != MBError::SUCCESS) {
+#ifdef __LOCK_FREE__
+                {
+                    int _r = lf_guard.stop(edge_ptrs.offset);
+                    if (_r != MBError::SUCCESS)
+                        return _r;
+                }
+#endif
+                return MBError::READ_ERROR;
+            }
+            const uint8_t* key_cursor_nc = key;
+            int len_nc = orig_len;
+            int consumed_nc = 0;
+            if (edge_len < len_nc) {
+                if (!remainderMatches(key_buff_nc, key_cursor_nc, edge_len_m1)) {
+#ifdef __LOCK_FREE__
+                    {
+                        int _r = lf_guard.stop(edge_ptrs.offset);
+                        if (_r != MBError::SUCCESS)
+                            return _r;
+                    }
+#endif
+                    return MBError::NOT_EXIST;
+                }
+                key_cursor_nc += edge_len;
+                consumed_nc += edge_len;
+                len_nc -= edge_len;
+                if (len_nc <= 0)
+                    return resolveMatchOrInDict(data, edge_ptrs, true);
+                if (isLeaf(edge_ptrs)) {
+#ifdef __LOCK_FREE__
+                    {
+                        int _r = lf_guard.stop(edge_ptrs.offset);
+                        if (_r != MBError::SUCCESS)
+                            return _r;
+                    }
+#endif
+                    return MBError::NOT_EXIST;
+                }
+                maybePutCache(key, orig_len, consumed_nc, edge_ptrs);
+            } else if (edge_len == len_nc) {
+                if (remainderMatches(key_buff_nc, key_cursor_nc, edge_len_m1))
+                    return resolveMatchOrInDict(data, edge_ptrs, true);
+#ifdef __LOCK_FREE__
+                {
+                    int _r = lf_guard.stop(edge_ptrs.offset);
+                    if (_r != MBError::SUCCESS)
+                        return _r;
+                }
+#endif
+                return MBError::NOT_EXIST;
+            } else {
+#ifdef __LOCK_FREE__
+                {
+                    int _r = lf_guard.stop(edge_ptrs.offset);
+                    if (_r != MBError::SUCCESS)
+                        return _r;
+                }
+#endif
+                return MBError::NOT_EXIST;
+            }
+#ifdef __LOCK_FREE__
+            {
+                int _r = lf_guard.stop(edge_ptrs.offset);
+                if (_r != MBError::SUCCESS)
+                    return _r;
+            }
+#endif
+            return traverseFromEdge(key_cursor_nc, len_nc, consumed_nc, key, orig_len, edge_ptrs, data);
+        }
+        return r;
     }
 
     int SearchEngine::traverseFromEdge(const uint8_t*& key_cursor, int& len, int& consumed,
