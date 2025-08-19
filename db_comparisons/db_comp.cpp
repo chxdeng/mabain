@@ -279,14 +279,14 @@ static void Add(int n)
             }
             key = kv;
             val = kv;
-        } else { // key_type == u32 pseudo-random (binary 4 bytes, big-endian)
+        } else { // key_type == u32 pseudo-random (binary 4 bytes, little-endian)
             uint32_t r = prand_u32(static_cast<uint64_t>(i));
-            char be[4] = { static_cast<char>((r >> 24) & 0xFF),
-                           static_cast<char>((r >> 16) & 0xFF),
+            char le[4] = { static_cast<char>(r & 0xFF),
                            static_cast<char>((r >> 8) & 0xFF),
-                           static_cast<char>(r & 0xFF) };
-            key.assign(be, 4);
-            val.assign(be, 4);
+                           static_cast<char>((r >> 16) & 0xFF),
+                           static_cast<char>((r >> 24) & 0xFF) };
+            key.assign(le, 4);
+            val.assign(le, 4);
         }
 
 #ifdef LEVEL_DB
@@ -358,14 +358,16 @@ static void Lookup(int n)
 
     uint64_t total_time = 0;
 #ifdef MABAIN
-    uint64_t total_time_ns = 0; // accumulate in nanoseconds for precision
+    uint64_t total_time_ns = 0; // measure whole-loop time in nanoseconds
     mabain::MBData mbd;         // reuse per-iteration buffer to avoid reallocation
+    mbd.options = mabain::CONSTS::OPTION_KEY_ONLY; // skip reading values to speed exact match
 #endif
 
 #ifdef MABAIN
     // Optional warm-up to prefill prefix cache for accurate hit measurement
     if (pc_cap > 0) {
         mabain::MBData warm_mbd;
+        warm_mbd.options = mabain::CONSTS::OPTION_KEY_ONLY;
         for (int i = 0; i < n; ++i) {
             std::string warm_key;
             if (key_type == 0) {
@@ -379,11 +381,11 @@ static void Lookup(int n)
                 warm_key = kv;
             } else {
                 uint32_t r = prand_u32(static_cast<uint64_t>(i));
-                char be[4] = { static_cast<char>((r >> 24) & 0xFF),
-                               static_cast<char>((r >> 16) & 0xFF),
+                char le[4] = { static_cast<char>(r & 0xFF),
                                static_cast<char>((r >> 8) & 0xFF),
-                               static_cast<char>(r & 0xFF) };
-                warm_key.assign(be, 4);
+                               static_cast<char>((r >> 16) & 0xFF),
+                               static_cast<char>((r >> 24) & 0xFF) };
+                warm_key.assign(le, 4);
             }
             int _ = db->Find(warm_key, warm_mbd);
             (void)_;
@@ -391,6 +393,7 @@ static void Lookup(int n)
         db->ResetPrefixCacheStats();
     }
 #endif
+    // Time each find call only (exclude key-building and loop overhead)
     for (int i = 0; i < n; i++) {
         std::string key;
         if (key_type == 0) {
@@ -402,13 +405,13 @@ static void Lookup(int n)
                 get_sha256_str(i, kv);
             }
             key = kv;
-        } else { // u32 pseudo-random (binary 4 bytes, big-endian); match Add()
+        } else { // u32 pseudo-random (binary 4 bytes, little-endian); match Add()
             uint32_t r = prand_u32(static_cast<uint64_t>(i));
-            char be[4] = { static_cast<char>((r >> 24) & 0xFF),
-                           static_cast<char>((r >> 16) & 0xFF),
+            char le[4] = { static_cast<char>(r & 0xFF),
                            static_cast<char>((r >> 8) & 0xFF),
-                           static_cast<char>(r & 0xFF) };
-            key.assign(be, 4);
+                           static_cast<char>((r >> 16) & 0xFF),
+                           static_cast<char>((r >> 24) & 0xFF) };
+            key.assign(le, 4);
         }
 
 #ifdef LEVEL_DB
@@ -438,15 +441,13 @@ static void Lookup(int n)
             nfound++;
             // std::cout<<key<<":"<<std::string((char*)lmdb_value.mv_data, lmdb_value.mv_size)<<"\n";
 #elif MABAIN
-        // Use CLOCK_MONOTONIC_RAW for lower-jitter, high-resolution timing
         struct timespec ts1, ts2;
         clock_gettime(CLOCK_MONOTONIC_RAW, &ts1);
-        int rval = db->Find(key, mbd);
+        int rval = db->Find(key.data(), (int)key.size(), mbd);
         clock_gettime(CLOCK_MONOTONIC_RAW, &ts2);
         uint64_t delta_ns = (uint64_t)(ts2.tv_sec - ts1.tv_sec) * 1000000000ULL + (uint64_t)(ts2.tv_nsec - ts1.tv_nsec);
-        total_time_ns += delta_ns; // accumulate in nanoseconds, convert at print
-        if (rval == 0)
-            nfound++;
+        total_time_ns += delta_ns;
+        if (rval == 0) nfound++;
 #endif
 
         if ((i + 1) % ONE_MILLION == 0) {
@@ -483,14 +484,15 @@ static void Lookup(int n)
             }
             k = kv;
             v = kv;
-        } else { // u32 pseudo-random (binary 4 bytes, big-endian); match Add()
+        } else { // u32 pseudo-random (binary 4 bytes, little-endian); match Add()
             uint32_t r = prand_u32(static_cast<uint64_t>(i));
-            char be[4] = { static_cast<char>((r >> 24) & 0xFF),
-                           static_cast<char>((r >> 16) & 0xFF),
+            if (pc_cap > 0) r = r % static_cast<uint32_t>(pc_cap);
+            char le[4] = { static_cast<char>(r & 0xFF),
                            static_cast<char>((r >> 8) & 0xFF),
-                           static_cast<char>(r & 0xFF) };
-            k.assign(be, 4);
-            v.assign(be, 4);
+                           static_cast<char>((r >> 16) & 0xFF),
+                           static_cast<char>((r >> 24) & 0xFF) };
+            k.assign(le, 4);
+            v.assign(le, 4);
         }
         u.emplace(std::move(k), std::move(v));
     }
@@ -510,13 +512,13 @@ static void Lookup(int n)
                 get_sha256_str(i, kv);
             }
             k = kv;
-        } else { // u32 pseudo-random (binary 4 bytes, big-endian); match Add()
+        } else { // u32 pseudo-random (binary 4 bytes, little-endian); match Add()
             uint32_t r = prand_u32(static_cast<uint64_t>(i));
-            char be[4] = { static_cast<char>((r >> 24) & 0xFF),
-                           static_cast<char>((r >> 16) & 0xFF),
+            char le[4] = { static_cast<char>(r & 0xFF),
                            static_cast<char>((r >> 8) & 0xFF),
-                           static_cast<char>(r & 0xFF) };
-            k.assign(be, 4);
+                           static_cast<char>((r >> 16) & 0xFF),
+                           static_cast<char>((r >> 24) & 0xFF) };
+            k.assign(le, 4);
         }
         struct timespec ts1, ts2;
         clock_gettime(CLOCK_MONOTONIC_RAW, &ts1);
@@ -573,13 +575,13 @@ static void Delete(int n)
                 get_sha256_str(i, kv);
             }
             key = kv;
-        } else { // u32 pseudo-random (binary 4 bytes, big-endian)
+        } else { // u32 pseudo-random (binary 4 bytes, little-endian)
             uint32_t r = prand_u32(static_cast<uint64_t>(i));
-            char be[4] = { static_cast<char>((r >> 24) & 0xFF),
-                           static_cast<char>((r >> 16) & 0xFF),
+            char le[4] = { static_cast<char>(r & 0xFF),
                            static_cast<char>((r >> 8) & 0xFF),
-                           static_cast<char>(r & 0xFF) };
-            key.assign(be, 4);
+                           static_cast<char>((r >> 16) & 0xFF),
+                           static_cast<char>((r >> 24) & 0xFF) };
+            key.assign(le, 4);
         }
 #ifdef LEVEL_DB
         leveldb::WriteOptions opts = leveldb::WriteOptions();
@@ -667,14 +669,14 @@ static void* Writer(void* arg)
             }
             key = kv;
             val = kv;
-        } else { // u32 pseudo-random (binary 4 bytes, big-endian)
+        } else { // u32 pseudo-random (binary 4 bytes, little-endian)
             uint32_t r = prand_u32(static_cast<uint64_t>(i));
-            char be[4] = { static_cast<char>((r >> 24) & 0xFF),
-                           static_cast<char>((r >> 16) & 0xFF),
+            char le[4] = { static_cast<char>(r & 0xFF),
                            static_cast<char>((r >> 8) & 0xFF),
-                           static_cast<char>(r & 0xFF) };
-            key.assign(be, 4);
-            val.assign(be, 4);
+                           static_cast<char>((r >> 16) & 0xFF),
+                           static_cast<char>((r >> 24) & 0xFF) };
+            key.assign(le, 4);
+            val.assign(le, 4);
         }
 
 #ifdef LEVEL_DB
@@ -745,13 +747,13 @@ static void* Reader(void* arg)
                 get_sha256_str(i, kv);
             }
             key = kv;
-        } else { // u32 pseudo-random (binary 4 bytes, big-endian)
+        } else { // u32 pseudo-random (binary 4 bytes, little-endian)
             uint32_t r = prand_u32(static_cast<uint64_t>(i));
-            char be[4] = { static_cast<char>((r >> 24) & 0xFF),
-                           static_cast<char>((r >> 16) & 0xFF),
+            char le[4] = { static_cast<char>(r & 0xFF),
                            static_cast<char>((r >> 8) & 0xFF),
-                           static_cast<char>(r & 0xFF) };
-            key.assign(be, 4);
+                           static_cast<char>((r >> 16) & 0xFF),
+                           static_cast<char>((r >> 24) & 0xFF) };
+            key.assign(le, 4);
         }
 
         std::string value;

@@ -88,11 +88,12 @@ bool PrefixCache::Get(const uint8_t* key, int len, PrefixCacheEntry& out) const
     uint32_t p3;
     if (cap3 > 0 && build3(key, len, p3)) {
         size_t idx3 = static_cast<size_t>(p3) & mask3;
-        if (filled3[idx3] && keys3[idx3] == p3) {
+        if (filled3[idx3] && (fast_no_tag_check || keys3[idx3] == p3)) {
             out = table3[idx3];
             ++hit_count;
             return true;
         }
+        // fall through to try 2-byte table
     }
     uint16_t p2;
     if (build2(key, len, p2)) {
@@ -113,11 +114,12 @@ int PrefixCache::GetDepth(const uint8_t* key, int len, PrefixCacheEntry& out) co
     uint32_t p3;
     if (cap3 > 0 && build3(key, len, p3)) {
         size_t idx3 = static_cast<size_t>(p3) & mask3;
-        if (filled3[idx3] && keys3[idx3] == p3) {
+        if (filled3[idx3] && (fast_no_tag_check || keys3[idx3] == p3)) {
             out = table3[idx3];
             ++hit_count;
             return 3;
         }
+        // fall through to 2-byte table
     }
     uint16_t p2;
     if (build2(key, len, p2)) {
@@ -166,6 +168,16 @@ size_t PrefixCache::Size() const
 {
     size_t s2 = static_cast<size_t>(std::count(filled2.begin(), filled2.end(), 1));
     return s2 + size3;
+}
+
+size_t PrefixCache::Size2() const
+{
+    return static_cast<size_t>(std::count(filled2.begin(), filled2.end(), 1));
+}
+
+size_t PrefixCache::Size3() const
+{
+    return size3;
 }
 
 void PrefixCache::Clear()

@@ -400,8 +400,11 @@ namespace detail {
         }
 
         if (used_cache) {
-            if (len <= 0)
+            if (len <= 0) {
+                // Seed canonical depths on match after a cache seed
+                maybePutCache(key, orig_len, consumed, edge_ptrs);
                 return resolveMatchOrInDict(data, edge_ptrs, false);
+            }
             if (isLeaf(edge_ptrs))
                 return MBError::NOT_EXIST;
         }
@@ -547,10 +550,14 @@ namespace detail {
 
             len -= edge_len;
             if (len <= 0) {
+                // Seed canonical depths for 2/3-byte prefixes on final match
+                maybePutCache(full_key, full_len, consumed + edge_len, edge_ptrs);
                 rval = resolveMatchOrInDict(data, edge_ptrs, false);
                 break;
             }
             if (isLeaf(edge_ptrs)) {
+                // Reached data edge; seed canonical depths prior to read path
+                maybePutCache(full_key, full_len, consumed + edge_len, edge_ptrs);
                 rval = MBError::NOT_EXIST;
                 break;
             }

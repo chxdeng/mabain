@@ -42,7 +42,7 @@ if(MB_WERROR)
 endif()
 target_compile_options(mabain PRIVATE
     ${MB_WARN_OPTS}
-    -g -ggdb -fPIC -O3 -std=c++17 -D__LOCK_FREE__
+    -g -ggdb -fPIC -O2 -std=c++17 -D__LOCK_FREE__
     -march=native -fomit-frame-pointer
 )
 

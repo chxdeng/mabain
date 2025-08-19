@@ -225,6 +225,7 @@ public:
     void DisableSharedPrefixCache();
     void DumpSharedPrefixCacheStats(std::ostream& os = std::cout) const;
     void SetSharedPrefixCacheReadOnly(bool ro);
+    void SetPrefixCacheReadOnly(bool ro);
 
 private:
     void InitDB(MBConfig& config);

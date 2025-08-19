@@ -140,6 +140,7 @@ public:
     void PrintSharedPrefixCacheStats(std::ostream& os) const;
     PrefixCacheIface* ActivePrefixCache() const;
     void SetSharedPrefixCacheReadOnly(bool ro) { shared_pc_readonly = ro; }
+    void SetPrefixCacheReadOnly(bool ro);
 
 private:
     // Allow internal SearchEngine to orchestrate lookups without exposing members publicly
@@ -180,6 +181,7 @@ private:
     std::unique_ptr<PrefixCache> prefix_cache;
     std::unique_ptr<PrefixCacheShared> prefix_cache_shared;
     std::string mbdir_;
+    bool local_pc_readonly = false;
     bool shared_pc_readonly = false;
 
     // Prefix-cache helpers (no side effects when cache disabled)

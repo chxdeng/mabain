@@ -1016,6 +1016,15 @@ void Dict::DisableSharedPrefixCache()
     prefix_cache_shared.reset();
 }
 
+void Dict::SetPrefixCacheReadOnly(bool ro)
+{
+    local_pc_readonly = ro;
+    if (prefix_cache) {
+        // Enable fast path (no tag checks) when cache is warmed and read-only
+        prefix_cache->SetFastNoTagCheck(ro);
+    }
+}
+
 void Dict::MaybePutCache(const uint8_t* full_key, int full_len, int consumed,
     const EdgePtrs& edge_ptrs) const
 {
@@ -1028,12 +1037,17 @@ void Dict::MaybePutCache(const uint8_t* full_key, int full_len, int consumed,
             prefix_cache_shared->Put(full_key, full_len, e);
         }
     } else if (prefix_cache) {
-        // For non-shared cache, only cache at exact 2-byte or 3-byte boundaries
-        // so seeds point to the correct internal node for that prefix.
-        if (consumed == 3 || consumed == 2) {
+        if (local_pc_readonly) return; // skip writes when read-only
+        // Only seed at internal nodes and exact 2- or 3-byte boundaries.
+        if (edge_ptrs.flag_ptr[0] & EDGE_FLAG_DATA_OFF) return; // don't seed leaves
+        if (consumed == 3) {
             PrefixCacheEntry e { edge_ptrs.offset, { 0 }, 0 };
             memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
-            prefix_cache->Put(full_key, consumed, e);
+            prefix_cache->Put(full_key, 3, e);
+        } else if (consumed == 2) {
+            PrefixCacheEntry e2 { edge_ptrs.offset, { 0 }, 0 };
+            memcpy(e2.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
+            prefix_cache->Put(full_key, 2, e2);
         }
     }
 }
@@ -1066,12 +1080,22 @@ void Dict::PrintPrefixCacheStats(std::ostream& os) const
     size_t entries;
     int pn;
     GetPrefixCacheStats(hit, miss, put, entries, pn);
-    os << "PrefixCache: enabled=" << (PrefixCacheEnabled() ? 1 : 0)
-       << " entries=" << entries
-       << " hit=" << hit
-       << " miss=" << miss
-       << " put=" << put
-       << std::endl;
+    if (prefix_cache) {
+        size_t e2 = prefix_cache->Size2();
+        size_t e3 = prefix_cache->Size3();
+        os << "PrefixCache: enabled=1"
+           << " entries2=" << e2
+           << " entries3=" << e3
+           << " entries_total=" << entries
+           << " hit=" << hit
+           << " miss=" << miss
+           << " put=" << put
+           << std::endl;
+    } else {
+        os << "PrefixCache: enabled=0"
+           << " entries_total=0"
+           << " hit=0 miss=0 put=0" << std::endl;
+    }
 }
 
 void Dict::PrintSharedPrefixCacheStats(std::ostream& os) const

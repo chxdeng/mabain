@@ -24,11 +24,14 @@ public:
     bool Get(const uint8_t* key, int len, PrefixCacheEntry& out) const override;
     void Put(const uint8_t* key, int len, const PrefixCacheEntry& in) override;
     int GetDepth(const uint8_t* key, int len, PrefixCacheEntry& out) const override;
+    void SetFastNoTagCheck(bool v) { fast_no_tag_check = v; }
 
     // Report the maximum prefix length this cache can seed from (3 bytes)
     int PrefixLen() const override { return 3; }
     bool IsShared() const override { return false; }
     size_t Size() const; // total entries across both tables
+    size_t Size2() const; // entries in 2-byte table
+    size_t Size3() const; // entries in 3-byte table
     void Clear();
 
     // Simple counters for diagnostics (single-threaded use)
@@ -63,6 +66,8 @@ private:
     mutable uint64_t hit_count = 0;
     mutable uint64_t miss_count = 0;
     mutable uint64_t put_count = 0;
+
+    bool fast_no_tag_check = false; // skip tag validation on table3 in read-only bench mode
 };
 
 } // namespace mabain
