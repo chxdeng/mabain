@@ -157,35 +157,41 @@ void PrefixCache::unmap_shared()
     }
 }
 
+// Build 2-byte prefix index from key bytes in little-endian order
 inline bool PrefixCache::build2(const uint8_t* key, int len, uint16_t& p2) const
 {
     if (key == nullptr || len < 2)
         return false;
-    // Big endian: key[0] is most significant
-    p2 = static_cast<uint16_t>((static_cast<uint16_t>(key[0]) << 8) | static_cast<uint16_t>(key[1]));
+    // Little endian: key[0] is least significant
+    p2 = static_cast<uint16_t>(static_cast<uint16_t>(key[0]) | (static_cast<uint16_t>(key[1]) << 8));
     return true;
 }
 
+// Build 3-byte prefix index from key bytes in little-endian order
 inline bool PrefixCache::build3(const uint8_t* key, int len, uint32_t& p3) const
 {
     if (key == nullptr || len < 3)
         return false;
-    p3 = (static_cast<uint32_t>(key[0]) << 16) | (static_cast<uint32_t>(key[1]) << 8) | (static_cast<uint32_t>(key[2]));
+    // Little endian: key[0] is least significant
+    p3 = static_cast<uint32_t>(static_cast<uint32_t>(key[0]) | (static_cast<uint32_t>(key[1]) << 8)
+        | (static_cast<uint32_t>(key[2]) << 16));
     return true;
 }
 
 int PrefixCache::GetDepth(const uint8_t* key, int len, PrefixCacheEntry& out) const
 {
     if (cap3 > 0 && key != nullptr && len >= 3) {
-        uint32_t p3 = (static_cast<uint32_t>(key[0]) << 16) | (static_cast<uint32_t>(key[1]) << 8) | (static_cast<uint32_t>(key[2]));
+        // Little-endian 3-byte build
+        uint32_t p3 = static_cast<uint32_t>(static_cast<uint32_t>(key[0]) | (static_cast<uint32_t>(key[1]) << 8)
+            | (static_cast<uint32_t>(key[2]) << 16));
         size_t idx3 = static_cast<size_t>(p3) & mask3;
         uint32_t t3 = tag3[idx3].load(std::memory_order_acquire);
         if (t3 == (p3 + 1)) {
             out = tab3[idx3];
             return 3;
         }
-        // Fall back to 2-byte table using top 2 bytes of p3
-        uint16_t p2 = static_cast<uint16_t>(p3 >> 8);
+        // Fall back to 2-byte table using lower 2 bytes of p3 (LE)
+        uint16_t p2 = static_cast<uint16_t>(p3 & 0xFFFFu);
         size_t idx2 = static_cast<size_t>(p2) & mask2;
         uint32_t t2 = tag2[idx2].load(std::memory_order_acquire);
         if ((full2 && t2) || (!full2 && t2 == (static_cast<uint32_t>(p2) + 1))) {
@@ -195,7 +201,8 @@ int PrefixCache::GetDepth(const uint8_t* key, int len, PrefixCacheEntry& out) co
         return 0;
     }
     if (key != nullptr && len >= 2) {
-        uint16_t p2 = static_cast<uint16_t>((static_cast<uint16_t>(key[0]) << 8) | static_cast<uint16_t>(key[1]));
+        // Little-endian 2-byte build
+        uint16_t p2 = static_cast<uint16_t>(static_cast<uint16_t>(key[0]) | (static_cast<uint16_t>(key[1]) << 8));
         size_t idx2 = static_cast<size_t>(p2) & mask2;
         uint32_t t2 = tag2[idx2].load(std::memory_order_acquire);
         if ((full2 && t2) || (!full2 && t2 == (static_cast<uint32_t>(p2) + 1))) {

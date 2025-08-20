@@ -151,6 +151,9 @@ namespace detail {
             }
             return MBError::IN_DICT;
         }
+        if (data.options & CONSTS::OPTION_KEY_ONLY) {
+            return MBError::SUCCESS;
+        }
         return dict.ReadDataFromEdge(data, edge_ptrs);
     }
 

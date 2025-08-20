@@ -316,8 +316,32 @@ namespace detail {
             if (len <= 0) {
                 return resolveMatchOrInDict(data, edge_ptrs, false);
             }
-            if (isLeaf(edge_ptrs)) {
+            // Mirror the root-edge fast-path: compare the remainder of the
+            // current edge label before attempting to descend further.
+            const int edge_len = edge_ptrs.len_ptr[0];
+            const int edge_len_m1 = edge_len - 1;
+            const uint8_t* key_buff;
+            int r = loadEdgeKey(edge_ptrs, data, key_buff, edge_len_m1);
+            if (r != MBError::SUCCESS)
+                return MBError::READ_ERROR;
+
+            if (edge_len < len) {
+                if (!remainderMatches(key_buff, key_cursor, edge_len_m1))
+                    return MBError::NOT_EXIST;
+                key_cursor += edge_len;
+                consumed += edge_len;
+                len -= edge_len;
+                if (len <= 0)
+                    return resolveMatchOrInDict(data, edge_ptrs, false);
+                if (isLeaf(edge_ptrs))
+                    return MBError::NOT_EXIST;
+                // proceed to traverse from this edge
+            } else if (edge_len == len) {
+                if (remainderMatches(key_buff, key_cursor, edge_len_m1))
+                    return resolveMatchOrInDict(data, edge_ptrs, false);
                 return MBError::NOT_EXIST;
+            } else {
+                return MBError::NOT_EXIST; // key shorter than edge
             }
         }
 
