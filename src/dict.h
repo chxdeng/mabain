@@ -132,16 +132,12 @@ public:
     void ResetPrefixCacheStats();
     void PrintPrefixCacheStats(std::ostream& os) const;
 
-    // Shared prefix cache toggled via unified cache (backed by shared memory)
+    // Unified prefix cache (shared-memory backed)
     void EnableSharedPrefixCache(int n, size_t capacity = 65536, uint32_t assoc = 4);
-    void DisableSharedPrefixCache();
-    bool SharedPrefixCacheEnabled() const;
-    void PrintSharedPrefixCacheStats(std::ostream& os) const;
     // Debug: print breakdown of cache entry origins (add-time vs read-time)
     void PrintPrefixCacheOriginStats(std::ostream& os) const;
     PrefixCacheIface* ActivePrefixCache() const;
     void SetSharedPrefixCacheReadOnly(bool ro);
-    void SetPrefixCacheReadOnly(bool ro);
 
 private:
     // Allow internal SearchEngine to orchestrate lookups without exposing members publicly
@@ -181,7 +177,6 @@ private:
     // Optional lookup accelerators for Find
     std::unique_ptr<PrefixCache> prefix_cache;
     std::string mbdir_;
-    bool local_pc_readonly = false;
     bool shared_pc_readonly = false;
 
     // Prefix-cache helpers (no side effects when cache disabled)

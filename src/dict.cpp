@@ -1058,16 +1058,13 @@ void Dict::Purge() const
 
 void Dict::EnablePrefixCache(int n, size_t capacity)
 {
-    if (capacity == 0)
-        return;
-    // New unified prefix cache; ignore n (always supports 2- and 3-byte)
-    bool writer_mode = (options & CONSTS::ACCESS_MODE_WRITER);
-    prefix_cache = std::unique_ptr<PrefixCache>(new PrefixCache(mbdir_, /*use_shared_mem=*/false, writer_mode, capacity));
+    // Non-shared prefix cache support removed; no-op.
+    (void)n; (void)capacity;
 }
 
 void Dict::DisablePrefixCache()
 {
-    prefix_cache.reset();
+    // No-op for non-shared path removal; shared cache uses DisableSharedPrefixCache.
 }
 
 void Dict::EnableSharedPrefixCache(int n, size_t capacity, uint32_t assoc)
@@ -1079,29 +1076,17 @@ void Dict::EnableSharedPrefixCache(int n, size_t capacity, uint32_t assoc)
     prefix_cache = std::unique_ptr<PrefixCache>(new PrefixCache(mbdir_, /*use_shared_mem=*/true, writer_mode, capacity));
 }
 
-void Dict::DisableSharedPrefixCache() { /* unified with DisablePrefixCache */ }
-
-void Dict::SetPrefixCacheReadOnly(bool ro)
-{
-    local_pc_readonly = ro;
-    if (prefix_cache && !prefix_cache->IsShared()) {
-        // Non-shared only: allow fast path (skip tag match) when read-only
-        prefix_cache->SetFastNoTagCheck(ro);
-    }
-}
-
 void Dict::SetSharedPrefixCacheReadOnly(bool ro)
 {
-    // Do not change tag-check semantics for shared cache; readers are already read-only.
-    // Keep this method to satisfy DB API and benchmarking harness.
-    (void)ro;
+    shared_pc_readonly = ro;
 }
 
 void Dict::MaybePutCache(const uint8_t* full_key, int full_len, int consumed,
     const EdgePtrs& edge_ptrs, bool from_add) const
 {
     if (prefix_cache) {
-        if (local_pc_readonly) return; // skip writes when read-only
+        // All caches are shared; honor shared read-only flag
+        if (shared_pc_readonly) return;
         if (edge_ptrs.flag_ptr[0] & EDGE_FLAG_DATA_OFF) return; // don't seed leaves
         // Unified: seed at canonical 2- and 3-byte boundaries for both
         // shared and non-shared caches. Tag origin in lf_counter: 1=add, 2=read.
@@ -1172,14 +1157,6 @@ void Dict::PrintPrefixCacheStats(std::ostream& os) const
         os << "PrefixCache: enabled=0"
            << " entries_total=0"
            << " hit=0 miss=0 put=0" << std::endl;
-    }
-}
-
-void Dict::PrintSharedPrefixCacheStats(std::ostream& os) const {
-    if (prefix_cache && prefix_cache->IsShared()) {
-        PrintPrefixCacheStats(os);
-    } else {
-        os << "PrefixCacheShared: disabled" << std::endl;
     }
 }
 

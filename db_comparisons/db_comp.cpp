@@ -244,17 +244,9 @@ static void InitDB(bool writer_mode = true)
     // Apply prefix cache overrides (enable only when -pcc provided)
     if (pc_disable) {
         db->DisablePrefixCache();
-        db->DisableSharedPrefixCache();
     } else if (pc_cap > 0) {
-        if (pc_shared) {
-            db->EnableSharedPrefixCache(3, static_cast<size_t>(pc_cap), pc_assoc);
-            if (!writer_mode) {
-                // Reader mode: mark shared cache read-only to enable fastest path
-                db->SetSharedPrefixCacheReadOnly(true);
-            }
-        } else {
-            db->EnablePrefixCache(3, static_cast<size_t>(pc_cap));
-        }
+        // All caches are shared now; enable shared cache unconditionally
+        db->EnableSharedPrefixCache(3, static_cast<size_t>(pc_cap), pc_assoc);
     }
 #endif
 }
@@ -659,7 +651,6 @@ static void* Reader(void* arg)
     // Configure prefix cache for reader instance only (enable only when -pcc provided)
     if (pc_disable) {
         db_r->DisablePrefixCache();
-        db_r->DisableSharedPrefixCache();
     } else if (pc_cap > 0) {
         if (pc_shared) {
             db_r->EnableSharedPrefixCache(3, static_cast<size_t>(pc_cap), pc_assoc);
@@ -727,9 +718,6 @@ static void* Reader(void* arg)
         std::ostringstream oss;
         oss << "-- Cache stats for reader tid " << tid << " --\n";
         db_r->DumpPrefixCacheStats(oss);
-        if (pc_shared) {
-            db_r->DumpSharedPrefixCacheStats(oss);
-        }
         pthread_mutex_lock(&g_stats_mutex);
         g_reader_stats.push_back(oss.str());
         pthread_mutex_unlock(&g_stats_mutex);
@@ -804,9 +792,6 @@ static void ConcurrencyTest(int num, int n_r)
     if (db) {
         std::cout << "-- Cache stats after concurrency --\n";
         db->DumpPrefixCacheStats(std::cout);
-        if (pc_shared) {
-            db->DumpSharedPrefixCacheStats(std::cout);
-        }
     }
     // Print buffered per-reader cache stats
     pthread_mutex_lock(&g_stats_mutex);
@@ -920,12 +905,8 @@ int main(int argc, char* argv[])
     if (pc_disable) {
         std::cout << "===== Prefix cache disabled\n";
     } else if (pc_cap > 0) {
-        if (pc_shared) {
-            std::cout << "===== Shared Prefix cache cap=" << pc_cap
-                      << ", assoc=" << pc_assoc << "\n";
-        } else {
-            std::cout << "===== Prefix cache cap=" << pc_cap << "\n";
-        }
+        std::cout << "===== Shared Prefix cache cap=" << pc_cap
+                  << ", assoc=" << pc_assoc << "\n";
     }
 #endif
 

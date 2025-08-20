@@ -299,42 +299,41 @@ namespace detail {
     int SearchEngine::findInternal(size_t root_off, const uint8_t* key, int len, MBData& data)
     {
         EdgePtrs& edge_ptrs = data.edge_ptrs;
-        int rval;
         const uint8_t* key_cursor = key;
-        int orig_len = len;
+        const int orig_len = len;
         int consumed = 0;
-        const uint8_t* key_buff;
-        bool use_cache = !(dict.reader_rc_off != 0 && root_off == dict.reader_rc_off);
-        bool used_cache = use_cache ? seedFromCache(key, len, edge_ptrs, data, key_cursor, len, consumed) : false;
+
+        // Use cache unless we're on the RC root (where structure may differ)
+        const bool use_cache = !(dict.reader_rc_off != 0 && root_off == dict.reader_rc_off);
+        const bool used_cache = use_cache && seedFromCache(key, len, edge_ptrs, data, key_cursor, len, consumed);
 
         if (!used_cache) {
 #ifdef __LOCK_FREE__
             ReaderLFGuard lf_guard(dict.lfree, data);
 #endif
-        rval = dict.mm.GetRootEdge(root_off, key[0], edge_ptrs);
-        if (rval != MBError::SUCCESS) {
-            return MBError::READ_ERROR;
-        }
-        if (edge_ptrs.len_ptr[0] == 0) {
+            // Load root edge for this key's first byte
+            int r = dict.mm.GetRootEdge(root_off, key[0], edge_ptrs);
+            if (r != MBError::SUCCESS) return MBError::READ_ERROR;
+            if (edge_ptrs.len_ptr[0] == 0) {
 #ifdef __LOCK_FREE__
                 {
                     int _r = lf_guard.stop(edge_ptrs.offset);
-                    if (_r != MBError::SUCCESS)
-                        return _r;
+                    if (_r != MBError::SUCCESS) return _r;
                 }
 #endif
                 return MBError::NOT_EXIST;
             }
 
-            int edge_len = edge_ptrs.len_ptr[0];
-            int edge_len_m1 = edge_len - 1;
-            rval = MBError::NOT_EXIST;
-            if ((rval = loadEdgeKey(edge_ptrs, data, key_buff, edge_len_m1)) != MBError::SUCCESS) {
+            // Compare the remainder of the root edge label
+            const int edge_len = edge_ptrs.len_ptr[0];
+            const int edge_len_m1 = edge_len - 1;
+            const uint8_t* key_buff;
+            r = loadEdgeKey(edge_ptrs, data, key_buff, edge_len_m1);
+            if (r != MBError::SUCCESS) {
 #ifdef __LOCK_FREE__
                 {
                     int _r = lf_guard.stop(edge_ptrs.offset);
-                    if (_r != MBError::SUCCESS)
-                        return _r;
+                    if (_r != MBError::SUCCESS) return _r;
                 }
 #endif
                 return MBError::READ_ERROR;
@@ -345,36 +344,32 @@ namespace detail {
 #ifdef __LOCK_FREE__
                     {
                         int _r = lf_guard.stop(edge_ptrs.offset);
-                        if (_r != MBError::SUCCESS)
-                            return _r;
+                        if (_r != MBError::SUCCESS) return _r;
                     }
 #endif
                     return MBError::NOT_EXIST;
                 }
+                // Advance past the root edge
                 key_cursor += edge_len;
                 consumed += edge_len;
                 len -= edge_len;
-                if (len <= 0)
-                    return resolveMatchOrInDict(data, edge_ptrs, true);
+                if (len <= 0) return resolveMatchOrInDict(data, edge_ptrs, true);
                 if (isLeaf(edge_ptrs)) {
 #ifdef __LOCK_FREE__
                     {
                         int _r = lf_guard.stop(edge_ptrs.offset);
-                        if (_r != MBError::SUCCESS)
-                            return _r;
+                        if (_r != MBError::SUCCESS) return _r;
                     }
 #endif
                     return MBError::NOT_EXIST;
                 }
-                maybePutCache(key, orig_len, consumed, edge_ptrs);
             } else if (edge_len == len) {
                 if (remainderMatches(key_buff, key_cursor, edge_len_m1))
                     return resolveMatchOrInDict(data, edge_ptrs, true);
 #ifdef __LOCK_FREE__
                 {
                     int _r = lf_guard.stop(edge_ptrs.offset);
-                    if (_r != MBError::SUCCESS)
-                        return _r;
+                    if (_r != MBError::SUCCESS) return _r;
                 }
 #endif
                 return MBError::NOT_EXIST;
@@ -382,8 +377,7 @@ namespace detail {
 #ifdef __LOCK_FREE__
                 {
                     int _r = lf_guard.stop(edge_ptrs.offset);
-                    if (_r != MBError::SUCCESS)
-                        return _r;
+                    if (_r != MBError::SUCCESS) return _r;
                 }
 #endif
                 return MBError::NOT_EXIST;
@@ -392,116 +386,16 @@ namespace detail {
 #ifdef __LOCK_FREE__
             {
                 int _r = lf_guard.stop(edge_ptrs.offset);
-                if (_r != MBError::SUCCESS)
-                    return _r;
+                if (_r != MBError::SUCCESS) return _r;
             }
 #endif
         }
 
-        if (used_cache) {
-            if (len <= 0) {
-                // Do not write when we already used the cache; avoid double-writes
-                return resolveMatchOrInDict(data, edge_ptrs, false);
-            }
-            if (isLeaf(edge_ptrs))
-                return MBError::NOT_EXIST;
-        }
-        int r = traverseFromEdge(key_cursor, len, consumed, key, orig_len, edge_ptrs, data);
-        if (used_cache && r == MBError::NOT_EXIST) {
-#ifdef __LOCK_FREE__
-            ReaderLFGuard lf_guard(dict.lfree, data);
-#endif
-            int rval_nc = dict.mm.GetRootEdge(root_off, key[0], edge_ptrs);
-            if (rval_nc != MBError::SUCCESS) {
-                return MBError::READ_ERROR;
-            }
-            if (edge_ptrs.len_ptr[0] == 0) {
-#ifdef __LOCK_FREE__
-                {
-                    int _r = lf_guard.stop(edge_ptrs.offset);
-                    if (_r != MBError::SUCCESS)
-                        return _r;
-                }
-#endif
-                return MBError::NOT_EXIST;
-            }
-            int edge_len = edge_ptrs.len_ptr[0];
-            int edge_len_m1 = edge_len - 1;
-            const uint8_t* key_buff_nc;
-            if ((rval_nc = loadEdgeKey(edge_ptrs, data, key_buff_nc, edge_len_m1)) != MBError::SUCCESS) {
-#ifdef __LOCK_FREE__
-                {
-                    int _r = lf_guard.stop(edge_ptrs.offset);
-                    if (_r != MBError::SUCCESS)
-                        return _r;
-                }
-#endif
-                return MBError::READ_ERROR;
-            }
-            const uint8_t* key_cursor_nc = key;
-            int len_nc = orig_len;
-            int consumed_nc = 0;
-            if (edge_len < len_nc) {
-                if (!remainderMatches(key_buff_nc, key_cursor_nc, edge_len_m1)) {
-#ifdef __LOCK_FREE__
-                    {
-                        int _r = lf_guard.stop(edge_ptrs.offset);
-                        if (_r != MBError::SUCCESS)
-                            return _r;
-                    }
-#endif
-                    return MBError::NOT_EXIST;
-                }
-                key_cursor_nc += edge_len;
-                consumed_nc += edge_len;
-                len_nc -= edge_len;
-                if (len_nc <= 0)
-                    return resolveMatchOrInDict(data, edge_ptrs, true);
-                if (isLeaf(edge_ptrs)) {
-#ifdef __LOCK_FREE__
-                    {
-                        int _r = lf_guard.stop(edge_ptrs.offset);
-                        if (_r != MBError::SUCCESS)
-                            return _r;
-                    }
-#endif
-                    return MBError::NOT_EXIST;
-                }
-                maybePutCache(key, orig_len, consumed_nc, edge_ptrs);
-            } else if (edge_len == len_nc) {
-                if (remainderMatches(key_buff_nc, key_cursor_nc, edge_len_m1))
-                    return resolveMatchOrInDict(data, edge_ptrs, true);
-#ifdef __LOCK_FREE__
-                {
-                    int _r = lf_guard.stop(edge_ptrs.offset);
-                    if (_r != MBError::SUCCESS)
-                        return _r;
-                }
-#endif
-                return MBError::NOT_EXIST;
-            } else {
-#ifdef __LOCK_FREE__
-                {
-                    int _r = lf_guard.stop(edge_ptrs.offset);
-                    if (_r != MBError::SUCCESS)
-                        return _r;
-                }
-#endif
-                return MBError::NOT_EXIST;
-            }
-#ifdef __LOCK_FREE__
-            {
-                int _r = lf_guard.stop(edge_ptrs.offset);
-                if (_r != MBError::SUCCESS)
-                    return _r;
-            }
-#endif
-            return traverseFromEdge(key_cursor_nc, len_nc, consumed_nc, key, orig_len, edge_ptrs, data);
-        }
-        return r;
+        // Continue traversal from the current edge/state
+        return traverseFromEdge(key_cursor, len, consumed, key, orig_len, edge_ptrs, data);
     }
 
-int SearchEngine::traverseFromEdge(const uint8_t*& key_cursor, int& len, int& consumed,
+    int SearchEngine::traverseFromEdge(const uint8_t*& key_cursor, int& len, int& consumed,
         const uint8_t* full_key, int full_len, EdgePtrs& edge_ptrs, MBData& data)
     {
         const uint8_t* key_buff;
@@ -541,28 +435,24 @@ int SearchEngine::traverseFromEdge(const uint8_t*& key_cursor, int& len, int& co
             rval = compareCurrEdgeTail(edge_ptrs, data, key_cursor, key_buff, edge_len, edge_len_m1);
             if (rval == MBError::READ_ERROR)
                 break;
-            if (rval == MBError::NOT_EXIST) {
-                rval = MBError::NOT_EXIST;
+            if (rval == MBError::NOT_EXIST)
                 break;
-            }
 
             len -= edge_len;
             if (len <= 0) {
-                // Seed canonical depths for 2/3-byte prefixes on final match
-                maybePutCache(full_key, full_len, consumed + edge_len, edge_ptrs);
+                // No seeding during Find; shared cache is populated at Add-time
                 rval = resolveMatchOrInDict(data, edge_ptrs, false);
                 break;
             }
             if (isLeaf(edge_ptrs)) {
-                // Reached data edge; seed canonical depths prior to read path
-                maybePutCache(full_key, full_len, consumed + edge_len, edge_ptrs);
+                // No seeding during Find; shared cache is populated at Add-time
                 rval = MBError::NOT_EXIST;
                 break;
             }
 
             key_cursor += edge_len;
             consumed += edge_len;
-            maybePutCache(full_key, full_len, consumed, edge_ptrs);
+            // No seeding during Find; shared cache is populated at Add-time
 #ifdef __LOCK_FREE__
             edge_offset_prev = edge_ptrs.offset;
 #else

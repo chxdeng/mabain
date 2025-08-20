@@ -71,8 +71,6 @@ namespace detail {
         // Root-edge accessor (reads directly from DictMem)
         inline bool seedFromCache(const uint8_t* key, int len, EdgePtrs& edge_ptrs,
             MBData& data, const uint8_t*& key_cursor, int& len_remaining, int& consumed) const;
-        inline void maybePutCache(const uint8_t* full_key, int full_len, int consumed,
-            const EdgePtrs& edge_ptrs, bool from_add = false) const;
         // declared once above
 
         // Lower-bound internals
@@ -198,12 +196,7 @@ namespace detail {
         return true;
     }
 
-    inline void SearchEngine::maybePutCache(const uint8_t* full_key, int full_len, int consumed,
-        const EdgePtrs& edge_ptrs, bool from_add) const
-    {
-        (void)from_add;
-        dict.MaybePutCache(full_key, full_len, consumed, edge_ptrs, false);
-    }
+    
 
 }
 } // namespace mabain::detail
