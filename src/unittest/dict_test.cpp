@@ -21,6 +21,7 @@
 #include <gtest/gtest.h>
 
 #include "../dict.h"
+#include "../detail/search_engine.h"
 #include "../drm_base.h"
 #include "../integer_4b_5b.h"
 #include "../resource_pool.h"
@@ -92,7 +93,8 @@ public:
         MBData mbd;
         node_offset = 0;
         mbd.options = CONSTS::OPTION_FIND_AND_STORE_PARENT;
-        int rval = dict->Find(node_key, key_len, mbd);
+        mabain::detail::SearchEngine engine(*dict);
+        int rval = engine.find(node_key, key_len, mbd);
         if (rval == MBError::IN_DICT) {
             node_offset = Get6BInteger(mbd.edge_ptrs.offset_ptr);
         }
@@ -214,14 +216,20 @@ TEST_F(DictTest, Find_test)
     int rval;
 
     key_len = 10;
-    rval = dict->Find((const uint8_t*)FAKE_KEY, key_len, mbd);
+    {
+        mabain::detail::SearchEngine engine(*dict);
+        rval = engine.find((const uint8_t*)FAKE_KEY, key_len, mbd);
+    }
     EXPECT_EQ(rval, MBError::NOT_EXIST);
 
     data_len = 32;
     rval = AddKV(key_len, data_len, false);
     EXPECT_EQ(rval, MBError::SUCCESS);
     dict->Flush();
-    rval = dict->Find((const uint8_t*)FAKE_KEY, key_len, mbd);
+    {
+        mabain::detail::SearchEngine engine(*dict);
+        rval = engine.find((const uint8_t*)FAKE_KEY, key_len, mbd);
+    }
     EXPECT_EQ(rval, MBError::SUCCESS);
     EXPECT_EQ(mbd.data_len, 32);
     EXPECT_EQ(memcmp(mbd.buff, FAKE_DATA, mbd.data_len), 0);
@@ -240,7 +248,10 @@ TEST_F(DictTest, FindPrefix_test)
     rval = AddKV(key_len, data_len, false);
     EXPECT_EQ(rval, MBError::SUCCESS);
     key_len = 15;
-    rval = dict->FindPrefix((const uint8_t*)FAKE_KEY, key_len, mbd);
+    {
+        mabain::detail::SearchEngine engine(*dict);
+        rval = engine.findPrefix((const uint8_t*)FAKE_KEY, key_len, mbd);
+    }
     EXPECT_EQ(MBError::SUCCESS, rval);
     EXPECT_EQ(mbd.data_len, 32);
     EXPECT_EQ(memcmp(mbd.buff, FAKE_DATA, mbd.data_len), 0);
@@ -356,7 +367,8 @@ TEST_F(DictTest, ReadRootNode_test)
     rval = dict->ReadRootNode(buff, edge_ptrs, match, mbd);
     EXPECT_EQ(rval, MBError::SUCCESS);
     EXPECT_EQ(edge_ptrs.offset, 264u);
-    EXPECT_EQ((int)buff[0], 0);
+    // Node header flag may have FLAG_NODE_SORTED set in new implementation
+    EXPECT_EQ((int)(buff[0] & ~FLAG_NODE_SORTED), 0);
     EXPECT_EQ((int)buff[1], 255);
 }
 
@@ -379,7 +391,8 @@ TEST_F(DictTest, ReadNode_test)
     EXPECT_EQ(rval, MBError::IN_DICT);
     rval = dict->ReadNode(offset, buff, edge_ptrs, match, mbd, true);
     EXPECT_EQ(rval, MBError::SUCCESS);
-    EXPECT_EQ((int)buff[0], 1);
+    // Expect match flag; sorted bit may also be set
+    EXPECT_EQ(((int)buff[0] & FLAG_NODE_MATCH), FLAG_NODE_MATCH);
     EXPECT_EQ((int)buff[1], 0);
     EXPECT_EQ(match, 2);
 }

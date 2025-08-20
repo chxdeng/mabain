@@ -308,6 +308,7 @@ namespace detail {
         const bool use_cache = !(dict.reader_rc_off != 0 && root_off == dict.reader_rc_off)
                                && !(data.options & CONSTS::OPTION_FIND_AND_STORE_PARENT);
         const bool used_cache = use_cache && seedFromCache(key, len, edge_ptrs, data, key_cursor, len, consumed);
+        bool need_root_probe = !used_cache;
 
         // If we seeded from cache, mirror the root-edge fast-path logic:
         // - If we've consumed the entire key, resolve immediately from this edge.
@@ -326,26 +327,47 @@ namespace detail {
                 return MBError::READ_ERROR;
 
             if (edge_len < len) {
-                if (!remainderMatches(key_buff, key_cursor, edge_len_m1))
-                    return MBError::NOT_EXIST;
-                key_cursor += edge_len;
-                consumed += edge_len;
-                len -= edge_len;
-                if (len <= 0)
-                    return resolveMatchOrInDict(data, edge_ptrs, false);
-                if (isLeaf(edge_ptrs))
-                    return MBError::NOT_EXIST;
-                // proceed to traverse from this edge
+                if (!remainderMatches(key_buff, key_cursor, edge_len_m1)) {
+                    // Cached path diverged; fall back to root without cache
+                    need_root_probe = true;
+                    key_cursor = key;
+                    len = orig_len;
+                    consumed = 0;
+                    // proceed to root probe
+                } else {
+                    key_cursor += edge_len;
+                    consumed += edge_len;
+                    len -= edge_len;
+                    if (len <= 0)
+                        return resolveMatchOrInDict(data, edge_ptrs, false);
+                    if (isLeaf(edge_ptrs)) {
+                        // leaf cannot have children; miss -> fallback
+                        need_root_probe = true;
+                        key_cursor = key;
+                        len = orig_len;
+                        consumed = 0;
+                    }
+                    // otherwise proceed to traverse from this edge below if no fallback
+                }
             } else if (edge_len == len) {
-                if (remainderMatches(key_buff, key_cursor, edge_len_m1))
+                if (remainderMatches(key_buff, key_cursor, edge_len_m1)) {
                     return resolveMatchOrInDict(data, edge_ptrs, false);
-                return MBError::NOT_EXIST;
+                }
+                // mismatch at exact length -> fallback
+                need_root_probe = true;
+                key_cursor = key;
+                len = orig_len;
+                consumed = 0;
             } else {
-                return MBError::NOT_EXIST; // key shorter than edge
+                // key shorter than cached edge -> fallback
+                need_root_probe = true;
+                key_cursor = key;
+                len = orig_len;
+                consumed = 0;
             }
         }
 
-        if (!used_cache) {
+        if (need_root_probe) {
 #ifdef __LOCK_FREE__
             ReaderLFGuard lf_guard(dict.lfree, data);
 #endif
