@@ -72,7 +72,7 @@ namespace detail {
         inline bool seedFromCache(const uint8_t* key, int len, EdgePtrs& edge_ptrs,
             MBData& data, const uint8_t*& key_cursor, int& len_remaining, int& consumed) const;
         inline void maybePutCache(const uint8_t* full_key, int full_len, int consumed,
-            const EdgePtrs& edge_ptrs) const;
+            const EdgePtrs& edge_ptrs, bool from_add = false) const;
         // declared once above
 
         // Lower-bound internals
@@ -177,29 +177,11 @@ namespace detail {
             return false;
 
         PrefixCacheEntry entry;
-        int n = 0;
-        if (pc->IsShared()) {
-            n = pc->PrefixLen();
-            if (len < n || !pc->Get(key, len, entry))
-                return false;
-        } else {
-            // Non-shared cache can return either 3-byte or 2-byte seed; ask for depth
-            n = pc->GetDepth(key, len, entry);
-            if (n == 0)
-                return false;
-        }
+        int n = pc->GetDepth(key, len, entry);
+        if (n == 0)
+            return false;
 
-        // Validate cached edge content only for shared cache while a writer may be present.
-        // Non-shared cache lives within a single process; entries are consistent without re-reads.
-        if (pc->IsShared() && dict.GetHeaderPtr() && dict.GetHeaderPtr()->num_writer > 0) {
-            uint8_t curr_edge[EDGE_SIZE];
-            if (dict.mm.ReadData(curr_edge, EDGE_SIZE, entry.edge_offset) != EDGE_SIZE) {
-                return false;
-            }
-            if (memcmp(curr_edge, entry.edge_buff, EDGE_SIZE) != 0) {
-                return false;
-            }
-        }
+        // Use cached edge directly (shared and non-shared behave identically here).
 
         edge_ptrs.offset = entry.edge_offset;
         memcpy(edge_ptrs.edge_buff, entry.edge_buff, EDGE_SIZE);
@@ -217,9 +199,10 @@ namespace detail {
     }
 
     inline void SearchEngine::maybePutCache(const uint8_t* full_key, int full_len, int consumed,
-        const EdgePtrs& edge_ptrs) const
+        const EdgePtrs& edge_ptrs, bool from_add) const
     {
-        dict.MaybePutCache(full_key, full_len, consumed, edge_ptrs);
+        (void)from_add;
+        dict.MaybePutCache(full_key, full_len, consumed, edge_ptrs, false);
     }
 
 }

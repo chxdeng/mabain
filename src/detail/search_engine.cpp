@@ -7,7 +7,6 @@
 #include "detail/lf_guard.h"
 #include "dict.h"
 #include "util/prefix_cache.h"
-#include "util/prefix_cache_shared.h"
 #include <time.h>
 
 namespace mabain {
@@ -401,8 +400,7 @@ namespace detail {
 
         if (used_cache) {
             if (len <= 0) {
-                // Seed canonical depths on match after a cache seed
-                maybePutCache(key, orig_len, consumed, edge_ptrs);
+                // Do not write when we already used the cache; avoid double-writes
                 return resolveMatchOrInDict(data, edge_ptrs, false);
             }
             if (isLeaf(edge_ptrs))
@@ -503,7 +501,7 @@ namespace detail {
         return r;
     }
 
-    int SearchEngine::traverseFromEdge(const uint8_t*& key_cursor, int& len, int& consumed,
+int SearchEngine::traverseFromEdge(const uint8_t*& key_cursor, int& len, int& consumed,
         const uint8_t* full_key, int full_len, EdgePtrs& edge_ptrs, MBData& data)
     {
         const uint8_t* key_buff;

@@ -29,7 +29,6 @@
 #include "integer_4b_5b.h"
 #include "mabain_consts.h"
 #include "util/prefix_cache.h"
-#include "util/prefix_cache_shared.h"
 
 #define DATA_HEADER_SIZE 32
 
@@ -202,7 +201,6 @@ int Dict::Add(const uint8_t* key, int len, MBData& data, bool overwrite)
             header->count++;
             header->num_update++;
         }
-
         return MBError::SUCCESS;
     }
 
@@ -230,15 +228,13 @@ int Dict::Add(const uint8_t* key, int len, MBData& data, bool overwrite)
             bool next;
             key_cursor += edge_len;
             len -= edge_len;
-            // Writer populates shared prefix cache at boundary if configured
-            MaybePutCache(key, orig_len, orig_len - len, edge_ptrs);
+            
             while ((next = mm.FindNext(key_cursor, len, match_len, edge_ptrs, tmp_key_buff))) {
                 if (match_len < edge_ptrs.len_ptr[0])
                     break;
 
                 key_cursor += match_len;
                 len -= match_len;
-                MaybePutCache(key, orig_len, orig_len - len, edge_ptrs);
                 if (len <= 0)
                     break;
             }
@@ -288,7 +284,109 @@ int Dict::Add(const uint8_t* key, int len, MBData& data, bool overwrite)
         if (inc_count)
             header->count++;
     }
+    if (rval == MBError::SUCCESS && prefix_cache) {
+        SeedCanonicalBoundariesAfterAdd(key, orig_len, /*from_add=*/true);
+    }
     return rval;
+}
+
+void Dict::SeedCanonicalBoundariesAfterAdd(const uint8_t* key, int len, bool from_add) const
+{
+    if (!prefix_cache) return;
+    if (len < 2) return;
+
+    EdgePtrs edge_ptrs;
+    int rval = mm.GetRootEdge(0, key[0], edge_ptrs);
+    if (rval != MBError::SUCCESS) return;
+    if (edge_ptrs.len_ptr[0] == 0) return;
+
+    const uint8_t* key_cursor = key;
+    int remain = len;
+    int consumed = 0;
+    uint8_t tmp_key_buff[NUM_ALPHABET];
+
+    // Step 1: handle root edge like findInternal
+    int edge_len = edge_ptrs.len_ptr[0];
+    int edge_len_m1 = edge_len - 1;
+    const uint8_t* key_buff;
+    // load edge tail
+    if (edge_len_m1 > 0) {
+        if (edge_len_m1 > LOCAL_EDGE_LEN_M1) {
+            size_t off = Get5BInteger(edge_ptrs.ptr);
+            if (mm.ReadData(tmp_key_buff, edge_len_m1, off) != edge_len_m1) return;
+            key_buff = tmp_key_buff;
+        } else {
+            key_buff = edge_ptrs.ptr;
+        }
+    } else {
+        key_buff = nullptr;
+    }
+
+    if (edge_len < remain) {
+        if (edge_len_m1 <= 0 || memcmp(key_buff, key_cursor + 1, edge_len_m1) == 0) {
+            key_cursor += edge_len;
+            consumed += edge_len;
+            remain -= edge_len;
+            if (remain <= 0) {
+                // final match at root
+                MaybePutCache(key, len, consumed, edge_ptrs, from_add);
+                return;
+            }
+            if (edge_ptrs.flag_ptr[0] & EDGE_FLAG_DATA_OFF) return; // leaf
+            // mirror find: seed at this consumed depth
+            MaybePutCache(key, len, consumed, edge_ptrs, from_add);
+        } else {
+            return;
+        }
+    } else if (edge_len == remain) {
+        if (edge_len_m1 <= 0 || memcmp(key_buff, key_cursor + 1, edge_len_m1) == 0) {
+            // mirror find: seed at final depth (consumed + edge_len)
+            MaybePutCache(key, len, consumed + edge_len, edge_ptrs, from_add);
+        }
+        return;
+    } else {
+        return; // key shorter than edge
+    }
+
+    // Step 2: traverse like traverseFromEdge()
+    MBData seed_mbd; // local scratch; options=0 (no special flags)
+    seed_mbd.options = 0;
+    while (true) {
+        rval = mm.NextEdge(key_cursor, edge_ptrs, seed_mbd.node_buff, seed_mbd);
+        if (rval != MBError::SUCCESS)
+            break;
+        edge_len = edge_ptrs.len_ptr[0];
+        edge_len_m1 = edge_len - 1;
+        // load edge key tail
+        if (edge_len_m1 > 0) {
+            if (edge_len_m1 > LOCAL_EDGE_LEN_M1) {
+                size_t off = Get5BInteger(edge_ptrs.ptr);
+                if (mm.ReadData(tmp_key_buff, edge_len_m1, off) != edge_len_m1) break;
+                key_buff = tmp_key_buff;
+            } else {
+                key_buff = edge_ptrs.ptr;
+            }
+        } else {
+            key_buff = nullptr;
+        }
+        // compare tail
+        if (edge_len_m1 > 0 && memcmp(key_buff, key_cursor + 1, edge_len_m1) != 0) {
+            break;
+        }
+        // advance
+        remain -= edge_len;
+        if (remain <= 0) {
+            MaybePutCache(key, len, consumed + edge_len, edge_ptrs, from_add);
+            break;
+        }
+        if (edge_ptrs.flag_ptr[0] & EDGE_FLAG_DATA_OFF) {
+            MaybePutCache(key, len, consumed + edge_len, edge_ptrs, from_add);
+            break;
+        }
+        key_cursor += edge_len;
+        consumed += edge_len;
+        MaybePutCache(key, len, consumed, edge_ptrs, from_add);
+    }
 }
 
 int Dict::ReadDataFromEdge(MBData& data, const EdgePtrs& edge_ptrs) const
@@ -616,13 +714,6 @@ int Dict::Remove(const uint8_t* key, int len, MBData& data)
         rval = engine.find(key, len, data);
     }
     if (rval == MBError::IN_DICT) {
-        // Invalidate shared prefix cache entry for this key's prefix and edge
-        if (prefix_cache_shared) {
-            // Invalidate any cached entry for this key's prefix; the precise
-            // (prefix, edge) pair may no longer exist after structural changes,
-            // so clear by-prefix to avoid stale seeds.
-            prefix_cache_shared->InvalidateByPrefix(key, len);
-        }
         rval = DeleteDataFromEdge(data, data.edge_ptrs);
         while (rval == MBError::TRY_AGAIN) {
             data.Clear();
@@ -635,9 +726,6 @@ int Dict::Remove(const uint8_t* key, int len, MBData& data)
                 rval = engine.find(key, len, data);
             }
             if (MBError::IN_DICT == rval) {
-                if (prefix_cache_shared) {
-                    prefix_cache_shared->InvalidateByPrefix(key, len);
-                }
                 rval = mm.RemoveEdgeByIndex(data.edge_ptrs, data);
             }
         }
@@ -972,11 +1060,9 @@ void Dict::EnablePrefixCache(int n, size_t capacity)
 {
     if (capacity == 0)
         return;
-    // Ensure only one cache mode is active at a time
-    if (prefix_cache_shared)
-        prefix_cache_shared.reset();
-    // New non-shared prefix cache uses 2- and 3-byte tables; ignore n
-    prefix_cache = std::unique_ptr<PrefixCache>(new PrefixCache(capacity));
+    // New unified prefix cache; ignore n (always supports 2- and 3-byte)
+    bool writer_mode = (options & CONSTS::ACCESS_MODE_WRITER);
+    prefix_cache = std::unique_ptr<PrefixCache>(new PrefixCache(mbdir_, /*use_shared_mem=*/false, writer_mode, capacity));
 }
 
 void Dict::DisablePrefixCache()
@@ -988,68 +1074,59 @@ void Dict::EnableSharedPrefixCache(int n, size_t capacity, uint32_t assoc)
 {
     if (n <= 0)
         return;
-    // Ensure only one cache mode is active at a time
-    if (prefix_cache)
-        prefix_cache.reset();
-    // Create or open shared cache depending on access mode
-    if (options & CONSTS::ACCESS_MODE_WRITER) {
-        // Ensure cache file is fresh to avoid stale entries between runs
-        std::string shm_path = PrefixCacheShared::ShmPath(mbdir_);
-        ::unlink(shm_path.c_str());
-        prefix_cache_shared.reset(PrefixCacheShared::CreateWriter(mbdir_, n, capacity, assoc));
-    } else {
-        // Try open existing; if not present or mismatch, create exclusively; otherwise re-open.
-        std::unique_ptr<PrefixCacheShared> pcs(PrefixCacheShared::OpenReader(mbdir_));
-        if (!pcs || pcs->PrefixLen() != n) {
-            pcs.reset(PrefixCacheShared::CreateWriter(mbdir_, n, capacity, assoc));
-            if (!pcs) {
-                // Another thread/process likely created it; try open again
-                pcs.reset(PrefixCacheShared::OpenReader(mbdir_));
-            }
-        }
-        prefix_cache_shared = std::move(pcs);
-    }
+    bool writer_mode = (options & CONSTS::ACCESS_MODE_WRITER);
+    // Unified cache with shared-memory backing
+    prefix_cache = std::unique_ptr<PrefixCache>(new PrefixCache(mbdir_, /*use_shared_mem=*/true, writer_mode, capacity));
 }
 
-void Dict::DisableSharedPrefixCache()
-{
-    prefix_cache_shared.reset();
-}
+void Dict::DisableSharedPrefixCache() { /* unified with DisablePrefixCache */ }
 
 void Dict::SetPrefixCacheReadOnly(bool ro)
 {
     local_pc_readonly = ro;
-    if (prefix_cache) {
-        // Enable fast path (no tag checks) when cache is warmed and read-only
+    if (prefix_cache && !prefix_cache->IsShared()) {
+        // Non-shared only: allow fast path (skip tag match) when read-only
         prefix_cache->SetFastNoTagCheck(ro);
     }
 }
 
-void Dict::MaybePutCache(const uint8_t* full_key, int full_len, int consumed,
-    const EdgePtrs& edge_ptrs) const
+void Dict::SetSharedPrefixCacheReadOnly(bool ro)
 {
-    // Only update the active cache
-    // Shared cache is writer-managed only to minimize reader overhead
-    if (prefix_cache_shared && (options & CONSTS::ACCESS_MODE_WRITER)) {
-        if (consumed == prefix_cache_shared->PrefixLen()) {
-            PrefixCacheEntry e { edge_ptrs.offset, { 0 }, 0 };
-            memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
-            prefix_cache_shared->Put(full_key, full_len, e);
-        }
-    } else if (prefix_cache) {
+    // Do not change tag-check semantics for shared cache; readers are already read-only.
+    // Keep this method to satisfy DB API and benchmarking harness.
+    (void)ro;
+}
+
+void Dict::MaybePutCache(const uint8_t* full_key, int full_len, int consumed,
+    const EdgePtrs& edge_ptrs, bool from_add) const
+{
+    if (prefix_cache) {
         if (local_pc_readonly) return; // skip writes when read-only
-        // Only seed at internal nodes and exact 2- or 3-byte boundaries.
         if (edge_ptrs.flag_ptr[0] & EDGE_FLAG_DATA_OFF) return; // don't seed leaves
+        // Unified: seed at canonical 2- and 3-byte boundaries for both
+        // shared and non-shared caches. Tag origin in lf_counter: 1=add, 2=read.
         if (consumed == 3) {
-            PrefixCacheEntry e { edge_ptrs.offset, { 0 }, 0 };
+            PrefixCacheEntry e { edge_ptrs.offset, { 0 }, static_cast<uint32_t>(from_add ? 1 : 2) };
             memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
             prefix_cache->Put(full_key, 3, e);
         } else if (consumed == 2) {
-            PrefixCacheEntry e2 { edge_ptrs.offset, { 0 }, 0 };
+            PrefixCacheEntry e2 { edge_ptrs.offset, { 0 }, static_cast<uint32_t>(from_add ? 1 : 2) };
             memcpy(e2.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
             prefix_cache->Put(full_key, 2, e2);
         }
     }
+}
+
+void Dict::PrintPrefixCacheOriginStats(std::ostream& os) const
+{
+    if (!prefix_cache) {
+        os << "PrefixCacheOrigin: enabled=0 add_entries=0 read_entries=0" << std::endl;
+        return;
+    }
+    size_t add_cnt = 0, read_cnt = 0;
+    prefix_cache->CountOrigin(add_cnt, read_cnt);
+    os << "PrefixCacheOrigin: enabled=1 add_entries=" << add_cnt
+       << " read_entries=" << read_cnt << std::endl;
 }
 
 void Dict::GetPrefixCacheStats(uint64_t& hit, uint64_t& miss, uint64_t& put,
@@ -1098,10 +1175,9 @@ void Dict::PrintPrefixCacheStats(std::ostream& os) const
     }
 }
 
-void Dict::PrintSharedPrefixCacheStats(std::ostream& os) const
-{
-    if (prefix_cache_shared) {
-        prefix_cache_shared->DumpStats(os);
+void Dict::PrintSharedPrefixCacheStats(std::ostream& os) const {
+    if (prefix_cache && prefix_cache->IsShared()) {
+        PrintPrefixCacheStats(os);
     } else {
         os << "PrefixCacheShared: disabled" << std::endl;
     }
@@ -1109,8 +1185,6 @@ void Dict::PrintSharedPrefixCacheStats(std::ostream& os) const
 
 PrefixCacheIface* Dict::ActivePrefixCache() const
 {
-    if (prefix_cache_shared)
-        return prefix_cache_shared.get();
     if (prefix_cache)
         return prefix_cache.get();
     return nullptr;

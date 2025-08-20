@@ -248,6 +248,10 @@ static void InitDB(bool writer_mode = true)
     } else if (pc_cap > 0) {
         if (pc_shared) {
             db->EnableSharedPrefixCache(3, static_cast<size_t>(pc_cap), pc_assoc);
+            if (!writer_mode) {
+                // Reader mode: mark shared cache read-only to enable fastest path
+                db->SetSharedPrefixCacheReadOnly(true);
+            }
         } else {
             db->EnablePrefixCache(3, static_cast<size_t>(pc_cap));
         }
@@ -364,33 +368,41 @@ static void Lookup(int n)
 #endif
 
 #ifdef MABAIN
-    // Optional warm-up to prefill prefix cache for accurate hit measurement
+    // Dump stats before lookup to inspect writer-populated cache state
+    std::cout << "-- Cache stats before lookup --\n";
+    db->DumpPrefixCacheStats(std::cout);
+#ifdef MABAIN
+    db->DumpPrefixCacheOriginStats(std::cout);
+#endif
+    // Prewarm only for non-shared cache. For shared cache, rely on add-time seeding.
     if (pc_cap > 0) {
-        mabain::MBData warm_mbd;
-        warm_mbd.options = mabain::CONSTS::OPTION_KEY_ONLY;
-        for (int i = 0; i < n; ++i) {
-            std::string warm_key;
-            if (key_type == 0) {
-                warm_key = std::to_string(i);
-            } else if (key_type == 1 || key_type == 2) {
-                if (key_type == 1) {
-                    get_sha1_str(i, kv);
+        if (!pc_shared) {
+            mabain::MBData warm_mbd;
+            warm_mbd.options = mabain::CONSTS::OPTION_KEY_ONLY;
+            for (int i = 0; i < n; ++i) {
+                std::string warm_key;
+                if (key_type == 0) {
+                    warm_key = std::to_string(i);
+                } else if (key_type == 1 || key_type == 2) {
+                    if (key_type == 1) get_sha1_str(i, kv); else get_sha256_str(i, kv);
+                    warm_key = kv;
                 } else {
-                    get_sha256_str(i, kv);
+                    uint32_t r = prand_u32(static_cast<uint64_t>(i));
+                    char le[4] = { (char)(r & 0xFF), (char)((r >> 8) & 0xFF), (char)((r >> 16) & 0xFF), (char)((r >> 24) & 0xFF) };
+                    warm_key.assign(le, 4);
                 }
-                warm_key = kv;
-            } else {
-                uint32_t r = prand_u32(static_cast<uint64_t>(i));
-                char le[4] = { static_cast<char>(r & 0xFF),
-                               static_cast<char>((r >> 8) & 0xFF),
-                               static_cast<char>((r >> 16) & 0xFF),
-                               static_cast<char>((r >> 24) & 0xFF) };
-                warm_key.assign(le, 4);
+                int _ = db->Find(warm_key, warm_mbd);
+                (void)_;
             }
-            int _ = db->Find(warm_key, warm_mbd);
-            (void)_;
+            // Print stats after warm and reset counters so the timed loop is clean
+            std::cout << "-- Cache stats after warm --\n";
+            db->DumpPrefixCacheStats(std::cout);
+            db->DumpPrefixCacheOriginStats(std::cout);
+            db->ResetPrefixCacheStats();
+        } else {
+            // Shared cache: skip warm; rely solely on add-time seeding
+            db->ResetPrefixCacheStats();
         }
-        db->ResetPrefixCacheStats();
     }
 #endif
     // Time each find call only (exclude key-building and loop overhead)
@@ -466,86 +478,12 @@ static void Lookup(int n)
 
     std::cout << "found " << nfound << " key-value pairs\n";
     std::cout << "===== " << timediff * 1.0 / n << " micro seconds per lookup\n";
-#ifdef MABAIN
-    // After Mabain test, run a similar lookup benchmark using std::unordered_map
-    // Build the map using the same keys/values used during Add()
-    std::unordered_map<std::string, std::string> u;
-    u.reserve(static_cast<size_t>(n * 1.3));
-    for (int i = 0; i < n; ++i) {
-        std::string k, v;
-        if (key_type == 0) {
-            k = std::to_string(i);
-            v = k;
-        } else if (key_type == 1 || key_type == 2) {
-            if (key_type == 1) {
-                get_sha1_str(i, kv);
-            } else {
-                get_sha256_str(i, kv);
-            }
-            k = kv;
-            v = kv;
-        } else { // u32 pseudo-random (binary 4 bytes, little-endian); match Add()
-            uint32_t r = prand_u32(static_cast<uint64_t>(i));
-            if (pc_cap > 0) r = r % static_cast<uint32_t>(pc_cap);
-            char le[4] = { static_cast<char>(r & 0xFF),
-                           static_cast<char>((r >> 8) & 0xFF),
-                           static_cast<char>((r >> 16) & 0xFF),
-                           static_cast<char>((r >> 24) & 0xFF) };
-            k.assign(le, 4);
-            v.assign(le, 4);
-        }
-        u.emplace(std::move(k), std::move(v));
-    }
-
-    // Lookup benchmark for unordered_map
-    int um_found = 0;
-    uint64_t um_total_ns = 0;
-    size_t um_checksum = 0; // validate that we actually touch values
-    for (int i = 0; i < n; ++i) {
-        std::string k;
-        if (key_type == 0) {
-            k = std::to_string(i);
-        } else if (key_type == 1 || key_type == 2) {
-            if (key_type == 1) {
-                get_sha1_str(i, kv);
-            } else {
-                get_sha256_str(i, kv);
-            }
-            k = kv;
-        } else { // u32 pseudo-random (binary 4 bytes, little-endian); match Add()
-            uint32_t r = prand_u32(static_cast<uint64_t>(i));
-            char le[4] = { static_cast<char>(r & 0xFF),
-                           static_cast<char>((r >> 8) & 0xFF),
-                           static_cast<char>((r >> 16) & 0xFF),
-                           static_cast<char>((r >> 24) & 0xFF) };
-            k.assign(le, 4);
-        }
-        struct timespec ts1, ts2;
-        clock_gettime(CLOCK_MONOTONIC_RAW, &ts1);
-        auto it = u.find(k);
-        // Validate by touching the value to prevent optimization
-        if (it != u.end()) {
-            um_found++;
-            // simple validation that value matches key used when building map
-            if (it->second == k) {
-                um_checksum += it->second.size();
-            }
-        }
-        clock_gettime(CLOCK_MONOTONIC_RAW, &ts2);
-        uint64_t delta_ns = (uint64_t)(ts2.tv_sec - ts1.tv_sec) * 1000000000ULL + (uint64_t)(ts2.tv_nsec - ts1.tv_nsec);
-        um_total_ns += delta_ns;
-    }
-    std::cout << "found (unordered_map) " << um_found << " key-value pairs\n";
-    std::cout << "checksum (unordered_map) " << um_checksum << "\n";
-    std::cout << "===== " << (um_total_ns / 1000.0) / n << " micro seconds per lookup (unordered_map)\n";
-#endif
+// (unordered_map) test removed per request
 #ifdef MABAIN
     if (db) {
         std::cout << "-- Cache stats after lookup --\n";
         db->DumpPrefixCacheStats(std::cout);
-        if (pc_shared) {
-            db->DumpSharedPrefixCacheStats(std::cout);
-        }
+        db->DumpPrefixCacheOriginStats(std::cout);
     }
 #endif
 }

@@ -39,7 +39,6 @@ namespace detail {
     class SearchEngine;
 }
 class PrefixCache;
-class PrefixCacheShared;
 }
 
 namespace mabain {
@@ -133,13 +132,15 @@ public:
     void ResetPrefixCacheStats();
     void PrintPrefixCacheStats(std::ostream& os) const;
 
-    // Shared prefix cache (multi-process, writer-managed updates)
+    // Shared prefix cache toggled via unified cache (backed by shared memory)
     void EnableSharedPrefixCache(int n, size_t capacity = 65536, uint32_t assoc = 4);
     void DisableSharedPrefixCache();
-    bool SharedPrefixCacheEnabled() const { return static_cast<bool>(prefix_cache_shared); }
+    bool SharedPrefixCacheEnabled() const;
     void PrintSharedPrefixCacheStats(std::ostream& os) const;
+    // Debug: print breakdown of cache entry origins (add-time vs read-time)
+    void PrintPrefixCacheOriginStats(std::ostream& os) const;
     PrefixCacheIface* ActivePrefixCache() const;
-    void SetSharedPrefixCacheReadOnly(bool ro) { shared_pc_readonly = ro; }
+    void SetSharedPrefixCacheReadOnly(bool ro);
     void SetPrefixCacheReadOnly(bool ro);
 
 private:
@@ -179,14 +180,18 @@ private:
 
     // Optional lookup accelerators for Find
     std::unique_ptr<PrefixCache> prefix_cache;
-    std::unique_ptr<PrefixCacheShared> prefix_cache_shared;
     std::string mbdir_;
     bool local_pc_readonly = false;
     bool shared_pc_readonly = false;
 
     // Prefix-cache helpers (no side effects when cache disabled)
     void MaybePutCache(const uint8_t* full_key, int full_len, int consumed,
-        const EdgePtrs& edge_ptrs) const;
+        const EdgePtrs& edge_ptrs, bool from_add = false) const;
+
+    // After a successful Add, seed cache at canonical 2/3-byte boundaries
+    // using the final structure (mirrors reader warm). Applies to shared and
+    // non-shared caches and detects boundary crossings within long edges.
+    void SeedCanonicalBoundariesAfterAdd(const uint8_t* key, int len, bool from_add = true) const;
 };
 
 }

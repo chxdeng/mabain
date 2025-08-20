@@ -797,6 +797,12 @@ void DB::DumpSharedPrefixCacheStats(std::ostream& os) const
         dict->PrintSharedPrefixCacheStats(os);
 }
 
+void DB::DumpPrefixCacheOriginStats(std::ostream& os) const
+{
+    if (dict)
+        dict->PrintPrefixCacheOriginStats(os);
+}
+
 void DB::SetSharedPrefixCacheReadOnly(bool ro)
 {
     if (dict)
