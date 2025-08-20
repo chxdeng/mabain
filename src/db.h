@@ -221,7 +221,7 @@ public:
     void ResetPrefixCacheStats() const;
 
     // Shared prefix cache control
-    void EnableSharedPrefixCache(int n, size_t capacity = 65536, uint32_t assoc = 4);
+    void EnableSharedPrefixCache(size_t capacity = 65536);
     void SetSharedPrefixCacheReadOnly(bool ro);
 
 private:

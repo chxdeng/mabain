@@ -1075,10 +1075,8 @@ void Dict::DisablePrefixCache()
     // No-op for non-shared path removal; shared cache uses DisableSharedPrefixCache.
 }
 
-void Dict::EnableSharedPrefixCache(int n, size_t capacity, uint32_t assoc)
+void Dict::EnableSharedPrefixCache(size_t capacity)
 {
-    if (n <= 0)
-        return;
     // Unified cache with shared-memory backing
     prefix_cache = std::unique_ptr<PrefixCache>(new PrefixCache(mbdir_, capacity));
 }

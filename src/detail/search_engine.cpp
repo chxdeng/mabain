@@ -303,8 +303,10 @@ namespace detail {
         const int orig_len = len;
         int consumed = 0;
 
-        // Use cache unless we're on the RC root (where structure may differ)
-        const bool use_cache = !(dict.reader_rc_off != 0 && root_off == dict.reader_rc_off);
+        // Use cache unless we're on the RC root (structure may differ)
+        // or the caller needs parent info (writer Remove path).
+        const bool use_cache = !(dict.reader_rc_off != 0 && root_off == dict.reader_rc_off)
+                               && !(data.options & CONSTS::OPTION_FIND_AND_STORE_PARENT);
         const bool used_cache = use_cache && seedFromCache(key, len, edge_ptrs, data, key_cursor, len, consumed);
 
         if (!used_cache) {

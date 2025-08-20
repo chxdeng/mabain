@@ -779,10 +779,10 @@ void DB::ResetPrefixCacheStats() const
         dict->ResetPrefixCacheStats();
 }
 
-void DB::EnableSharedPrefixCache(int n, size_t capacity, uint32_t assoc)
+void DB::EnableSharedPrefixCache(size_t capacity)
 {
     if (dict)
-        dict->EnableSharedPrefixCache(n, capacity, assoc);
+        dict->EnableSharedPrefixCache(capacity);
 }
 
 void DB::SetSharedPrefixCacheReadOnly(bool ro)

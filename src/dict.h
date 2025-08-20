@@ -133,7 +133,7 @@ public:
     void PrintPrefixCacheStats(std::ostream& os) const;
 
     // Unified prefix cache (shared-memory backed)
-    void EnableSharedPrefixCache(int n, size_t capacity = 65536, uint32_t assoc = 4);
+    void EnableSharedPrefixCache(size_t capacity = 65536);
     PrefixCacheIface* ActivePrefixCache() const;
     void SetSharedPrefixCacheReadOnly(bool ro);
 

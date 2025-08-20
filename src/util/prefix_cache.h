@@ -7,6 +7,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <atomic>
 #include <string>
 
 #include "drm_base.h" // for EDGE_SIZE
@@ -48,9 +49,9 @@ private:
 
     // Direct pointers for table/tag arrays (shared-mapped or process-local fallback)
     PrefixCacheEntry* tab2 = nullptr;
-    uint32_t* tag2 = nullptr;
+    std::atomic<uint32_t>* tag2 = nullptr;
     PrefixCacheEntry* tab3 = nullptr;
-    uint32_t* tag3 = nullptr;
+    std::atomic<uint32_t>* tag3 = nullptr;
 
     // Hit/miss counters removed; keep only put_count for write diagnostics
     mutable uint64_t put_count = 0;

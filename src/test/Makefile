@@ -49,14 +49,13 @@ mb_header_test: mb_header_test.cpp
 	$(CPP) $(CPPFLAGS) mb_header_test.cpp
 	$(CPP) mb_header_test.o -o mb_header_test $(LDFLAGS)
 
-sigbus_disk_pressure_test: sigbus_disk_pressure_test.cpp ../libmabain.so
+sigbus_disk_pressure_test: sigbus_disk_pressure_test.cpp ../../build/lib/libmabain.so
 	$(CPP) $(CPPFLAGS) sigbus_disk_pressure_test.cpp
 	$(CPP) sigbus_disk_pressure_test.o -o sigbus_disk_pressure_test $(LDFLAGS)
 
-shared_prefix_cache_concurrency_test: shared_prefix_cache_concurrency_test.cpp ../libmabain.so
+shared_prefix_cache_concurrency_test: shared_prefix_cache_concurrency_test.cpp ../../build/lib/libmabain.so
 	$(CPP) $(CPPFLAGS) shared_prefix_cache_concurrency_test.cpp
-	$(CPP) shared_prefix_cache_concurrency_test.o -o shared_prefix_cache_concurrency_test $(LDFLAGS) \
-		-Wl,-rpath,'$$ORIGIN/../../build/lib'
+	$(CPP) shared_prefix_cache_concurrency_test.o -o shared_prefix_cache_concurrency_test $(LDFLAGS)
 
 
 clean:

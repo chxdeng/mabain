@@ -82,7 +82,7 @@ static bool initialize_db_header(const TestConfig& cfg)
         return false;
     }
     // Optionally enable shared prefix cache to create its backing file early
-    writer.EnableSharedPrefixCache(cfg.pfx_n, cfg.pfx_cap, cfg.pfx_assoc);
+    writer.EnableSharedPrefixCache(cfg.pfx_cap);
     // writer goes out of scope here and closes; header and directory are now created
     return true;
 }
@@ -103,7 +103,7 @@ static void reader_thread_fn(const TestConfig& cfg, const std::vector<std::strin
         std::cerr << "reader open failed" << std::endl;
         return;
     }
-    rdb.EnableSharedPrefixCache(cfg.pfx_n, cfg.pfx_cap, cfg.pfx_assoc);
+    rdb.EnableSharedPrefixCache(cfg.pfx_cap);
     std::mt19937 rng(1234 ^ (unsigned)reinterpret_cast<uintptr_t>(&cfg));
     std::uniform_int_distribution<int> dist_all(0, cfg.nkeys - 1);
     MBData md;
@@ -172,7 +172,7 @@ static bool run_interleaved_workload(const TestConfig& cfg, const std::vector<st
         std::cerr << "writer open failed: " << writer.StatusStr() << std::endl;
         return false;
     }
-    writer.EnableSharedPrefixCache(cfg.pfx_n, cfg.pfx_cap, cfg.pfx_assoc);
+    writer.EnableSharedPrefixCache(cfg.pfx_cap);
 
     Timer t;
     t.start();
@@ -219,17 +219,17 @@ int main(int argc, char** argv)
 {
     if (argc == 1) {
         std::cerr << "Usage: " << argv[0]
-                  << " <nkeys> <readers> [found_rate] [prefix_len]" << std::endl
+                  << " <nkeys> <readers> [found_rate] [pcc]" << std::endl
                   << "  - nkeys: total unique keys to insert/remove (e.g., 2000000)" << std::endl
                   << "  - readers: number of reader threads (e.g., 4)" << std::endl
                   << "  - found_rate (optional): target found rate, as fraction or percent" << std::endl
                   << "      examples: 0.95, 95, 99.5 (defaults to internal uniform sampling if omitted)" << std::endl
-                  << "  - prefix_len (optional): shared prefix cache length (1..8), default 4" << std::endl
+                  << "  - pcc (optional): shared prefix cache capacity (entries), default 131072" << std::endl
                   << std::endl
                   << "Examples:" << std::endl
                   << "  " << argv[0] << " 2000000 4" << std::endl
                   << "  " << argv[0] << " 2000000 4 0.95" << std::endl
-                  << "  " << argv[0] << " 2000000 4 99.5 5" << std::endl;
+                  << "  " << argv[0] << " 2000000 4 99.5 131072" << std::endl;
         return 1;
     }
     TestConfig cfg;
@@ -253,6 +253,11 @@ int main(int argc, char** argv)
         const int max_window = std::min(cfg.nkeys, 10000); // cap live set to keep runtime stable
         cfg.window = std::max(1, max_window);
         cfg.hot_span = std::max(1, static_cast<int>(std::lround(cfg.window / target_found)));
+    }
+    // Optional 4th arg: pcc (shared prefix cache capacity)
+    if (argc > 4) {
+        cfg.pfx_cap = static_cast<size_t>(std::strtoull(argv[4], nullptr, 10));
+        if (cfg.pfx_cap == 0) cfg.pfx_cap = 131072;
     }
     if (argc > 4) {
         int pn = std::atoi(argv[4]);
@@ -297,7 +302,7 @@ int main(int argc, char** argv)
         std::cerr << "verify writer open failed: " << verify_db.StatusStr() << std::endl;
         return 1;
     }
-    verify_db.EnableSharedPrefixCache(cfg.pfx_n, cfg.pfx_cap, cfg.pfx_assoc);
+    verify_db.EnableSharedPrefixCache(cfg.pfx_cap);
     bool all_removed = verify_all_removed(verify_db, keys);
     std::cout << "Post-remove verification " << (all_removed ? "OK" : "FAILED")
               << " (" << (all_removed ? cfg.nkeys : 0) << "/" << cfg.nkeys << ")" << std::endl;
@@ -323,6 +328,5 @@ int main(int argc, char** argv)
 
     std::cout << "Prefix cache note: counters below are cache-level events (seed hits/misses)"
               << "; they do not equal the found/not-found totals." << std::endl;
-    verify_db.DumpSharedPrefixCacheStats(std::cout);
     return all_removed ? 0 : 2;
 }

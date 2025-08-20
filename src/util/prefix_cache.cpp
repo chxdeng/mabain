@@ -54,10 +54,10 @@ PrefixCache::PrefixCache(const std::string& mbdir, size_t capacity)
     if (!map_shared(shm_path)) {
         // fallback to in-process arrays
         size_t cap2_eff = (cap2 ? cap2 : 1);
-        tag2 = new uint32_t[cap2_eff]();
+        tag2 = new std::atomic<uint32_t>[cap2_eff]();
         tab2 = new PrefixCacheEntry[cap2_eff]();
         if (cap3 > 0) {
-            tag3 = new uint32_t[cap3]();
+            tag3 = new std::atomic<uint32_t>[cap3]();
             tab3 = new PrefixCacheEntry[cap3]();
         } else {
             tag3 = nullptr;
@@ -127,11 +127,11 @@ bool PrefixCache::map_shared(const std::string& path)
     }
 
     uint8_t* p = reinterpret_cast<uint8_t*>(base) + sizeof(PCShmHeader);
-    tag2 = reinterpret_cast<uint32_t*>(p);
+    tag2 = reinterpret_cast<std::atomic<uint32_t>*>(p);
     p += sizeof(uint32_t) * (cap2 ? cap2 : 1);
     tab2 = reinterpret_cast<PrefixCacheEntry*>(p);
     p += sizeof(PrefixCacheEntry) * (cap2 ? cap2 : 1);
-    tag3 = (cap3 ? reinterpret_cast<uint32_t*>(p) : nullptr);
+    tag3 = (cap3 ? reinterpret_cast<std::atomic<uint32_t>*>(p) : nullptr);
     p += sizeof(uint32_t) * (cap3 ? cap3 : 0);
     tab3 = (cap3 ? reinterpret_cast<PrefixCacheEntry*>(p) : nullptr);
 
@@ -179,7 +179,7 @@ int PrefixCache::GetDepth(const uint8_t* key, int len, PrefixCacheEntry& out) co
     if (cap3 > 0 && key != nullptr && len >= 3) {
         uint32_t p3 = (static_cast<uint32_t>(key[0]) << 16) | (static_cast<uint32_t>(key[1]) << 8) | (static_cast<uint32_t>(key[2]));
         size_t idx3 = static_cast<size_t>(p3) & mask3;
-        uint32_t t3 = tag3[idx3];
+        uint32_t t3 = tag3[idx3].load(std::memory_order_acquire);
         if (t3 == (p3 + 1)) {
             out = tab3[idx3];
             return 3;
@@ -187,7 +187,7 @@ int PrefixCache::GetDepth(const uint8_t* key, int len, PrefixCacheEntry& out) co
         // Fall back to 2-byte table using top 2 bytes of p3
         uint16_t p2 = static_cast<uint16_t>(p3 >> 8);
         size_t idx2 = static_cast<size_t>(p2) & mask2;
-        uint32_t t2 = tag2[idx2];
+        uint32_t t2 = tag2[idx2].load(std::memory_order_acquire);
         if ((full2 && t2) || (!full2 && t2 == (static_cast<uint32_t>(p2) + 1))) {
             out = tab2[idx2];
             return 2;
@@ -197,7 +197,7 @@ int PrefixCache::GetDepth(const uint8_t* key, int len, PrefixCacheEntry& out) co
     if (key != nullptr && len >= 2) {
         uint16_t p2 = static_cast<uint16_t>((static_cast<uint16_t>(key[0]) << 8) | static_cast<uint16_t>(key[1]));
         size_t idx2 = static_cast<size_t>(p2) & mask2;
-        uint32_t t2 = tag2[idx2];
+        uint32_t t2 = tag2[idx2].load(std::memory_order_acquire);
         if ((full2 && t2) || (!full2 && t2 == (static_cast<uint32_t>(p2) + 1))) {
             out = tab2[idx2];
             return 2;
@@ -212,27 +212,30 @@ void PrefixCache::Put(const uint8_t* key, int len, const PrefixCacheEntry& in)
     uint32_t p3;
     if (cap3 > 0 && build3(key, len, p3)) {
         size_t idx3 = static_cast<size_t>(p3) & mask3;
-        uint32_t old_tag = tag3[idx3];
+        uint32_t old_tag = tag3[idx3].load(std::memory_order_relaxed);
         PrefixCacheEntry e = in;
         if (old_tag != 0) {
             // Preserve prior origin bits on overwrite
             e.lf_counter |= tab3[idx3].lf_counter;
         }
-        tab3[idx3] = e; // write body first
-        tag3[idx3] = p3 + 1; // then publish tag
+        // Clear tag to prevent readers from observing partial update
+        tag3[idx3].store(0, std::memory_order_release);
+        tab3[idx3] = e; // write body
+        tag3[idx3].store(p3 + 1, std::memory_order_release); // publish
         ++put_count;
     }
     // Also insert into 2-byte table if we have at least 2 bytes
     uint16_t p2;
     if (build2(key, len, p2)) {
         size_t idx2 = static_cast<size_t>(p2) & mask2;
-        uint32_t old_tag = tag2[idx2];
+        uint32_t old_tag = tag2[idx2].load(std::memory_order_relaxed);
         PrefixCacheEntry e = in;
         if (old_tag != 0) {
             e.lf_counter |= tab2[idx2].lf_counter;
         }
+        tag2[idx2].store(0, std::memory_order_release);
         tab2[idx2] = e;
-        tag2[idx2] = static_cast<uint32_t>(p2) + 1;
+        tag2[idx2].store(static_cast<uint32_t>(p2) + 1, std::memory_order_release);
         ++put_count;
     }
 }
