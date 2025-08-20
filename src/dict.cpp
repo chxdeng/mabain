@@ -1093,8 +1093,6 @@ void Dict::MaybePutCache(const uint8_t* full_key, int full_len, int consumed,
         // All caches are shared; honor shared read-only flag
         if (shared_pc_readonly)
             return;
-        if (edge_ptrs.flag_ptr[0] & EDGE_FLAG_DATA_OFF)
-            return; // don't seed leaves
         // Unified: seed at canonical 2- and 3-byte boundaries for both
         // shared and non-shared caches. Tag origin in lf_counter: 1=add, 2=read.
         if (consumed == 3) {

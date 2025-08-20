@@ -309,6 +309,18 @@ namespace detail {
                                && !(data.options & CONSTS::OPTION_FIND_AND_STORE_PARENT);
         const bool used_cache = use_cache && seedFromCache(key, len, edge_ptrs, data, key_cursor, len, consumed);
 
+        // If we seeded from cache, mirror the root-edge fast-path logic:
+        // - If we've consumed the entire key, resolve immediately from this edge.
+        // - If the cached edge is a leaf but the key has remaining bytes, it's a miss.
+        if (used_cache) {
+            if (len <= 0) {
+                return resolveMatchOrInDict(data, edge_ptrs, false);
+            }
+            if (isLeaf(edge_ptrs)) {
+                return MBError::NOT_EXIST;
+            }
+        }
+
         if (!used_cache) {
 #ifdef __LOCK_FREE__
             ReaderLFGuard lf_guard(dict.lfree, data);

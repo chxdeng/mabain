@@ -68,6 +68,9 @@ static inline uint32_t prand_u32(uint64_t i)
     x ^= x >> 27;
     x *= 0x94d049bb133111ebULL;
     x ^= x >> 31;
+    // Return modulo pcc (pc_cap) when provided, otherwise full 32-bit value
+    if (pc_cap > 0)
+        return static_cast<uint32_t>(x % static_cast<uint64_t>(pc_cap));
     return static_cast<uint32_t>(x);
 }
 
@@ -268,14 +271,13 @@ static void Add(int n)
             }
             key = kv;
             val = kv;
-        } else { // key_type == u32 pseudo-random (binary 4 bytes, little-endian)
+        } else { // key_type == u32 pseudo-random (binary 3 bytes, little-endian)
             uint32_t r = prand_u32(static_cast<uint64_t>(i));
-            char le[4] = { static_cast<char>(r & 0xFF),
+            char le[3] = { static_cast<char>(r & 0xFF),
                 static_cast<char>((r >> 8) & 0xFF),
-                static_cast<char>((r >> 16) & 0xFF),
-                static_cast<char>((r >> 24) & 0xFF) };
-            key.assign(le, 4);
-            val.assign(le, 4);
+                static_cast<char>((r >> 16) & 0xFF) };
+            key.assign(le, 3);
+            val.assign(le, 3);
         }
 
 #ifdef LEVEL_DB
@@ -372,13 +374,12 @@ static void Lookup(int n)
                 get_sha256_str(i, kv);
             }
             key = kv;
-        } else { // u32 pseudo-random (binary 4 bytes, little-endian); match Add()
+        } else { // u32 pseudo-random (binary 3 bytes, little-endian); match Add()
             uint32_t r = prand_u32(static_cast<uint64_t>(i));
-            char le[4] = { static_cast<char>(r & 0xFF),
+            char le[3] = { static_cast<char>(r & 0xFF),
                 static_cast<char>((r >> 8) & 0xFF),
-                static_cast<char>((r >> 16) & 0xFF),
-                static_cast<char>((r >> 24) & 0xFF) };
-            key.assign(le, 4);
+                static_cast<char>((r >> 16) & 0xFF) };
+            key.assign(le, 3);
         }
 
 #ifdef LEVEL_DB
@@ -468,13 +469,12 @@ static void Delete(int n)
                 get_sha256_str(i, kv);
             }
             key = kv;
-        } else { // u32 pseudo-random (binary 4 bytes, little-endian)
+        } else { // u32 pseudo-random (binary 3 bytes, little-endian)
             uint32_t r = prand_u32(static_cast<uint64_t>(i));
-            char le[4] = { static_cast<char>(r & 0xFF),
+            char le[3] = { static_cast<char>(r & 0xFF),
                 static_cast<char>((r >> 8) & 0xFF),
-                static_cast<char>((r >> 16) & 0xFF),
-                static_cast<char>((r >> 24) & 0xFF) };
-            key.assign(le, 4);
+                static_cast<char>((r >> 16) & 0xFF) };
+            key.assign(le, 3);
         }
 #ifdef LEVEL_DB
         leveldb::WriteOptions opts = leveldb::WriteOptions();
@@ -562,14 +562,13 @@ static void* Writer(void* arg)
             }
             key = kv;
             val = kv;
-        } else { // u32 pseudo-random (binary 4 bytes, little-endian)
+        } else { // u32 pseudo-random (binary 3 bytes, little-endian)
             uint32_t r = prand_u32(static_cast<uint64_t>(i));
-            char le[4] = { static_cast<char>(r & 0xFF),
+            char le[3] = { static_cast<char>(r & 0xFF),
                 static_cast<char>((r >> 8) & 0xFF),
-                static_cast<char>((r >> 16) & 0xFF),
-                static_cast<char>((r >> 24) & 0xFF) };
-            key.assign(le, 4);
-            val.assign(le, 4);
+                static_cast<char>((r >> 16) & 0xFF) };
+            key.assign(le, 3);
+            val.assign(le, 3);
         }
 
 #ifdef LEVEL_DB
@@ -633,13 +632,12 @@ static void* Reader(void* arg)
                 get_sha256_str(i, kv);
             }
             key = kv;
-        } else { // u32 pseudo-random (binary 4 bytes, little-endian)
+        } else { // u32 pseudo-random (binary 3 bytes, little-endian)
             uint32_t r = prand_u32(static_cast<uint64_t>(i));
-            char le[4] = { static_cast<char>(r & 0xFF),
+            char le[3] = { static_cast<char>(r & 0xFF),
                 static_cast<char>((r >> 8) & 0xFF),
-                static_cast<char>((r >> 16) & 0xFF),
-                static_cast<char>((r >> 24) & 0xFF) };
-            key.assign(le, 4);
+                static_cast<char>((r >> 16) & 0xFF) };
+            key.assign(le, 3);
         }
 
         std::string value;
