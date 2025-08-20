@@ -624,11 +624,11 @@ int DictMem::UpdateNode(EdgePtrs& edge_ptrs, const uint8_t* key, int key_len,
     // Shift first-chars and edges to make room at index 'ins'
     if (ins < old_nt) {
         memmove(node_ptrs.edge_key_ptr + ins + 1,
-                node_ptrs.edge_key_ptr + ins,
-                old_nt - ins);
+            node_ptrs.edge_key_ptr + ins,
+            old_nt - ins);
         memmove(node_ptrs.edge_ptr + (ins + 1) * EDGE_SIZE,
-                node_ptrs.edge_ptr + ins * EDGE_SIZE,
-                (size_t)(old_nt - ins) * EDGE_SIZE);
+            node_ptrs.edge_ptr + ins * EDGE_SIZE,
+            (size_t)(old_nt - ins) * EDGE_SIZE);
     }
     node_ptrs.edge_key_ptr[ins] = fk;
 

@@ -8,14 +8,14 @@
 #include <cstdlib>
 #include <cstring>
 #include <functional>
-#include <iostream>
 #include <iomanip>
+#include <iostream>
 #include <mutex>
 #include <random>
 #include <string>
-#include <thread>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <thread>
 #include <vector>
 
 #include "db.h"
@@ -48,16 +48,16 @@ struct TestConfig {
     size_t pfx_cap = 131072;
     uint32_t pfx_assoc = 8;
     int window = 1000; // interleave add/remove distance
-    int hot_span = 0;  // readers sample within last hot_span keys (0=uniform over all)
+    int hot_span = 0; // readers sample within last hot_span keys (0=uniform over all)
 };
 
 struct Metrics {
-    std::atomic<bool> stop_read{false};
-    std::atomic<bool> validation_failed{false};
-    std::atomic<uint64_t> hits{0};
-    std::atomic<uint64_t> misses{0};
-    std::atomic<uint64_t> ops{0};
-    std::atomic<uint64_t> us{0};
+    std::atomic<bool> stop_read { false };
+    std::atomic<bool> validation_failed { false };
+    std::atomic<uint64_t> hits { 0 };
+    std::atomic<uint64_t> misses { 0 };
+    std::atomic<uint64_t> ops { 0 };
+    std::atomic<uint64_t> us { 0 };
 };
 
 static void ensure_clean_db(const std::string& dbdir)
@@ -91,7 +91,8 @@ static std::vector<std::string> generate_keys(int n)
 {
     std::vector<std::string> keys;
     keys.reserve(n);
-    for (int i = 0; i < n; ++i) keys.emplace_back(make_key(i));
+    for (int i = 0; i < n; ++i)
+        keys.emplace_back(make_key(i));
     return keys;
 }
 
@@ -160,7 +161,8 @@ static void start_readers(const TestConfig& cfg, const std::vector<std::string>&
 static void stop_readers(Metrics& m, std::vector<std::thread>& readers)
 {
     m.stop_read.store(true);
-    for (auto& th : readers) th.join();
+    for (auto& th : readers)
+        th.join();
 }
 
 static bool run_interleaved_workload(const TestConfig& cfg, const std::vector<std::string>& keys, double& work_sec, std::atomic<int>& last_added)
@@ -172,7 +174,8 @@ static bool run_interleaved_workload(const TestConfig& cfg, const std::vector<st
     }
     writer.EnableSharedPrefixCache(cfg.pfx_n, cfg.pfx_cap, cfg.pfx_assoc);
 
-    Timer t; t.start();
+    Timer t;
+    t.start();
     for (int i = 0; i < cfg.nkeys; ++i) {
         // Value equals key for validation
         const std::string& value = keys[i];
@@ -204,7 +207,8 @@ static bool run_interleaved_workload(const TestConfig& cfg, const std::vector<st
 static bool verify_all_removed(DB& db, const std::vector<std::string>& keys)
 {
     for (size_t i = 0; i < keys.size(); ++i) {
-        MBData md; int rc = db.Find(keys[i], md);
+        MBData md;
+        int rc = db.Find(keys[i], md);
         if (rc != MBError::NOT_EXIST)
             return false;
     }
@@ -229,8 +233,10 @@ int main(int argc, char** argv)
         return 1;
     }
     TestConfig cfg;
-    if (argc > 1) cfg.nkeys = std::atoi(argv[1]);
-    if (argc > 2) cfg.nreaders = std::atoi(argv[2]);
+    if (argc > 1)
+        cfg.nkeys = std::atoi(argv[1]);
+    if (argc > 2)
+        cfg.nreaders = std::atoi(argv[2]);
 
     // Single-parameter mode for target found rate (3rd arg), replaces manual window/hot_span.
     double target_found = -1.0;
@@ -250,8 +256,10 @@ int main(int argc, char** argv)
     }
     if (argc > 4) {
         int pn = std::atoi(argv[4]);
-        if (pn < 1) pn = 1;
-        if (pn > 8) pn = 8;
+        if (pn < 1)
+            pn = 1;
+        if (pn > 8)
+            pn = 8;
         cfg.pfx_n = pn;
     }
 
@@ -263,7 +271,8 @@ int main(int argc, char** argv)
               << " hot_span=" << cfg.hot_span
               << std::endl;
     ensure_clean_db(cfg.dbdir);
-    if (!initialize_db_header(cfg)) return 1;
+    if (!initialize_db_header(cfg))
+        return 1;
     auto keys = generate_keys(cfg.nkeys);
     if (!keys.empty()) {
         std::cout << "Key size: " << keys[0].size() << " bytes, Value size: " << keys[0].size()
@@ -271,14 +280,16 @@ int main(int argc, char** argv)
     }
     Metrics m;
     std::vector<std::thread> readers;
-    std::atomic<int> last_added{-1};
+    std::atomic<int> last_added { -1 };
     start_readers(cfg, keys, m, readers, &last_added);
 
     double work_sec = 0.0;
     bool ok = run_interleaved_workload(cfg, keys, work_sec, last_added);
     stop_readers(m, readers);
-    if (!ok) return 1;
-    if (m.validation_failed.load()) return 2;
+    if (!ok)
+        return 1;
+    if (m.validation_failed.load())
+        return 2;
 
     // Open a fresh handle to dump shared prefix cache; use reader to avoid resetting the cache
     DB verify_db(cfg.dbdir.c_str(), CONSTS::ReaderOptions());

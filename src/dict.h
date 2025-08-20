@@ -134,8 +134,6 @@ public:
 
     // Unified prefix cache (shared-memory backed)
     void EnableSharedPrefixCache(int n, size_t capacity = 65536, uint32_t assoc = 4);
-    // Debug: print breakdown of cache entry origins (add-time vs read-time)
-    void PrintPrefixCacheOriginStats(std::ostream& os) const;
     PrefixCacheIface* ActivePrefixCache() const;
     void SetSharedPrefixCacheReadOnly(bool ro);
 

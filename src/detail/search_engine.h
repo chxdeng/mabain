@@ -69,6 +69,10 @@ namespace detail {
             const uint8_t*& key_buff, int& edge_len, int& edge_len_m1) const;
         inline int resolveMatchOrInDict(MBData& data, EdgePtrs& edge_ptrs, bool at_root) const;
         // Root-edge accessor (reads directly from DictMem)
+        // Fast-path: try to seed traversal state from the prefix cache.
+        // Returns true when an entry is found (depth 2 or 3), and advances
+        // key_cursor/len_remaining/consumed accordingly. For very short keys
+        // (len < 2) it returns false without making a virtual call.
         inline bool seedFromCache(const uint8_t* key, int len, EdgePtrs& edge_ptrs,
             MBData& data, const uint8_t*& key_cursor, int& len_remaining, int& consumed) const;
         // declared once above
@@ -170,6 +174,9 @@ namespace detail {
     inline bool SearchEngine::seedFromCache(const uint8_t* key, int len, EdgePtrs& edge_ptrs,
         MBData& data, const uint8_t*& key_cursor, int& len_remaining, int& consumed) const
     {
+        // Keys shorter than 2 bytes cannot hit the cache; avoid virtual call.
+        if (len < 2 || key == nullptr)
+            return false;
         PrefixCacheIface* pc = dict.ActivePrefixCache();
         if (!pc)
             return false;
@@ -190,13 +197,11 @@ namespace detail {
         // writer-in-progress validation, so enabling the flag here can
         // cause unintended interaction with the lock-free path.
 
-        key_cursor = key + n;
+        key_cursor += n;
         len_remaining -= n;
         consumed += n;
         return true;
     }
-
-    
 
 }
 } // namespace mabain::detail

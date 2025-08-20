@@ -1,20 +1,20 @@
 #include <assert.h>
 #include <chrono>
-#include <cstring>
 #include <cstdint>
+#include <cstring>
 #include <fstream>
 #include <iostream>
-#include <openssl/sha.h>
 #include <openssl/evp.h>
-#include <string>
+#include <openssl/sha.h>
 #include <pthread.h>
 #include <sstream>
-#include <vector>
-#include <unordered_map>
-#include <time.h>
+#include <string>
 #include <sys/syscall.h>
 #include <sys/time.h>
+#include <time.h>
 #include <unistd.h>
+#include <unordered_map>
+#include <vector>
 
 #ifdef LEVEL_DB
 #include <leveldb/db.h>
@@ -51,10 +51,10 @@ static bool sync_on_write = false;
 static unsigned long long memcap = 1024ULL * 1024 * 1024;
 static bool use_jemalloc = false;
 // Prefix cache controls (MABAIN only)
-static long long pc_cap = -1;    // capacity; -1 means default
-static bool pc_disable = false;  // disable prefix cache
-static bool pc_shared = false;   // use shared prefix cache (MABAIN only)
-static int pc_assoc = 4;         // associativity for shared cache buckets
+static long long pc_cap = -1; // capacity; -1 means default
+static bool pc_disable = false; // disable prefix cache
+static bool pc_shared = false; // use shared prefix cache (MABAIN only)
+static int pc_assoc = 4; // associativity for shared cache buckets
 
 // Buffer per-reader cache stats to avoid interleaved output
 static std::vector<std::string> g_reader_stats;
@@ -65,8 +65,10 @@ static pthread_mutex_t g_stats_mutex = PTHREAD_MUTEX_INITIALIZER;
 static inline uint32_t prand_u32(uint64_t i)
 {
     uint64_t x = i + 0x9e3779b97f4a7c15ULL; // golden ratio seed
-    x ^= x >> 30; x *= 0xbf58476d1ce4e5b9ULL;
-    x ^= x >> 27; x *= 0x94d049bb133111ebULL;
+    x ^= x >> 30;
+    x *= 0xbf58476d1ce4e5b9ULL;
+    x ^= x >> 27;
+    x *= 0x94d049bb133111ebULL;
     x ^= x >> 31;
     return static_cast<uint32_t>(x);
 }
@@ -75,23 +77,21 @@ static void get_sha256_str(int key, char* sha256_str)
 {
     unsigned char hash[EVP_MAX_MD_SIZE];
     unsigned int hash_len;
-    
-    EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
     if (!ctx) {
         sha256_str[0] = 0;
         return;
     }
-    
-    if (EVP_DigestInit_ex(ctx, EVP_sha256(), NULL) != 1 ||
-        EVP_DigestUpdate(ctx, (unsigned char*)&key, 4) != 1 ||
-        EVP_DigestFinal_ex(ctx, hash, &hash_len) != 1) {
+
+    if (EVP_DigestInit_ex(ctx, EVP_sha256(), NULL) != 1 || EVP_DigestUpdate(ctx, (unsigned char*)&key, 4) != 1 || EVP_DigestFinal_ex(ctx, hash, &hash_len) != 1) {
         EVP_MD_CTX_free(ctx);
         sha256_str[0] = 0;
         return;
     }
-    
+
     EVP_MD_CTX_free(ctx);
-    
+
     for (unsigned int i = 0; i < hash_len; i++) {
         sprintf(sha256_str + (i * 2), "%02x", hash[i]);
     }
@@ -102,23 +102,21 @@ static void get_sha1_str(int key, char* sha1_str)
 {
     unsigned char hash[EVP_MAX_MD_SIZE];
     unsigned int hash_len;
-    
-    EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
     if (!ctx) {
         sha1_str[0] = 0;
         return;
     }
-    
-    if (EVP_DigestInit_ex(ctx, EVP_sha1(), NULL) != 1 ||
-        EVP_DigestUpdate(ctx, (unsigned char*)&key, 4) != 1 ||
-        EVP_DigestFinal_ex(ctx, hash, &hash_len) != 1) {
+
+    if (EVP_DigestInit_ex(ctx, EVP_sha1(), NULL) != 1 || EVP_DigestUpdate(ctx, (unsigned char*)&key, 4) != 1 || EVP_DigestFinal_ex(ctx, hash, &hash_len) != 1) {
         EVP_MD_CTX_free(ctx);
         sha1_str[0] = 0;
         return;
     }
-    
+
     EVP_MD_CTX_free(ctx);
-    
+
     for (unsigned int i = 0; i < hash_len; i++) {
         sprintf(sha1_str + (i * 2), "%02x", hash[i]);
     }
@@ -278,9 +276,9 @@ static void Add(int n)
         } else { // key_type == u32 pseudo-random (binary 4 bytes, little-endian)
             uint32_t r = prand_u32(static_cast<uint64_t>(i));
             char le[4] = { static_cast<char>(r & 0xFF),
-                           static_cast<char>((r >> 8) & 0xFF),
-                           static_cast<char>((r >> 16) & 0xFF),
-                           static_cast<char>((r >> 24) & 0xFF) };
+                static_cast<char>((r >> 8) & 0xFF),
+                static_cast<char>((r >> 16) & 0xFF),
+                static_cast<char>((r >> 24) & 0xFF) };
             key.assign(le, 4);
             val.assign(le, 4);
         }
@@ -355,7 +353,7 @@ static void Lookup(int n)
     uint64_t total_time = 0;
 #ifdef MABAIN
     uint64_t total_time_ns = 0; // measure whole-loop time in nanoseconds
-    mabain::MBData mbd;         // reuse per-iteration buffer to avoid reallocation
+    mabain::MBData mbd; // reuse per-iteration buffer to avoid reallocation
     mbd.options = mabain::CONSTS::OPTION_KEY_ONLY; // skip reading values to speed exact match
 #endif
 
@@ -363,39 +361,9 @@ static void Lookup(int n)
     // Dump stats before lookup to inspect writer-populated cache state
     std::cout << "-- Cache stats before lookup --\n";
     db->DumpPrefixCacheStats(std::cout);
-#ifdef MABAIN
-    db->DumpPrefixCacheOriginStats(std::cout);
-#endif
-    // Prewarm only for non-shared cache. For shared cache, rely on add-time seeding.
-    if (pc_cap > 0) {
-        if (!pc_shared) {
-            mabain::MBData warm_mbd;
-            warm_mbd.options = mabain::CONSTS::OPTION_KEY_ONLY;
-            for (int i = 0; i < n; ++i) {
-                std::string warm_key;
-                if (key_type == 0) {
-                    warm_key = std::to_string(i);
-                } else if (key_type == 1 || key_type == 2) {
-                    if (key_type == 1) get_sha1_str(i, kv); else get_sha256_str(i, kv);
-                    warm_key = kv;
-                } else {
-                    uint32_t r = prand_u32(static_cast<uint64_t>(i));
-                    char le[4] = { (char)(r & 0xFF), (char)((r >> 8) & 0xFF), (char)((r >> 16) & 0xFF), (char)((r >> 24) & 0xFF) };
-                    warm_key.assign(le, 4);
-                }
-                int _ = db->Find(warm_key, warm_mbd);
-                (void)_;
-            }
-            // Print stats after warm and reset counters so the timed loop is clean
-            std::cout << "-- Cache stats after warm --\n";
-            db->DumpPrefixCacheStats(std::cout);
-            db->DumpPrefixCacheOriginStats(std::cout);
-            db->ResetPrefixCacheStats();
-        } else {
-            // Shared cache: skip warm; rely solely on add-time seeding
-            db->ResetPrefixCacheStats();
-        }
-    }
+
+    if (pc_cap > 0)
+        db->ResetPrefixCacheStats();
 #endif
     // Time each find call only (exclude key-building and loop overhead)
     for (int i = 0; i < n; i++) {
@@ -412,9 +380,9 @@ static void Lookup(int n)
         } else { // u32 pseudo-random (binary 4 bytes, little-endian); match Add()
             uint32_t r = prand_u32(static_cast<uint64_t>(i));
             char le[4] = { static_cast<char>(r & 0xFF),
-                           static_cast<char>((r >> 8) & 0xFF),
-                           static_cast<char>((r >> 16) & 0xFF),
-                           static_cast<char>((r >> 24) & 0xFF) };
+                static_cast<char>((r >> 8) & 0xFF),
+                static_cast<char>((r >> 16) & 0xFF),
+                static_cast<char>((r >> 24) & 0xFF) };
             key.assign(le, 4);
         }
 
@@ -451,7 +419,8 @@ static void Lookup(int n)
         clock_gettime(CLOCK_MONOTONIC_RAW, &ts2);
         uint64_t delta_ns = (uint64_t)(ts2.tv_sec - ts1.tv_sec) * 1000000000ULL + (uint64_t)(ts2.tv_nsec - ts1.tv_nsec);
         total_time_ns += delta_ns;
-        if (rval == 0) nfound++;
+        if (rval == 0)
+            nfound++;
 #endif
 
         if ((i + 1) % ONE_MILLION == 0) {
@@ -475,7 +444,6 @@ static void Lookup(int n)
     if (db) {
         std::cout << "-- Cache stats after lookup --\n";
         db->DumpPrefixCacheStats(std::cout);
-        db->DumpPrefixCacheOriginStats(std::cout);
     }
 #endif
 }
@@ -508,9 +476,9 @@ static void Delete(int n)
         } else { // u32 pseudo-random (binary 4 bytes, little-endian)
             uint32_t r = prand_u32(static_cast<uint64_t>(i));
             char le[4] = { static_cast<char>(r & 0xFF),
-                           static_cast<char>((r >> 8) & 0xFF),
-                           static_cast<char>((r >> 16) & 0xFF),
-                           static_cast<char>((r >> 24) & 0xFF) };
+                static_cast<char>((r >> 8) & 0xFF),
+                static_cast<char>((r >> 16) & 0xFF),
+                static_cast<char>((r >> 24) & 0xFF) };
             key.assign(le, 4);
         }
 #ifdef LEVEL_DB
@@ -602,9 +570,9 @@ static void* Writer(void* arg)
         } else { // u32 pseudo-random (binary 4 bytes, little-endian)
             uint32_t r = prand_u32(static_cast<uint64_t>(i));
             char le[4] = { static_cast<char>(r & 0xFF),
-                           static_cast<char>((r >> 8) & 0xFF),
-                           static_cast<char>((r >> 16) & 0xFF),
-                           static_cast<char>((r >> 24) & 0xFF) };
+                static_cast<char>((r >> 8) & 0xFF),
+                static_cast<char>((r >> 16) & 0xFF),
+                static_cast<char>((r >> 24) & 0xFF) };
             key.assign(le, 4);
             val.assign(le, 4);
         }
@@ -679,9 +647,9 @@ static void* Reader(void* arg)
         } else { // u32 pseudo-random (binary 4 bytes, little-endian)
             uint32_t r = prand_u32(static_cast<uint64_t>(i));
             char le[4] = { static_cast<char>(r & 0xFF),
-                           static_cast<char>((r >> 8) & 0xFF),
-                           static_cast<char>((r >> 16) & 0xFF),
-                           static_cast<char>((r >> 24) & 0xFF) };
+                static_cast<char>((r >> 8) & 0xFF),
+                static_cast<char>((r >> 16) & 0xFF),
+                static_cast<char>((r >> 24) & 0xFF) };
             key.assign(le, 4);
         }
 
@@ -881,14 +849,16 @@ int main(int argc, char* argv[])
         } else if (strcmp(argv[i], "-j") == 0) {
             use_jemalloc = true;
         } else if (strcmp(argv[i], "-pcc") == 0) {
-            if (++i >= argc) abort();
+            if (++i >= argc)
+                abort();
             pc_cap = atoll(argv[i]);
         } else if (strcmp(argv[i], "-pc-off") == 0) {
             pc_disable = true;
         } else if (strcmp(argv[i], "-pc-shared") == 0) {
             pc_shared = true;
         } else if (strcmp(argv[i], "-pc-assoc") == 0) {
-            if (++i >= argc) abort();
+            if (++i >= argc)
+                abort();
             pc_assoc = atoi(argv[i]);
         } else {
             std::cerr << "invalid argument: " << argv[i] << "\n";
@@ -905,8 +875,7 @@ int main(int argc, char* argv[])
     if (pc_disable) {
         std::cout << "===== Prefix cache disabled\n";
     } else if (pc_cap > 0) {
-        std::cout << "===== Shared Prefix cache cap=" << pc_cap
-                  << ", assoc=" << pc_assoc << "\n";
+        std::cout << "===== Prefix cache cap=" << pc_cap << "\n";
     }
 #endif
 

@@ -313,12 +313,14 @@ namespace detail {
 #endif
             // Load root edge for this key's first byte
             int r = dict.mm.GetRootEdge(root_off, key[0], edge_ptrs);
-            if (r != MBError::SUCCESS) return MBError::READ_ERROR;
+            if (r != MBError::SUCCESS)
+                return MBError::READ_ERROR;
             if (edge_ptrs.len_ptr[0] == 0) {
 #ifdef __LOCK_FREE__
                 {
                     int _r = lf_guard.stop(edge_ptrs.offset);
-                    if (_r != MBError::SUCCESS) return _r;
+                    if (_r != MBError::SUCCESS)
+                        return _r;
                 }
 #endif
                 return MBError::NOT_EXIST;
@@ -333,7 +335,8 @@ namespace detail {
 #ifdef __LOCK_FREE__
                 {
                     int _r = lf_guard.stop(edge_ptrs.offset);
-                    if (_r != MBError::SUCCESS) return _r;
+                    if (_r != MBError::SUCCESS)
+                        return _r;
                 }
 #endif
                 return MBError::READ_ERROR;
@@ -344,7 +347,8 @@ namespace detail {
 #ifdef __LOCK_FREE__
                     {
                         int _r = lf_guard.stop(edge_ptrs.offset);
-                        if (_r != MBError::SUCCESS) return _r;
+                        if (_r != MBError::SUCCESS)
+                            return _r;
                     }
 #endif
                     return MBError::NOT_EXIST;
@@ -353,12 +357,14 @@ namespace detail {
                 key_cursor += edge_len;
                 consumed += edge_len;
                 len -= edge_len;
-                if (len <= 0) return resolveMatchOrInDict(data, edge_ptrs, true);
+                if (len <= 0)
+                    return resolveMatchOrInDict(data, edge_ptrs, true);
                 if (isLeaf(edge_ptrs)) {
 #ifdef __LOCK_FREE__
                     {
                         int _r = lf_guard.stop(edge_ptrs.offset);
-                        if (_r != MBError::SUCCESS) return _r;
+                        if (_r != MBError::SUCCESS)
+                            return _r;
                     }
 #endif
                     return MBError::NOT_EXIST;
@@ -369,7 +375,8 @@ namespace detail {
 #ifdef __LOCK_FREE__
                 {
                     int _r = lf_guard.stop(edge_ptrs.offset);
-                    if (_r != MBError::SUCCESS) return _r;
+                    if (_r != MBError::SUCCESS)
+                        return _r;
                 }
 #endif
                 return MBError::NOT_EXIST;
@@ -377,7 +384,8 @@ namespace detail {
 #ifdef __LOCK_FREE__
                 {
                     int _r = lf_guard.stop(edge_ptrs.offset);
-                    if (_r != MBError::SUCCESS) return _r;
+                    if (_r != MBError::SUCCESS)
+                        return _r;
                 }
 #endif
                 return MBError::NOT_EXIST;
@@ -386,7 +394,8 @@ namespace detail {
 #ifdef __LOCK_FREE__
             {
                 int _r = lf_guard.stop(edge_ptrs.offset);
-                if (_r != MBError::SUCCESS) return _r;
+                if (_r != MBError::SUCCESS)
+                    return _r;
             }
 #endif
         }
