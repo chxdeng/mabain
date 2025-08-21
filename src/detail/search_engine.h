@@ -199,17 +199,7 @@ namespace detail {
             return false;
 
         PrefixCacheEntry entry;
-        int n;
-        if (profile::enabled()) {
-            struct timespec ts1, ts2;
-            clock_gettime(CLOCK_MONOTONIC_RAW, &ts1);
-            n = pc->GetDepth(key, len, entry);
-            clock_gettime(CLOCK_MONOTONIC_RAW, &ts2);
-            uint64_t ns = (uint64_t)(ts2.tv_sec - ts1.tv_sec) * 1000000000ULL + (uint64_t)(ts2.tv_nsec - ts1.tv_nsec);
-            profile::add_cache_probe(ns);
-        } else {
-            n = pc->GetDepth(key, len, entry);
-        }
+        int n = pc->GetDepth(key, len, entry);
         if (n == 0)
             return false;
 

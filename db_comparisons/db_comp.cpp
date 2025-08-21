@@ -265,7 +265,8 @@ static void Add(int n)
         mdb_txn_begin(env, NULL, 0, &txn);
 #endif
 
-    uint64_t total_time = 0;
+    // Accumulate in nanoseconds to avoid truncation
+    uint64_t total_time_ns = 0;
 
     for (int i = 0; i < n; i++) {
         std::string key, val;
@@ -293,12 +294,12 @@ static void Add(int n)
         auto start = std::chrono::high_resolution_clock::now();
         db->Put(opts, key, val);
         auto stop = std::chrono::high_resolution_clock::now();
-        total_time += std::chrono::duration_cast<std::chrono::microseconds>(stop - start).count();
+        total_time_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(stop - start).count();
 #elif KYOTO_CABINET
         auto start = std::chrono::high_resolution_clock::now();
         db->set(key.data(), key.size(), val.data(), val.size());
         auto stop = std::chrono::high_resolution_clock::now();
-        total_time += std::chrono::duration_cast<std::chrono::microseconds>(stop - start).count();
+        total_time_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(stop - start).count();
 #elif LMDB
         MDB_val lmdb_key, lmdb_val;
         lmdb_key.mv_size = key.size();
@@ -312,7 +313,7 @@ static void Add(int n)
             auto start = std::chrono::high_resolution_clock::now();
             mdb_cursor_put(mc, &lmdb_key, &lmdb_val, 0);
             auto stop = std::chrono::high_resolution_clock::now();
-            total_time += std::chrono::duration_cast<std::chrono::microseconds>(stop - start).count();
+            total_time_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(stop - start).count();
             mdb_cursor_close(mc);
             mdb_txn_commit(txn);
         } else {
@@ -320,14 +321,14 @@ static void Add(int n)
             auto start = std::chrono::high_resolution_clock::now();
             mdb_cursor_put(mc, &lmdb_key, &lmdb_val, 0);
             auto stop = std::chrono::high_resolution_clock::now();
-            total_time += std::chrono::duration_cast<std::chrono::microseconds>(stop - start).count();
+            total_time_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(stop - start).count();
             mdb_cursor_close(mc);
         }
 #elif MABAIN
         auto start = std::chrono::high_resolution_clock::now();
         db->Add(key, val);
         auto stop = std::chrono::high_resolution_clock::now();
-        total_time += std::chrono::duration_cast<std::chrono::microseconds>(stop - start).count();
+        total_time_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(stop - start).count();
 #endif
 
         if ((i + 1) % ONE_MILLION == 0) {
@@ -339,8 +340,8 @@ static void Add(int n)
         mdb_txn_commit(txn);
 #endif
 
-    uint64_t timediff = total_time;
-    std::cout << "===== " << timediff * 1.0 / n << " micro seconds per insertion\n";
+    double timediff_us = total_time_ns / 1000.0;
+    std::cout << "===== " << timediff_us / n << " micro seconds per insertion\n";
 }
 
 static void Lookup(int n)
@@ -354,9 +355,8 @@ static void Lookup(int n)
     mdb_cursor_open(txn, db, &cursor);
 #endif
 
-    uint64_t total_time = 0;
-#ifdef MABAIN
     uint64_t total_time_ns = 0; // measure whole-loop time in nanoseconds
+#ifdef MABAIN
     mabain::MBData mbd; // reuse per-iteration buffer to avoid reallocation
     mbd.options = mabain::CONSTS::OPTION_KEY_ONLY;
     const char* prof_env = std::getenv("MB_PROFILE_FIND");
@@ -395,7 +395,7 @@ static void Lookup(int n)
         auto start = std::chrono::high_resolution_clock::now();
         leveldb::Status s = db->Get(leveldb::ReadOptions(), key, &value);
         auto stop = std::chrono::high_resolution_clock::now();
-        total_time += std::chrono::duration_cast<std::chrono::microseconds>(stop - start).count();
+        total_time_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(stop - start).count();
         if (s.ok())
             nfound++;
 #elif KYOTO_CABINET
@@ -403,7 +403,7 @@ static void Lookup(int n)
         auto start = std::chrono::high_resolution_clock::now();
         bool found = db->get(key.data(), key.size(), &value);
         auto stop = std::chrono::high_resolution_clock::now();
-        total_time += std::chrono::duration_cast<std::chrono::microseconds>(stop - start).count();
+        total_time_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(stop - start).count();
         if (found)
             nfound++;
 #elif LMDB
@@ -412,17 +412,15 @@ static void Lookup(int n)
         auto start = std::chrono::high_resolution_clock::now();
         int lmdb_result = mdb_cursor_get(cursor, &lmdb_key, &lmdb_value, MDB_SET);
         auto stop = std::chrono::high_resolution_clock::now();
-        total_time += std::chrono::duration_cast<std::chrono::microseconds>(stop - start).count();
+        total_time_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(stop - start).count();
         if (lmdb_result == 0)
             nfound++;
             // std::cout<<key<<":"<<std::string((char*)lmdb_value.mv_data, lmdb_value.mv_size)<<"\n";
 #elif MABAIN
-        struct timespec ts1, ts2;
-        clock_gettime(CLOCK_MONOTONIC_RAW, &ts1);
+        auto start = std::chrono::high_resolution_clock::now();
         int rval = db->Find(key.data(), (int)key.size(), mbd);
-        clock_gettime(CLOCK_MONOTONIC_RAW, &ts2);
-        uint64_t delta_ns = (uint64_t)(ts2.tv_sec - ts1.tv_sec) * 1000000000ULL + (uint64_t)(ts2.tv_nsec - ts1.tv_nsec);
-        total_time_ns += delta_ns;
+        auto stop = std::chrono::high_resolution_clock::now();
+        total_time_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(stop - start).count();
         if (rval == 0)
             nfound++;
 #endif
@@ -436,13 +434,10 @@ static void Lookup(int n)
     mdb_cursor_close(cursor);
     mdb_txn_abort(txn);
 #endif
-    uint64_t timediff = total_time;
-#ifdef MABAIN
-    timediff = total_time_ns / 1000ULL; // convert ns to us at the end
-#endif
+    double timediff_us = total_time_ns / 1000.0; // ns -> us
 
     std::cout << "found " << nfound << " key-value pairs\n";
-    std::cout << "===== " << timediff * 1.0 / n << " micro seconds per lookup\n";
+    std::cout << "===== " << timediff_us / n << " micro seconds per lookup\n";
 // (unordered_map) test removed per request
 #ifdef MABAIN
     if (db) {
@@ -467,9 +462,7 @@ static void Delete(int n)
 #endif
 
     uint64_t total_time = 0;
-#ifdef MABAIN
-    uint64_t total_time_ns = 0; // accumulate in nanoseconds for precision
-#endif
+
     for (int i = 0; i < n; i++) {
         std::string key;
         if (key_type == 0) {
@@ -523,12 +516,10 @@ static void Delete(int n)
                 nfound++;
         }
 #elif MABAIN
-        struct timespec ts1, ts2;
-        clock_gettime(CLOCK_MONOTONIC_RAW, &ts1);
+        auto start = std::chrono::high_resolution_clock::now();
         int rval = db->Remove(key.data(), static_cast<int>(key.size()));
-        clock_gettime(CLOCK_MONOTONIC_RAW, &ts2);
-        uint64_t delta_ns = (uint64_t)(ts2.tv_sec - ts1.tv_sec) * 1000000000ULL + (uint64_t)(ts2.tv_nsec - ts1.tv_nsec);
-        total_time_ns += delta_ns;
+        auto stop = std::chrono::high_resolution_clock::now();
+        total_time += std::chrono::duration_cast<std::chrono::microseconds>(stop - start).count();
         if (rval == 0)
             nfound++;
 #endif
@@ -545,9 +536,6 @@ static void Delete(int n)
 
     std::cout << "deleted " << nfound << " key-value pairs\n";
     uint64_t timediff = total_time;
-#ifdef MABAIN
-    timediff = total_time_ns / 1000ULL; // convert ns to us
-#endif
     std::cout << "===== " << timediff * 1.0 / n << " micro seconds per deletion\n";
 }
 
@@ -627,7 +615,6 @@ static void* Reader(void* arg)
     std::cout << "\n[reader : " << tid << "] started" << std::endl;
     while (i < num) {
         std::string key;
-        bool found = false;
 
         if (key_type == 0) {
             key = std::to_string(i);
@@ -646,17 +633,11 @@ static void* Reader(void* arg)
         std::string value;
 #ifdef LEVEL_DB
         leveldb::Status s = db->Get(leveldb::ReadOptions(), key, &value);
-        if (s.ok()) {
-            found = true;
-        }
 #elif MABAIN
         mabain::MBData mbd;
         // Avoid value reads to reduce contention during concurrency
         mbd.options = mabain::CONSTS::OPTION_KEY_ONLY;
-        int rval = db_r->Find(key, mbd);
-        if (rval == 0) {
-            found = true;
-        }
+        db_r->Find(key, mbd);
 #endif
         // Always advance to avoid indefinite spin if writer lags on a key
         if ((++i) % ONE_MILLION == 0) {

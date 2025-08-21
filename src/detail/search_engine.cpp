@@ -14,52 +14,13 @@
 namespace mabain {
 namespace detail {
 
-    namespace profile {
-        static std::atomic<uint64_t> g_calls { 0 };
-        static std::atomic<uint64_t> g_ns_cache { 0 };
-        static std::atomic<uint64_t> g_ns_root { 0 };
-        static std::atomic<uint64_t> g_ns_trav { 0 };
-        static std::atomic<uint64_t> g_ns_resolve { 0 };
-
-        bool enabled()
-        {
-            static int en = []() {
-                const char* e = std::getenv("MB_PROFILE_FIND");
-                return (e && *e && std::strcmp(e, "0") != 0) ? 1 : 0;
-            }();
-            return en != 0;
-        }
-        void add_cache_probe(uint64_t ns) { g_ns_cache.fetch_add(ns, std::memory_order_relaxed); }
-        void add_root_step(uint64_t ns) { g_ns_root.fetch_add(ns, std::memory_order_relaxed); }
-        void add_traverse(uint64_t ns) { g_ns_trav.fetch_add(ns, std::memory_order_relaxed); }
-        void add_resolve(uint64_t ns) { g_ns_resolve.fetch_add(ns, std::memory_order_relaxed); }
-        void add_call() { g_calls.fetch_add(1, std::memory_order_relaxed); }
-
-        void reset()
-        {
-            g_calls.store(0, std::memory_order_relaxed);
-            g_ns_cache.store(0, std::memory_order_relaxed);
-            g_ns_root.store(0, std::memory_order_relaxed);
-            g_ns_trav.store(0, std::memory_order_relaxed);
-            g_ns_resolve.store(0, std::memory_order_relaxed);
-        }
-        void snapshot(uint64_t& calls, uint64_t& ns_cache, uint64_t& ns_root,
-            uint64_t& ns_traverse, uint64_t& ns_resolve)
-        {
-            calls = g_calls.load(std::memory_order_relaxed);
-            ns_cache = g_ns_cache.load(std::memory_order_relaxed);
-            ns_root = g_ns_root.load(std::memory_order_relaxed);
-            ns_traverse = g_ns_trav.load(std::memory_order_relaxed);
-            ns_resolve = g_ns_resolve.load(std::memory_order_relaxed);
-        }
-    }
+    // Profiling code removed
 
     int SearchEngine::find(const uint8_t* key, int len, MBData& data)
     {
         int rval;
         size_t rc_root_offset = dict.GetHeaderPtr()->rc_root_offset.load(MEMORY_ORDER_READER);
-        if (profile::enabled())
-            profile::add_call();
+        // profiling removed
 
         if (rc_root_offset != 0) {
             dict.reader_rc_off = rc_root_offset;
@@ -360,10 +321,7 @@ namespace detail {
 #ifdef __LOCK_FREE__
             ReaderLFGuard lf_guard(dict.lfree, data);
 #endif
-            bool prof = profile::enabled();
-            struct timespec rs1, rs2;
-            if (prof)
-                clock_gettime(CLOCK_MONOTONIC_RAW, &rs1);
+            // profiling removed
             rval = dict.mm.GetRootEdge(root_off, key[0], edge_ptrs);
             if (rval != MBError::SUCCESS) {
                 return MBError::READ_ERROR;
@@ -408,18 +366,6 @@ namespace detail {
                 consumed += edge_len;
                 len -= edge_len;
                 if (len <= 0) {
-                    if (prof) {
-                        clock_gettime(CLOCK_MONOTONIC_RAW, &rs2);
-                        profile::add_root_step((uint64_t)(rs2.tv_sec - rs1.tv_sec) * 1000000000ULL + (uint64_t)(rs2.tv_nsec - rs1.tv_nsec));
-                    }
-                    if (prof) {
-                        struct timespec t1, t2;
-                        clock_gettime(CLOCK_MONOTONIC_RAW, &t1);
-                        int _ret = resolveMatchOrInDict(data, edge_ptrs, true);
-                        clock_gettime(CLOCK_MONOTONIC_RAW, &t2);
-                        profile::add_resolve((uint64_t)(t2.tv_sec - t1.tv_sec) * 1000000000ULL + (uint64_t)(t2.tv_nsec - t1.tv_nsec));
-                        return _ret;
-                    }
                     return resolveMatchOrInDict(data, edge_ptrs, true);
                 }
                 if (isLeaf(edge_ptrs)) {
@@ -430,28 +376,12 @@ namespace detail {
                             return _r;
                     }
 #endif
-                    if (prof) {
-                        clock_gettime(CLOCK_MONOTONIC_RAW, &rs2);
-                        profile::add_root_step((uint64_t)(rs2.tv_sec - rs1.tv_sec) * 1000000000ULL + (uint64_t)(rs2.tv_nsec - rs1.tv_nsec));
-                    }
                     return MBError::NOT_EXIST;
                 }
                 // Find does not update prefix cache; writer seeds during Add
             } else if (edge_len == len) {
                 if (remainderMatches(key_buff, key_cursor, edge_len_m1)) {
                     // Find does not update prefix cache; writer seeds during Add
-                    if (prof) {
-                        clock_gettime(CLOCK_MONOTONIC_RAW, &rs2);
-                        profile::add_root_step((uint64_t)(rs2.tv_sec - rs1.tv_sec) * 1000000000ULL + (uint64_t)(rs2.tv_nsec - rs1.tv_nsec));
-                    }
-                    if (prof) {
-                        struct timespec t1, t2;
-                        clock_gettime(CLOCK_MONOTONIC_RAW, &t1);
-                        int _ret = resolveMatchOrInDict(data, edge_ptrs, true);
-                        clock_gettime(CLOCK_MONOTONIC_RAW, &t2);
-                        profile::add_resolve((uint64_t)(t2.tv_sec - t1.tv_sec) * 1000000000ULL + (uint64_t)(t2.tv_nsec - t1.tv_nsec));
-                        return _ret;
-                    }
                     return resolveMatchOrInDict(data, edge_ptrs, true);
                 }
 #ifdef __LOCK_FREE__
@@ -480,24 +410,12 @@ namespace detail {
                     return _r;
             }
 #endif
-            if (prof) {
-                clock_gettime(CLOCK_MONOTONIC_RAW, &rs2);
-                profile::add_root_step((uint64_t)(rs2.tv_sec - rs1.tv_sec) * 1000000000ULL + (uint64_t)(rs2.tv_nsec - rs1.tv_nsec));
-            }
+            // profiling removed
         }
 
         if (used_cache) {
-            if (len <= 0) {
-                if (profile::enabled()) {
-                    struct timespec t1, t2;
-                    clock_gettime(CLOCK_MONOTONIC_RAW, &t1);
-                    int _ret = resolveMatchOrInDict(data, edge_ptrs, false);
-                    clock_gettime(CLOCK_MONOTONIC_RAW, &t2);
-                    profile::add_resolve((uint64_t)(t2.tv_sec - t1.tv_sec) * 1000000000ULL + (uint64_t)(t2.tv_nsec - t1.tv_nsec));
-                    return _ret;
-                }
+            if (len <= 0)
                 return resolveMatchOrInDict(data, edge_ptrs, false);
-            }
             if (isLeaf(edge_ptrs))
                 return MBError::NOT_EXIST;
         }
@@ -507,10 +425,7 @@ namespace detail {
     int SearchEngine::traverseFromEdge(const uint8_t*& key_cursor, int& len, int& consumed,
         const uint8_t* full_key, int full_len, EdgePtrs& edge_ptrs, MBData& data)
     {
-        bool prof = profile::enabled();
-        struct timespec ts1, ts2;
-        if (prof)
-            clock_gettime(CLOCK_MONOTONIC_RAW, &ts1);
+        // profiling removed
         const uint8_t* key_buff;
         uint8_t* node_buff = data.node_buff;
         int rval = MBError::SUCCESS;
@@ -564,28 +479,11 @@ namespace detail {
             len -= edge_len;
             if (len <= 0) {
                 // Find does not update prefix cache; writer seeds during Add
-                if (prof)
-                    clock_gettime(CLOCK_MONOTONIC_RAW, &ts2);
-                {
-                    struct timespec t1, t2;
-                    if (prof)
-                        clock_gettime(CLOCK_MONOTONIC_RAW, &t1);
-                    int _ret = resolveMatchOrInDict(data, edge_ptrs, false);
-                    if (prof) {
-                        clock_gettime(CLOCK_MONOTONIC_RAW, &t2);
-                        profile::add_resolve((uint64_t)(t2.tv_sec - t1.tv_sec) * 1000000000ULL + (uint64_t)(t2.tv_nsec - t1.tv_nsec));
-                    }
-                    if (prof)
-                        profile::add_traverse((uint64_t)(ts2.tv_sec - ts1.tv_sec) * 1000000000ULL + (uint64_t)(ts2.tv_nsec - ts1.tv_nsec));
-                    return _ret;
-                }
+                int _ret = resolveMatchOrInDict(data, edge_ptrs, false);
+                return _ret;
             }
             if (isLeaf(edge_ptrs)) {
                 // Find does not update prefix cache; writer seeds during Add
-                if (prof) {
-                    clock_gettime(CLOCK_MONOTONIC_RAW, &ts2);
-                    profile::add_traverse((uint64_t)(ts2.tv_sec - ts1.tv_sec) * 1000000000ULL + (uint64_t)(ts2.tv_nsec - ts1.tv_nsec));
-                }
                 return MBError::NOT_EXIST;
             }
 
@@ -606,10 +504,7 @@ namespace detail {
                 return _r;
         }
 #endif
-        if (prof) {
-            clock_gettime(CLOCK_MONOTONIC_RAW, &ts2);
-            profile::add_traverse((uint64_t)(ts2.tv_sec - ts1.tv_sec) * 1000000000ULL + (uint64_t)(ts2.tv_nsec - ts1.tv_nsec));
-        }
+        // profiling removed
         return rval;
     }
 

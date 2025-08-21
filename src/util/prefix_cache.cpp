@@ -179,12 +179,18 @@ bool PrefixCache::map_shared(const std::string& path)
     tab4 = (cap4 ? reinterpret_cast<PrefixCacheEntry*>(p) : nullptr);
 
     if (init) {
-        std::memset(tag2, 0, sizeof(uint32_t) * (cap2 ? cap2 : 1));
-        if (cap3)
-            std::memset(tag3, 0, sizeof(uint32_t) * cap3);
+        size_t c2 = (cap2 ? cap2 : 1);
+        for (size_t i = 0; i < c2; ++i)
+            tag2[i].store(0u, std::memory_order_relaxed);
+        if (cap3) {
+            for (size_t i = 0; i < cap3; ++i)
+                tag3[i].store(0u, std::memory_order_relaxed);
+        }
         if (cap4) {
-            std::memset(valid4, 0, sizeof(uint32_t) * cap4);
-            std::memset(tag4, 0, sizeof(uint32_t) * cap4);
+            for (size_t i = 0; i < cap4; ++i) {
+                valid4[i].store(0u, std::memory_order_relaxed);
+                tag4[i].store(0u, std::memory_order_relaxed);
+            }
         }
     } else {
         (void)::madvise(shm_base, shm_size, MADV_WILLNEED);
@@ -398,12 +404,18 @@ size_t PrefixCache::Size3() const
 
 void PrefixCache::Clear()
 {
-    std::memset(tag2, 0, sizeof(uint32_t) * (cap2 ? cap2 : 1));
-    if (cap3)
-        std::memset(tag3, 0, sizeof(uint32_t) * cap3);
+    size_t c2 = (cap2 ? cap2 : 1);
+    for (size_t i = 0; i < c2; ++i)
+        tag2[i].store(0u, std::memory_order_relaxed);
+    if (cap3) {
+        for (size_t i = 0; i < cap3; ++i)
+            tag3[i].store(0u, std::memory_order_relaxed);
+    }
     if (cap4) {
-        std::memset(valid4, 0, sizeof(uint32_t) * cap4);
-        std::memset(tag4, 0, sizeof(uint32_t) * cap4);
+        for (size_t i = 0; i < cap4; ++i) {
+            valid4[i].store(0u, std::memory_order_relaxed);
+            tag4[i].store(0u, std::memory_order_relaxed);
+        }
     }
 }
 

@@ -781,30 +781,12 @@ void DB::ResetPrefixCacheStats() const
 
 void DB::DumpFindProfileStats(std::ostream& os) const
 {
-    using namespace mabain::detail::profile;
-    if (!enabled()) {
-        os << "FindProfile: disabled" << std::endl;
-        return;
-    }
-    uint64_t calls = 0, ns_cache = 0, ns_root = 0, ns_trav = 0, ns_res = 0;
-    snapshot(calls, ns_cache, ns_root, ns_trav, ns_res);
-    double us_total = (ns_cache + ns_root + ns_trav + ns_res) / 1000.0;
-    double us_per = calls ? (us_total / calls) : 0.0;
-    os << "FindProfile: calls=" << calls
-       << " cache_us=" << (ns_cache / 1000.0)
-       << " root_us=" << (ns_root / 1000.0)
-       << " trav_us=" << (ns_trav / 1000.0)
-       << " resolve_us=" << (ns_res / 1000.0)
-       << " total_us=" << us_total
-       << " per_call_us=" << us_per
-       << std::endl;
+    os << "FindProfile: disabled" << std::endl;
 }
 
 void DB::ResetFindProfileStats() const
 {
-    using namespace mabain::detail::profile;
-    if (enabled())
-        reset();
+    // no-op: profiling removed
 }
 
 void DB::EnableSharedPrefixCache(size_t capacity)
