@@ -20,8 +20,8 @@
 
 #include <gtest/gtest.h>
 
-#include "../dict.h"
 #include "../detail/search_engine.h"
+#include "../dict.h"
 #include "../drm_base.h"
 #include "../integer_4b_5b.h"
 #include "../resource_pool.h"

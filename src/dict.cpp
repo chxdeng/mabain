@@ -284,6 +284,7 @@ int Dict::Add(const uint8_t* key, int len, MBData& data, bool overwrite)
         if (inc_count)
             header->count++;
     }
+    // After a successful add, seed prefix cache at canonical 2/3-byte boundaries.
     if (rval == MBError::SUCCESS && prefix_cache) {
         SeedCanonicalBoundariesAfterAdd(key, orig_len, /*from_add=*/true);
     }
@@ -339,8 +340,8 @@ void Dict::SeedCanonicalBoundariesAfterAdd(const uint8_t* key, int len, bool fro
             }
             if (edge_ptrs.flag_ptr[0] & EDGE_FLAG_DATA_OFF)
                 return; // leaf
-            // mirror find: seed at this consumed depth
-            MaybePutCache(key, len, consumed, edge_ptrs, from_add);
+            // Defer seeding at this consumed depth until we've loaded the
+            // next edge (so cache stores the correct traversal state).
         } else {
             return;
         }
@@ -1098,11 +1099,11 @@ void Dict::MaybePutCache(const uint8_t* full_key, int full_len, int consumed,
         if (consumed == 3) {
             PrefixCacheEntry e { edge_ptrs.offset, { 0 }, static_cast<uint32_t>(from_add ? 1 : 2) };
             memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
-            prefix_cache->Put(full_key, 3, e);
+            prefix_cache->PutAtDepth(full_key, 3, e);
         } else if (consumed == 2) {
             PrefixCacheEntry e2 { edge_ptrs.offset, { 0 }, static_cast<uint32_t>(from_add ? 1 : 2) };
             memcpy(e2.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
-            prefix_cache->Put(full_key, 2, e2);
+            prefix_cache->PutAtDepth(full_key, 2, e2);
         }
     }
 }

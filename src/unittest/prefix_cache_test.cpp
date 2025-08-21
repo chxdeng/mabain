@@ -2,8 +2,8 @@
  * Prefix cache update tests
  */
 
-#include <string>
 #include <cstring>
+#include <string>
 
 #include <gtest/gtest.h>
 
@@ -20,7 +20,10 @@ namespace {
 
 class PrefixCacheTest : public ::testing::Test {
 public:
-    PrefixCacheTest() : db(nullptr) {}
+    PrefixCacheTest()
+        : db(nullptr)
+    {
+    }
     ~PrefixCacheTest() override
     {
         if (db) {
@@ -125,7 +128,7 @@ TEST_F(PrefixCacheTest, SeedFromCache_GetDepth)
     PrefixCacheIface* pc = dict->ActivePrefixCache();
     ASSERT_NE(pc, nullptr);
 
-    PrefixCacheEntry e{};
+    PrefixCacheEntry e {};
     int n = pc->GetDepth(reinterpret_cast<const uint8_t*>("xyQ"), 3, e);
     // Should have at least a 2-byte seed hit
     EXPECT_GE(n, 2);
@@ -133,12 +136,12 @@ TEST_F(PrefixCacheTest, SeedFromCache_GetDepth)
     EXPECT_GT(e.edge_offset, (size_t)0);
 
     // Unrelated prefix should miss
-    PrefixCacheEntry e2{};
+    PrefixCacheEntry e2 {};
     int n2 = pc->GetDepth(reinterpret_cast<const uint8_t*>("zz"), 2, e2);
     EXPECT_EQ(n2, 0);
 
     // Very short keys (<2) should not hit
-    PrefixCacheEntry e3{};
+    PrefixCacheEntry e3 {};
     int n3 = pc->GetDepth(reinterpret_cast<const uint8_t*>("x"), 1, e3);
     EXPECT_EQ(n3, 0);
 }

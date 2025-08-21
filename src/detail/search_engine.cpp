@@ -7,15 +7,59 @@
 #include "detail/lf_guard.h"
 #include "dict.h"
 #include "util/prefix_cache.h"
+#include <cstdlib>
+#include <cstdlib> // getenv
+#include <cstring>
 #include <time.h>
 
 namespace mabain {
 namespace detail {
 
+    namespace profile {
+        static std::atomic<uint64_t> g_calls { 0 };
+        static std::atomic<uint64_t> g_ns_cache { 0 };
+        static std::atomic<uint64_t> g_ns_root { 0 };
+        static std::atomic<uint64_t> g_ns_trav { 0 };
+        static std::atomic<uint64_t> g_ns_resolve { 0 };
+
+        bool enabled()
+        {
+            static int en = []() {
+                const char* e = std::getenv("MB_PROFILE_FIND");
+                return (e && *e && std::strcmp(e, "0") != 0) ? 1 : 0;
+            }();
+            return en != 0;
+        }
+        void add_cache_probe(uint64_t ns) { g_ns_cache.fetch_add(ns, std::memory_order_relaxed); }
+        void add_root_step(uint64_t ns) { g_ns_root.fetch_add(ns, std::memory_order_relaxed); }
+        void add_traverse(uint64_t ns) { g_ns_trav.fetch_add(ns, std::memory_order_relaxed); }
+        void add_resolve(uint64_t ns) { g_ns_resolve.fetch_add(ns, std::memory_order_relaxed); }
+        void add_call() { g_calls.fetch_add(1, std::memory_order_relaxed); }
+        void reset()
+        {
+            g_calls.store(0, std::memory_order_relaxed);
+            g_ns_cache.store(0, std::memory_order_relaxed);
+            g_ns_root.store(0, std::memory_order_relaxed);
+            g_ns_trav.store(0, std::memory_order_relaxed);
+            g_ns_resolve.store(0, std::memory_order_relaxed);
+        }
+        void snapshot(uint64_t& calls, uint64_t& ns_cache, uint64_t& ns_root,
+            uint64_t& ns_traverse, uint64_t& ns_resolve)
+        {
+            calls = g_calls.load(std::memory_order_relaxed);
+            ns_cache = g_ns_cache.load(std::memory_order_relaxed);
+            ns_root = g_ns_root.load(std::memory_order_relaxed);
+            ns_traverse = g_ns_trav.load(std::memory_order_relaxed);
+            ns_resolve = g_ns_resolve.load(std::memory_order_relaxed);
+        }
+    }
+
     int SearchEngine::find(const uint8_t* key, int len, MBData& data)
     {
         int rval;
         size_t rc_root_offset = dict.GetHeaderPtr()->rc_root_offset.load(MEMORY_ORDER_READER);
+        if (profile::enabled())
+            profile::add_call();
 
         if (rc_root_offset != 0) {
             dict.reader_rc_off = rc_root_offset;
@@ -299,82 +343,31 @@ namespace detail {
     int SearchEngine::findInternal(size_t root_off, const uint8_t* key, int len, MBData& data)
     {
         EdgePtrs& edge_ptrs = data.edge_ptrs;
+        int rval;
         const uint8_t* key_cursor = key;
-        const int orig_len = len;
+        int orig_len = len;
         int consumed = 0;
+        const uint8_t* key_buff;
+        // Allow disabling prefix-cache usage for debugging via env var
+        static int disable_pfx_cache = []() {
+            const char* e = std::getenv("MB_DISABLE_PFXCACHE");
+            return (e && *e && std::strcmp(e, "0") != 0) ? 1 : 0;
+        }();
+        bool use_cache = !disable_pfx_cache && !(dict.reader_rc_off != 0 && root_off == dict.reader_rc_off);
+        bool used_cache = use_cache ? seedFromCache(key, len, edge_ptrs, data, key_cursor, len, consumed) : false;
 
-        // Use cache unless we're on the RC root (structure may differ)
-        // or the caller needs parent info (writer Remove path).
-        const bool use_cache = !(dict.reader_rc_off != 0 && root_off == dict.reader_rc_off)
-                               && !(data.options & CONSTS::OPTION_FIND_AND_STORE_PARENT);
-        const bool used_cache = use_cache && seedFromCache(key, len, edge_ptrs, data, key_cursor, len, consumed);
-        bool need_root_probe = !used_cache;
-
-        // If we seeded from cache, mirror the root-edge fast-path logic:
-        // - If we've consumed the entire key, resolve immediately from this edge.
-        // - If the cached edge is a leaf but the key has remaining bytes, it's a miss.
-        if (used_cache) {
-            if (len <= 0) {
-                return resolveMatchOrInDict(data, edge_ptrs, false);
-            }
-            // Mirror the root-edge fast-path: compare the remainder of the
-            // current edge label before attempting to descend further.
-            const int edge_len = edge_ptrs.len_ptr[0];
-            const int edge_len_m1 = edge_len - 1;
-            const uint8_t* key_buff;
-            int r = loadEdgeKey(edge_ptrs, data, key_buff, edge_len_m1);
-            if (r != MBError::SUCCESS)
-                return MBError::READ_ERROR;
-
-            if (edge_len < len) {
-                if (!remainderMatches(key_buff, key_cursor, edge_len_m1)) {
-                    // Cached path diverged; fall back to root without cache
-                    need_root_probe = true;
-                    key_cursor = key;
-                    len = orig_len;
-                    consumed = 0;
-                    // proceed to root probe
-                } else {
-                    key_cursor += edge_len;
-                    consumed += edge_len;
-                    len -= edge_len;
-                    if (len <= 0)
-                        return resolveMatchOrInDict(data, edge_ptrs, false);
-                    if (isLeaf(edge_ptrs)) {
-                        // leaf cannot have children; miss -> fallback
-                        need_root_probe = true;
-                        key_cursor = key;
-                        len = orig_len;
-                        consumed = 0;
-                    }
-                    // otherwise proceed to traverse from this edge below if no fallback
-                }
-            } else if (edge_len == len) {
-                if (remainderMatches(key_buff, key_cursor, edge_len_m1)) {
-                    return resolveMatchOrInDict(data, edge_ptrs, false);
-                }
-                // mismatch at exact length -> fallback
-                need_root_probe = true;
-                key_cursor = key;
-                len = orig_len;
-                consumed = 0;
-            } else {
-                // key shorter than cached edge -> fallback
-                need_root_probe = true;
-                key_cursor = key;
-                len = orig_len;
-                consumed = 0;
-            }
-        }
-
-        if (need_root_probe) {
+        if (!used_cache) {
 #ifdef __LOCK_FREE__
             ReaderLFGuard lf_guard(dict.lfree, data);
 #endif
-            // Load root edge for this key's first byte
-            int r = dict.mm.GetRootEdge(root_off, key[0], edge_ptrs);
-            if (r != MBError::SUCCESS)
+            bool prof = profile::enabled();
+            struct timespec rs1, rs2;
+            if (prof)
+                clock_gettime(CLOCK_MONOTONIC_RAW, &rs1);
+            rval = dict.mm.GetRootEdge(root_off, key[0], edge_ptrs);
+            if (rval != MBError::SUCCESS) {
                 return MBError::READ_ERROR;
+            }
             if (edge_ptrs.len_ptr[0] == 0) {
 #ifdef __LOCK_FREE__
                 {
@@ -386,12 +379,10 @@ namespace detail {
                 return MBError::NOT_EXIST;
             }
 
-            // Compare the remainder of the root edge label
-            const int edge_len = edge_ptrs.len_ptr[0];
-            const int edge_len_m1 = edge_len - 1;
-            const uint8_t* key_buff;
-            r = loadEdgeKey(edge_ptrs, data, key_buff, edge_len_m1);
-            if (r != MBError::SUCCESS) {
+            int edge_len = edge_ptrs.len_ptr[0];
+            int edge_len_m1 = edge_len - 1;
+            rval = MBError::NOT_EXIST;
+            if ((rval = loadEdgeKey(edge_ptrs, data, key_buff, edge_len_m1)) != MBError::SUCCESS) {
 #ifdef __LOCK_FREE__
                 {
                     int _r = lf_guard.stop(edge_ptrs.offset);
@@ -413,12 +404,24 @@ namespace detail {
 #endif
                     return MBError::NOT_EXIST;
                 }
-                // Advance past the root edge
                 key_cursor += edge_len;
                 consumed += edge_len;
                 len -= edge_len;
-                if (len <= 0)
+                if (len <= 0) {
+                    if (prof) {
+                        clock_gettime(CLOCK_MONOTONIC_RAW, &rs2);
+                        profile::add_root_step((uint64_t)(rs2.tv_sec - rs1.tv_sec) * 1000000000ULL + (uint64_t)(rs2.tv_nsec - rs1.tv_nsec));
+                    }
+                    if (prof) {
+                        struct timespec t1, t2;
+                        clock_gettime(CLOCK_MONOTONIC_RAW, &t1);
+                        int _ret = resolveMatchOrInDict(data, edge_ptrs, true);
+                        clock_gettime(CLOCK_MONOTONIC_RAW, &t2);
+                        profile::add_resolve((uint64_t)(t2.tv_sec - t1.tv_sec) * 1000000000ULL + (uint64_t)(t2.tv_nsec - t1.tv_nsec));
+                        return _ret;
+                    }
                     return resolveMatchOrInDict(data, edge_ptrs, true);
+                }
                 if (isLeaf(edge_ptrs)) {
 #ifdef __LOCK_FREE__
                     {
@@ -427,11 +430,30 @@ namespace detail {
                             return _r;
                     }
 #endif
+                    if (prof) {
+                        clock_gettime(CLOCK_MONOTONIC_RAW, &rs2);
+                        profile::add_root_step((uint64_t)(rs2.tv_sec - rs1.tv_sec) * 1000000000ULL + (uint64_t)(rs2.tv_nsec - rs1.tv_nsec));
+                    }
                     return MBError::NOT_EXIST;
                 }
+                // Find does not update prefix cache; writer seeds during Add
             } else if (edge_len == len) {
-                if (remainderMatches(key_buff, key_cursor, edge_len_m1))
+                if (remainderMatches(key_buff, key_cursor, edge_len_m1)) {
+                    // Find does not update prefix cache; writer seeds during Add
+                    if (prof) {
+                        clock_gettime(CLOCK_MONOTONIC_RAW, &rs2);
+                        profile::add_root_step((uint64_t)(rs2.tv_sec - rs1.tv_sec) * 1000000000ULL + (uint64_t)(rs2.tv_nsec - rs1.tv_nsec));
+                    }
+                    if (prof) {
+                        struct timespec t1, t2;
+                        clock_gettime(CLOCK_MONOTONIC_RAW, &t1);
+                        int _ret = resolveMatchOrInDict(data, edge_ptrs, true);
+                        clock_gettime(CLOCK_MONOTONIC_RAW, &t2);
+                        profile::add_resolve((uint64_t)(t2.tv_sec - t1.tv_sec) * 1000000000ULL + (uint64_t)(t2.tv_nsec - t1.tv_nsec));
+                        return _ret;
+                    }
                     return resolveMatchOrInDict(data, edge_ptrs, true);
+                }
 #ifdef __LOCK_FREE__
                 {
                     int _r = lf_guard.stop(edge_ptrs.offset);
@@ -458,15 +480,37 @@ namespace detail {
                     return _r;
             }
 #endif
+            if (prof) {
+                clock_gettime(CLOCK_MONOTONIC_RAW, &rs2);
+                profile::add_root_step((uint64_t)(rs2.tv_sec - rs1.tv_sec) * 1000000000ULL + (uint64_t)(rs2.tv_nsec - rs1.tv_nsec));
+            }
         }
 
-        // Continue traversal from the current edge/state
+        if (used_cache) {
+            if (len <= 0) {
+                if (profile::enabled()) {
+                    struct timespec t1, t2;
+                    clock_gettime(CLOCK_MONOTONIC_RAW, &t1);
+                    int _ret = resolveMatchOrInDict(data, edge_ptrs, false);
+                    clock_gettime(CLOCK_MONOTONIC_RAW, &t2);
+                    profile::add_resolve((uint64_t)(t2.tv_sec - t1.tv_sec) * 1000000000ULL + (uint64_t)(t2.tv_nsec - t1.tv_nsec));
+                    return _ret;
+                }
+                return resolveMatchOrInDict(data, edge_ptrs, false);
+            }
+            if (isLeaf(edge_ptrs))
+                return MBError::NOT_EXIST;
+        }
         return traverseFromEdge(key_cursor, len, consumed, key, orig_len, edge_ptrs, data);
     }
 
     int SearchEngine::traverseFromEdge(const uint8_t*& key_cursor, int& len, int& consumed,
         const uint8_t* full_key, int full_len, EdgePtrs& edge_ptrs, MBData& data)
     {
+        bool prof = profile::enabled();
+        struct timespec ts1, ts2;
+        if (prof)
+            clock_gettime(CLOCK_MONOTONIC_RAW, &ts1);
         const uint8_t* key_buff;
         uint8_t* node_buff = data.node_buff;
         int rval = MBError::SUCCESS;
@@ -488,7 +532,17 @@ namespace detail {
 #endif
                 return MBError::UNKNOWN_ERROR;
             }
-            rval = dict.mm.NextEdge(key_cursor, edge_ptrs, node_buff, data);
+            if (data.options & CONSTS::OPTION_FIND_AND_STORE_PARENT) {
+                rval = dict.mm.NextEdge(key_cursor, edge_ptrs, node_buff, data);
+            } else {
+                int rf = dict.mm.NextEdgeFast(key_cursor, edge_ptrs, data);
+                if (rf == MBError::INVALID_ARG) {
+                    // Fallback to generic path if fast path not applicable
+                    rval = dict.mm.NextEdge(key_cursor, edge_ptrs, node_buff, data);
+                } else {
+                    rval = rf;
+                }
+            }
             if (rval != MBError::SUCCESS)
                 break;
 
@@ -509,19 +563,35 @@ namespace detail {
 
             len -= edge_len;
             if (len <= 0) {
-                // No seeding during Find; shared cache is populated at Add-time
-                rval = resolveMatchOrInDict(data, edge_ptrs, false);
-                break;
+                // Find does not update prefix cache; writer seeds during Add
+                if (prof)
+                    clock_gettime(CLOCK_MONOTONIC_RAW, &ts2);
+                {
+                    struct timespec t1, t2;
+                    if (prof)
+                        clock_gettime(CLOCK_MONOTONIC_RAW, &t1);
+                    int _ret = resolveMatchOrInDict(data, edge_ptrs, false);
+                    if (prof) {
+                        clock_gettime(CLOCK_MONOTONIC_RAW, &t2);
+                        profile::add_resolve((uint64_t)(t2.tv_sec - t1.tv_sec) * 1000000000ULL + (uint64_t)(t2.tv_nsec - t1.tv_nsec));
+                    }
+                    if (prof)
+                        profile::add_traverse((uint64_t)(ts2.tv_sec - ts1.tv_sec) * 1000000000ULL + (uint64_t)(ts2.tv_nsec - ts1.tv_nsec));
+                    return _ret;
+                }
             }
             if (isLeaf(edge_ptrs)) {
-                // No seeding during Find; shared cache is populated at Add-time
-                rval = MBError::NOT_EXIST;
-                break;
+                // Find does not update prefix cache; writer seeds during Add
+                if (prof) {
+                    clock_gettime(CLOCK_MONOTONIC_RAW, &ts2);
+                    profile::add_traverse((uint64_t)(ts2.tv_sec - ts1.tv_sec) * 1000000000ULL + (uint64_t)(ts2.tv_nsec - ts1.tv_nsec));
+                }
+                return MBError::NOT_EXIST;
             }
 
             key_cursor += edge_len;
             consumed += edge_len;
-            // No seeding during Find; shared cache is populated at Add-time
+            // Find does not update prefix cache; writer seeds during Add
 #ifdef __LOCK_FREE__
             edge_offset_prev = edge_ptrs.offset;
 #else
@@ -536,6 +606,10 @@ namespace detail {
                 return _r;
         }
 #endif
+        if (prof) {
+            clock_gettime(CLOCK_MONOTONIC_RAW, &ts2);
+            profile::add_traverse((uint64_t)(ts2.tv_sec - ts1.tv_sec) * 1000000000ULL + (uint64_t)(ts2.tv_nsec - ts1.tv_nsec));
+        }
         return rval;
     }
 

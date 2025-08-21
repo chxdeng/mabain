@@ -247,6 +247,40 @@ void PrefixCache::Put(const uint8_t* key, int len, const PrefixCacheEntry& in)
     }
 }
 
+void PrefixCache::PutAtDepth(const uint8_t* key, int depth, const PrefixCacheEntry& in)
+{
+    if (depth == 3 && cap3 > 0) {
+        uint32_t p3;
+        if (build3(key, 3, p3)) {
+            size_t idx3 = static_cast<size_t>(p3) & mask3;
+            uint32_t old_tag = tag3[idx3].load(std::memory_order_relaxed);
+            PrefixCacheEntry e = in;
+            if (old_tag != 0)
+                e.lf_counter |= tab3[idx3].lf_counter;
+            tag3[idx3].store(0, std::memory_order_release);
+            tab3[idx3] = e;
+            tag3[idx3].store(p3 + 1, std::memory_order_release);
+            ++put_count;
+        }
+        return;
+    }
+    if (depth == 2) {
+        uint16_t p2;
+        if (build2(key, 2, p2)) {
+            size_t idx2 = static_cast<size_t>(p2) & mask2;
+            uint32_t old_tag = tag2[idx2].load(std::memory_order_relaxed);
+            PrefixCacheEntry e = in;
+            if (old_tag != 0)
+                e.lf_counter |= tab2[idx2].lf_counter;
+            tag2[idx2].store(0, std::memory_order_release);
+            tab2[idx2] = e;
+            tag2[idx2].store(static_cast<uint32_t>(p2) + 1, std::memory_order_release);
+            ++put_count;
+        }
+        return;
+    }
+}
+
 size_t PrefixCache::Size() const { return Size2() + Size3(); }
 
 size_t PrefixCache::Size2() const

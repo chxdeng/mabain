@@ -1202,6 +1202,46 @@ int DictMem::NextEdge(const uint8_t* key, EdgePtrs& edge_ptrs, uint8_t* node_buf
     }
 }
 
+int DictMem::NextEdgeFast(const uint8_t* key, EdgePtrs& edge_ptrs, MBData& mbdata) const
+{
+    // Resolve node offset, respecting saved-edge option as in ReadNode
+    size_t node_off;
+    if ((mbdata.options & CONSTS::OPTION_READ_SAVED_EDGE) && edge_ptrs.offset == mbdata.edge_ptrs.offset)
+        node_off = Get6BInteger(mbdata.edge_ptrs.offset_ptr);
+    else
+        node_off = Get6BInteger(edge_ptrs.offset_ptr);
+
+    // Read header (NODE_EDGE_KEY_FIRST) directly from mmap
+    const uint8_t* hdr = GetShmPtr(node_off, NODE_EDGE_KEY_FIRST);
+    if (hdr == nullptr)
+        return MBError::READ_ERROR;
+    int nt = hdr[1] + 1;
+    // Read first-chars table directly
+    const uint8_t* first_chars = GetShmPtr(node_off + NODE_EDGE_KEY_FIRST, nt);
+    if (first_chars == nullptr)
+        return MBError::READ_ERROR;
+    bool sorted = (hdr[0] & FLAG_NODE_SORTED) != 0;
+
+    // Select matching child index for key[0]
+    int match_idx, less_idx_unused, max_idx_unused;
+    select_edge_indices(first_chars, nt, key[0], sorted, match_idx, less_idx_unused, max_idx_unused);
+    if (match_idx < 0)
+        return MBError::NOT_EXIST;
+
+    // Option FIND_AND_STORE_PARENT requires bookkeeping; caller should not use fast path in that mode
+    if (mbdata.options & CONSTS::OPTION_FIND_AND_STORE_PARENT) {
+        return MBError::INVALID_ARG;
+    }
+
+    size_t offset_new = edge_offset_of(node_off, nt, match_idx);
+    // Load the edge into edge_ptrs.edge_buff
+    int byte_read = ReadData(edge_ptrs.edge_buff, EDGE_SIZE, offset_new);
+    if (byte_read != EDGE_SIZE)
+        return MBError::READ_ERROR;
+    edge_ptrs.offset = offset_new;
+    return MBError::SUCCESS;
+}
+
 void DictMem::RemoveRootEdge(const EdgePtrs& edge_ptrs)
 {
     // Clear the edge

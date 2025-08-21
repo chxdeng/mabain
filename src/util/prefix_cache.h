@@ -5,9 +5,9 @@
 #ifndef MABAIN_PREFIX_CACHE_H
 #define MABAIN_PREFIX_CACHE_H
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
-#include <atomic>
 #include <string>
 
 #include "drm_base.h" // for EDGE_SIZE
@@ -22,6 +22,7 @@ public:
     PrefixCache(const std::string& mbdir, size_t capacity = 65536);
 
     void Put(const uint8_t* key, int len, const PrefixCacheEntry& in) override;
+    void PutAtDepth(const uint8_t* key, int depth, const PrefixCacheEntry& in) override;
     int GetDepth(const uint8_t* key, int len, PrefixCacheEntry& out) const override;
     // Report the maximum prefix length this cache can seed from (3 bytes)
     int PrefixLen() const override { return 3; }
@@ -40,6 +41,7 @@ public:
 private:
     inline bool build2(const uint8_t* key, int len, uint16_t& p2) const;
     inline bool build3(const uint8_t* key, int len, uint32_t& p3) const;
+    inline bool build4(const uint8_t* key, int len, uint32_t& p4) const;
 
     const size_t cap2;
     const size_t cap3;

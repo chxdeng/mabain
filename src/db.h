@@ -219,6 +219,9 @@ public:
     void DisablePrefixCache();
     void DumpPrefixCacheStats(std::ostream& os = std::cout) const;
     void ResetPrefixCacheStats() const;
+    // Find profiling
+    void DumpFindProfileStats(std::ostream& os = std::cout) const;
+    void ResetFindProfileStats() const;
 
     // Shared prefix cache control
     void EnableSharedPrefixCache(size_t capacity = 65536);

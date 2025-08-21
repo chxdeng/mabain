@@ -18,6 +18,8 @@ class PrefixCacheIface {
 public:
     virtual ~PrefixCacheIface() = default;
     virtual void Put(const uint8_t* key, int len, const PrefixCacheEntry& in) = 0;
+    // Write only the specified table depth (2 or 3) without touching the other.
+    virtual void PutAtDepth(const uint8_t* key, int depth, const PrefixCacheEntry& in) = 0;
     // Return matched prefix length on hit (e.g., 3 or 2 for non-shared cache), 0 on miss.
     // Default implementation bridges to Get() if overridden only in one side.
     virtual int GetDepth(const uint8_t* key, int len, PrefixCacheEntry& out) const = 0;

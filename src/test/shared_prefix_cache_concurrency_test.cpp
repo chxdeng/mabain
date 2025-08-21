@@ -257,7 +257,8 @@ int main(int argc, char** argv)
     // Optional 4th arg: pcc (shared prefix cache capacity)
     if (argc > 4) {
         cfg.pfx_cap = static_cast<size_t>(std::strtoull(argv[4], nullptr, 10));
-        if (cfg.pfx_cap == 0) cfg.pfx_cap = 131072;
+        if (cfg.pfx_cap == 0)
+            cfg.pfx_cap = 131072;
     }
     if (argc > 4) {
         int pn = std::atoi(argv[4]);

@@ -69,9 +69,19 @@ static inline uint32_t prand_u32(uint64_t i)
     x *= 0x94d049bb133111ebULL;
     x ^= x >> 31;
     // Return modulo pcc (pc_cap) when provided, otherwise full 32-bit value
-    if (pc_cap > 0)
-        return static_cast<uint32_t>(x % static_cast<uint64_t>(pc_cap));
+    // if (pc_cap > 0)
+    //    return static_cast<uint32_t>(x % static_cast<uint64_t>(pc_cap));
     return static_cast<uint32_t>(x);
+}
+static inline uint64_t prand_u64(uint64_t i)
+{
+    uint64_t x = i + 0x9e3779b97f4a7c15ULL; // golden ratio seed
+    x ^= x >> 30;
+    x *= 0xbf58476d1ce4e5b9ULL;
+    x ^= x >> 27;
+    x *= 0x94d049bb133111ebULL;
+    x ^= x >> 31;
+    return x;
 }
 
 static void get_sha256_str(int key, char* sha256_str)
@@ -215,16 +225,14 @@ static void InitDB(bool writer_mode = true)
     mconf.mbdir = mbdir_tmp.c_str();
     mconf.options = mabain::CONSTS::WriterOptions();
     if (use_jemalloc) {
+        // In jemalloc mode, memcap must equal block_size * max_num_blocks
         mconf.options |= mabain::CONSTS::OPTION_JEMALLOC;
-        // Keep DB contents across writer reopens within this benchmark run
-        // so subsequent phases (lookup/delete) see inserted keys.
-        mconf.jemalloc_keep_db = true;
         mconf.block_size_index = 128LL * 1024 * 1024;
         mconf.block_size_data = 128LL * 1024 * 1024;
-        mconf.memcap_index = 10 * mconf.block_size_index;
-        mconf.memcap_data = 10 * mconf.block_size_data;
         mconf.max_num_index_block = 10;
         mconf.max_num_data_block = 10;
+        mconf.memcap_index = mconf.block_size_index * mconf.max_num_index_block;
+        mconf.memcap_data = mconf.block_size_data * mconf.max_num_data_block;
     } else {
         mconf.block_size_index = 67LL * 1024 * 1024;
         mconf.block_size_data = 67LL * 1024 * 1024;
@@ -239,6 +247,7 @@ static void InitDB(bool writer_mode = true)
     if (!writer_mode)
         mconf.options = mabain::CONSTS::ReaderOptions();
     db = new mabain::DB(mconf);
+    // Ensure DB is open; subsequent phases depend on it
     assert(db->is_open());
     // Enable shared prefix cache when -pcc is provided
     if (pc_cap > 0) {
@@ -271,13 +280,11 @@ static void Add(int n)
             }
             key = kv;
             val = kv;
-        } else { // key_type == u32 pseudo-random (binary 3 bytes, little-endian)
-            uint32_t r = prand_u32(static_cast<uint64_t>(i));
-            char le[3] = { static_cast<char>(r & 0xFF),
-                static_cast<char>((r >> 8) & 0xFF),
-                static_cast<char>((r >> 16) & 0xFF) };
-            key.assign(le, 3);
-            val.assign(le, 3);
+        } else { // key_type == u32 pseudo-random (binary 3 bytes + decimal suffix)
+            uint32_t r = prand_u64(static_cast<uint64_t>(i));
+            key.assign((char*)&r, 4);
+            key += std::to_string(i);
+            val = key;
         }
 
 #ifdef LEVEL_DB
@@ -351,14 +358,17 @@ static void Lookup(int n)
 #ifdef MABAIN
     uint64_t total_time_ns = 0; // measure whole-loop time in nanoseconds
     mabain::MBData mbd; // reuse per-iteration buffer to avoid reallocation
-    mbd.options = mabain::CONSTS::OPTION_KEY_ONLY; // skip reading values to speed exact match
+    mbd.options = mabain::CONSTS::OPTION_KEY_ONLY;
+    const char* prof_env = std::getenv("MB_PROFILE_FIND");
+    if (prof_env && *prof_env && std::strcmp(prof_env, "0") != 0) {
+        db->ResetFindProfileStats();
+    }
 #endif
 
 #ifdef MABAIN
-    // Dump stats before lookup to inspect writer-populated cache state
+    // Dump stats before lookup; cache has been seeded by writer already
     std::cout << "-- Cache stats before lookup --\n";
     db->DumpPrefixCacheStats(std::cout);
-
     if (pc_cap > 0)
         db->ResetPrefixCacheStats();
 #endif
@@ -374,12 +384,10 @@ static void Lookup(int n)
                 get_sha256_str(i, kv);
             }
             key = kv;
-        } else { // u32 pseudo-random (binary 3 bytes, little-endian); match Add()
-            uint32_t r = prand_u32(static_cast<uint64_t>(i));
-            char le[3] = { static_cast<char>(r & 0xFF),
-                static_cast<char>((r >> 8) & 0xFF),
-                static_cast<char>((r >> 16) & 0xFF) };
-            key.assign(le, 3);
+        } else { // u32 pseudo-random: 3LE bytes + decimal suffix; match Add()
+            uint32_t r = prand_u64(static_cast<uint64_t>(i));
+            key.assign((char*)&r, 4);
+            key += std::to_string(i);
         }
 
 #ifdef LEVEL_DB
@@ -440,6 +448,10 @@ static void Lookup(int n)
     if (db) {
         std::cout << "-- Cache stats after lookup --\n";
         db->DumpPrefixCacheStats(std::cout);
+        const char* prof2 = std::getenv("MB_PROFILE_FIND");
+        if (prof2 && *prof2 && std::strcmp(prof2, "0") != 0) {
+            db->DumpFindProfileStats(std::cout);
+        }
     }
 #endif
 }
@@ -469,12 +481,9 @@ static void Delete(int n)
                 get_sha256_str(i, kv);
             }
             key = kv;
-        } else { // u32 pseudo-random (binary 3 bytes, little-endian)
-            uint32_t r = prand_u32(static_cast<uint64_t>(i));
-            char le[3] = { static_cast<char>(r & 0xFF),
-                static_cast<char>((r >> 8) & 0xFF),
-                static_cast<char>((r >> 16) & 0xFF) };
-            key.assign(le, 3);
+        } else { // u32 pseudo-random (binary 4 bytes, little-endian)
+            uint32_t r = prand_u64(static_cast<uint64_t>(i));
+            key.assign((char*)&r, 4);
         }
 #ifdef LEVEL_DB
         leveldb::WriteOptions opts = leveldb::WriteOptions();
@@ -562,13 +571,10 @@ static void* Writer(void* arg)
             }
             key = kv;
             val = kv;
-        } else { // u32 pseudo-random (binary 3 bytes, little-endian)
-            uint32_t r = prand_u32(static_cast<uint64_t>(i));
-            char le[3] = { static_cast<char>(r & 0xFF),
-                static_cast<char>((r >> 8) & 0xFF),
-                static_cast<char>((r >> 16) & 0xFF) };
-            key.assign(le, 3);
-            val.assign(le, 3);
+        } else { // u32 pseudo-random (binary 4 bytes, little-endian)
+            uint32_t r = prand_u64(static_cast<uint64_t>(i));
+            key.assign((char*)&r, 4);
+            val = key;
         }
 
 #ifdef LEVEL_DB
@@ -632,12 +638,9 @@ static void* Reader(void* arg)
                 get_sha256_str(i, kv);
             }
             key = kv;
-        } else { // u32 pseudo-random (binary 3 bytes, little-endian)
-            uint32_t r = prand_u32(static_cast<uint64_t>(i));
-            char le[3] = { static_cast<char>(r & 0xFF),
-                static_cast<char>((r >> 8) & 0xFF),
-                static_cast<char>((r >> 16) & 0xFF) };
-            key.assign(le, 3);
+        } else { // u32 pseudo-random (binary 4 bytes, little-endian)
+            uint32_t r = prand_u64(static_cast<uint64_t>(i));
+            key.assign((char*)&r, 4);
         }
 
         std::string value;
@@ -790,9 +793,6 @@ static void RemoveDB()
 
 int main(int argc, char* argv[])
 {
-#ifdef MABAIN
-    mabain::DB::SetLogFile("/var/tmp/mabain_test/mabain.log");
-#endif
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-n") == 0) {
             if (++i >= argc)
@@ -838,6 +838,12 @@ int main(int argc, char* argv[])
         }
     }
 
+#ifdef MABAIN
+    // Set log file after parsing -d so it lands under the chosen dir
+    // Default to current workspace to avoid restricted paths
+    std::string log_path = std::string(db_dir) + std::string("/mabain.log");
+    mabain::DB::SetLogFile(log_path.c_str());
+#endif
     print_cpu_info();
     if (sync_on_write)
         std::cout << "===== Disk sync is on\n";
