@@ -213,20 +213,51 @@ namespace detail {
         if (n == 0)
             return false;
 
-        // Use cached edge directly (shared and non-shared behave identically here).
+        // Stage all cursor updates and only commit on success
+        const uint8_t* kcur = key_cursor;
+        int lrem = len_remaining;
+        int cons = consumed;
 
+        // Use cached edge directly (shared and non-shared behave identically here).
         edge_ptrs.offset = entry.edge_offset;
         memcpy(edge_ptrs.edge_buff, entry.edge_buff, EDGE_SIZE);
         InitTempEdgePtrs(edge_ptrs);
-        // Do not set READ_SAVED_EDGE here: that flag is reserved for
-        // lock-free saved-edge handoff. Shared-cache seeding already
-        // supplies a stable edge entry via edge_ptrs and does its own
-        // writer-in-progress validation, so enabling the flag here can
-        // cause unintended interaction with the lock-free path.
 
-        key_cursor += n;
-        len_remaining -= n;
-        consumed += n;
+        // Advance by the cached prefix length first
+        kcur += n;
+        lrem -= n;
+        cons += n;
+
+        // If this cached entry begins mid-edge (edge_skip > 0), finish the current
+        // edge locally so that the subsequent traverseFromEdge() starts at a node
+        // boundary. Verify remaining edge tail vs key.
+        if (entry.edge_skip > 0) {
+            int edge_len = edge_ptrs.len_ptr[0];
+            int s = static_cast<int>(entry.edge_skip);
+            if (s > edge_len)
+                return false;
+            int edge_len_m1 = edge_len - 1;
+            const uint8_t* tail_ptr = nullptr;
+            if (edge_len_m1 > 0) {
+                if (loadEdgeKey(edge_ptrs, data, tail_ptr, edge_len_m1) != MBError::SUCCESS)
+                    return false;
+                int rem_tail = edge_len_m1 - (s - 1);
+                if (rem_tail > 0) {
+                    if (lrem < rem_tail)
+                        return false;
+                    if (memcmp(tail_ptr + (s - 1), kcur, rem_tail) != 0)
+                        return false;
+                    kcur += rem_tail;
+                    lrem -= rem_tail;
+                    cons += rem_tail;
+                }
+            }
+        }
+
+        // Commit staged cursor updates on success
+        key_cursor = kcur;
+        len_remaining = lrem;
+        consumed = cons;
         return true;
     }
 

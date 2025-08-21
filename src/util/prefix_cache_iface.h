@@ -11,6 +11,10 @@ namespace mabain {
 struct PrefixCacheEntry {
     size_t edge_offset;
     uint8_t edge_buff[EDGE_SIZE];
+    // Number of bytes already consumed within the current edge label
+    // when this entry is used (1..edge_len). 0 means start-of-edge.
+    uint8_t edge_skip;
+    uint8_t reserved_[3];
     uint32_t lf_counter;
 };
 

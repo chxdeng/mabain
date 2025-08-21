@@ -4,6 +4,7 @@
 
 #include "util/prefix_cache.h"
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
 #include <sys/mman.h>
@@ -38,17 +39,37 @@ static inline size_t cap3_from_capacity(size_t capacity)
 PrefixCache::PrefixCache(const std::string& mbdir, size_t capacity)
     : cap2(0)
     , cap3(0)
+    , cap4(0)
 {
-    size_t norm_cap = std::min<size_t>(capacity, (1u << 24));
+    // Allow capacity beyond 2^24 to provision a sparse 4-byte table.
+    size_t norm_cap = capacity;
     size_t base2 = std::min<size_t>(norm_cap, (size_t)65536);
     size_t c2 = floor_pow2(base2);
     if (norm_cap > 0 && c2 < 16384)
         c2 = 16384;
     const_cast<size_t&>(cap2) = c2;
-    const_cast<size_t&>(cap3) = cap3_from_capacity(norm_cap);
+    // Split remainder between 3-byte and 4-byte sparse tables
+    size_t remainder = (norm_cap > 65536 ? norm_cap - 65536 : 0);
+    // Allow biasing 4-byte table via env: MB_PFXCACHE_4_RATIO=[0..100]
+    int ratio4 = 50; // default: split remainder evenly (reduce mem4)
+    if (const char* env = std::getenv("MB_PFXCACHE_4_RATIO")) {
+        int r = std::atoi(env);
+        if (r < 0)
+            r = 0;
+        if (r > 100)
+            r = 100;
+        ratio4 = r;
+    }
+    size_t target4 = (remainder * (size_t)ratio4) / 100;
+    size_t target3 = (remainder > target4 ? remainder - target4 : 0);
+    size_t c3 = floor_pow2(target3);
+    size_t c4 = floor_pow2(target4);
+    const_cast<size_t&>(cap3) = c3;
+    const_cast<size_t&>(cap4) = c4;
 
     mask2 = (cap2 ? cap2 - 1 : 0);
     mask3 = (cap3 ? cap3 - 1 : 0);
+    mask4 = (cap4 ? cap4 - 1 : 0);
     full2 = (cap2 == 65536);
     shm_path = PrefixCache::ShmPath(mbdir);
     if (!map_shared(shm_path)) {
@@ -63,6 +84,15 @@ PrefixCache::PrefixCache(const std::string& mbdir, size_t capacity)
             tag3 = nullptr;
             tab3 = nullptr;
         }
+        if (cap4 > 0) {
+            valid4 = new std::atomic<uint32_t>[cap4]();
+            tag4 = new std::atomic<uint32_t>[cap4]();
+            tab4 = new PrefixCacheEntry[cap4]();
+        } else {
+            valid4 = nullptr;
+            tag4 = nullptr;
+            tab4 = nullptr;
+        }
     }
 }
 
@@ -72,19 +102,24 @@ struct PCShmHeader {
     uint16_t reserved;
     uint32_t cap2;
     uint32_t cap3;
+    uint32_t cap4;
     uint32_t mask2;
     uint32_t mask3;
+    uint32_t mask4;
 };
 
 bool PrefixCache::map_shared(const std::string& path)
 {
     const uint32_t MAGIC = 0x50434632; // 'PCF2'
-    const uint16_t VER = 1;
+    const uint16_t VER = 2; // bump for 4-byte table layout
     size_t t2 = sizeof(PrefixCacheEntry) * (cap2 ? cap2 : 1);
     size_t g2 = sizeof(uint32_t) * (cap2 ? cap2 : 1);
     size_t t3 = sizeof(PrefixCacheEntry) * (cap3 ? cap3 : 1);
     size_t g3 = sizeof(uint32_t) * (cap3 ? cap3 : 1);
-    size_t need = sizeof(PCShmHeader) + g2 + t2 + g3 + t3;
+    size_t t4 = sizeof(PrefixCacheEntry) * (cap4 ? cap4 : 1);
+    size_t g4 = sizeof(uint32_t) * (cap4 ? cap4 : 1); // tag4
+    size_t v4 = sizeof(uint32_t) * (cap4 ? cap4 : 1); // valid4
+    size_t need = sizeof(PCShmHeader) + g2 + t2 + g3 + t3 + v4 + g4 + t4;
 
     int fd = ::open(path.c_str(), O_CREAT | O_RDWR, 0666);
     if (fd < 0)
@@ -121,8 +156,10 @@ bool PrefixCache::map_shared(const std::string& path)
         hdr->reserved = 0;
         hdr->cap2 = static_cast<uint32_t>(cap2 ? cap2 : 1);
         hdr->cap3 = static_cast<uint32_t>(cap3 ? cap3 : 0);
+        hdr->cap4 = static_cast<uint32_t>(cap4 ? cap4 : 0);
         hdr->mask2 = static_cast<uint32_t>(mask2);
         hdr->mask3 = static_cast<uint32_t>(mask3);
+        hdr->mask4 = static_cast<uint32_t>(mask4);
         init = true;
     }
 
@@ -134,11 +171,21 @@ bool PrefixCache::map_shared(const std::string& path)
     tag3 = (cap3 ? reinterpret_cast<std::atomic<uint32_t>*>(p) : nullptr);
     p += sizeof(uint32_t) * (cap3 ? cap3 : 0);
     tab3 = (cap3 ? reinterpret_cast<PrefixCacheEntry*>(p) : nullptr);
+    p += sizeof(PrefixCacheEntry) * (cap3 ? cap3 : 0);
+    valid4 = (cap4 ? reinterpret_cast<std::atomic<uint32_t>*>(p) : nullptr);
+    p += sizeof(uint32_t) * (cap4 ? cap4 : 0);
+    tag4 = (cap4 ? reinterpret_cast<std::atomic<uint32_t>*>(p) : nullptr);
+    p += sizeof(uint32_t) * (cap4 ? cap4 : 0);
+    tab4 = (cap4 ? reinterpret_cast<PrefixCacheEntry*>(p) : nullptr);
 
     if (init) {
         std::memset(tag2, 0, sizeof(uint32_t) * (cap2 ? cap2 : 1));
         if (cap3)
             std::memset(tag3, 0, sizeof(uint32_t) * cap3);
+        if (cap4) {
+            std::memset(valid4, 0, sizeof(uint32_t) * cap4);
+            std::memset(tag4, 0, sizeof(uint32_t) * cap4);
+        }
     } else {
         (void)::madvise(shm_base, shm_size, MADV_WILLNEED);
     }
@@ -178,8 +225,32 @@ inline bool PrefixCache::build3(const uint8_t* key, int len, uint32_t& p3) const
     return true;
 }
 
+// Build 4-byte prefix index from key bytes in little-endian order
+inline bool PrefixCache::build4(const uint8_t* key, int len, uint32_t& p4) const
+{
+    if (key == nullptr || len < 4)
+        return false;
+    p4 = static_cast<uint32_t>(static_cast<uint32_t>(key[0]) | (static_cast<uint32_t>(key[1]) << 8)
+        | (static_cast<uint32_t>(key[2]) << 16) | (static_cast<uint32_t>(key[3]) << 24));
+    return true;
+}
+
 int PrefixCache::GetDepth(const uint8_t* key, int len, PrefixCacheEntry& out) const
 {
+    if (cap4 > 0 && key != nullptr && len >= 4) {
+        uint32_t p4 = static_cast<uint32_t>(static_cast<uint32_t>(key[0]) | (static_cast<uint32_t>(key[1]) << 8)
+            | (static_cast<uint32_t>(key[2]) << 16) | (static_cast<uint32_t>(key[3]) << 24));
+        size_t idx4 = static_cast<size_t>(p4) & mask4;
+        uint32_t v = valid4[idx4].load(std::memory_order_acquire);
+        if (v) {
+            uint32_t t4 = tag4[idx4].load(std::memory_order_acquire);
+            if (t4 == p4) {
+                out = tab4[idx4];
+                return 4;
+            }
+        }
+        // fall through to 3/2 below on miss or alias
+    }
     if (cap3 > 0 && key != nullptr && len >= 3) {
         // Little-endian 3-byte build
         uint32_t p3 = static_cast<uint32_t>(static_cast<uint32_t>(key[0]) | (static_cast<uint32_t>(key[1]) << 8)
@@ -215,6 +286,18 @@ int PrefixCache::GetDepth(const uint8_t* key, int len, PrefixCacheEntry& out) co
 
 void PrefixCache::Put(const uint8_t* key, int len, const PrefixCacheEntry& in)
 {
+    // Insert into 4-byte table if we have at least 4 bytes
+    uint32_t p4;
+    if (cap4 > 0 && build4(key, len, p4)) {
+        size_t idx4 = static_cast<size_t>(p4) & mask4;
+        // Clear valid first to prevent readers from observing partial update
+        valid4[idx4].store(0, std::memory_order_release);
+        PrefixCacheEntry e = in;
+        tab4[idx4] = e;
+        tag4[idx4].store(p4, std::memory_order_release);
+        valid4[idx4].store(1, std::memory_order_release);
+        ++put_count;
+    }
     // Insert into 3-byte table if we have at least 3 bytes
     uint32_t p3;
     if (cap3 > 0 && build3(key, len, p3)) {
@@ -249,6 +332,19 @@ void PrefixCache::Put(const uint8_t* key, int len, const PrefixCacheEntry& in)
 
 void PrefixCache::PutAtDepth(const uint8_t* key, int depth, const PrefixCacheEntry& in)
 {
+    if (depth == 4 && cap4 > 0) {
+        uint32_t p4;
+        if (build4(key, 4, p4)) {
+            size_t idx4 = static_cast<size_t>(p4) & mask4;
+            valid4[idx4].store(0, std::memory_order_release);
+            PrefixCacheEntry e = in;
+            tab4[idx4] = e;
+            tag4[idx4].store(p4, std::memory_order_release);
+            valid4[idx4].store(1, std::memory_order_release);
+            ++put_count;
+        }
+        return;
+    }
     if (depth == 3 && cap3 > 0) {
         uint32_t p3;
         if (build3(key, 3, p3)) {
@@ -281,7 +377,7 @@ void PrefixCache::PutAtDepth(const uint8_t* key, int depth, const PrefixCacheEnt
     }
 }
 
-size_t PrefixCache::Size() const { return Size2() + Size3(); }
+size_t PrefixCache::Size() const { return Size2() + Size3() + Size4(); }
 
 size_t PrefixCache::Size2() const
 {
@@ -305,6 +401,36 @@ void PrefixCache::Clear()
     std::memset(tag2, 0, sizeof(uint32_t) * (cap2 ? cap2 : 1));
     if (cap3)
         std::memset(tag3, 0, sizeof(uint32_t) * cap3);
+    if (cap4) {
+        std::memset(valid4, 0, sizeof(uint32_t) * cap4);
+        std::memset(tag4, 0, sizeof(uint32_t) * cap4);
+    }
+}
+
+size_t PrefixCache::Size4() const
+{
+    size_t cnt = 0;
+    for (size_t i = 0; i < cap4; ++i)
+        cnt += (valid4 && valid4[i] != 0);
+    return cnt;
+}
+
+size_t PrefixCache::Memory2() const
+{
+    size_t c2 = (cap2 ? cap2 : 1);
+    return c2 * (sizeof(uint32_t) + sizeof(PrefixCacheEntry));
+}
+
+size_t PrefixCache::Memory3() const
+{
+    size_t c3 = cap3;
+    return c3 * (sizeof(uint32_t) + sizeof(PrefixCacheEntry));
+}
+
+size_t PrefixCache::Memory4() const
+{
+    size_t c4 = cap4;
+    return c4 * (sizeof(uint32_t) /*valid*/ + sizeof(uint32_t) /*tag*/ + sizeof(PrefixCacheEntry));
 }
 
 PrefixCache::~PrefixCache()
@@ -320,6 +446,12 @@ PrefixCache::~PrefixCache()
         tag3 = nullptr;
         delete[] tab3;
         tab3 = nullptr;
+        delete[] valid4;
+        valid4 = nullptr;
+        delete[] tag4;
+        tag4 = nullptr;
+        delete[] tab4;
+        tab4 = nullptr;
     }
 }
 

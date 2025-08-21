@@ -330,6 +330,16 @@ void Dict::SeedCanonicalBoundariesAfterAdd(const uint8_t* key, int len, bool fro
 
     if (edge_len < remain) {
         if (edge_len_m1 <= 0 || memcmp(key_buff, key_cursor + 1, edge_len_m1) == 0) {
+            // If 4-byte boundary falls inside this edge and prefix matches, seed a mid-edge entry.
+            if (from_add && len >= 4 && consumed < 4 && consumed + edge_len >= 4) {
+                uint8_t skip = static_cast<uint8_t>(4 - consumed);
+                PrefixCacheEntry e {};
+                e.edge_offset = edge_ptrs.offset;
+                e.edge_skip = skip;
+                e.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
+                memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
+                prefix_cache->PutAtDepth(key, 4, e);
+            }
             key_cursor += edge_len;
             consumed += edge_len;
             remain -= edge_len;
@@ -380,6 +390,16 @@ void Dict::SeedCanonicalBoundariesAfterAdd(const uint8_t* key, int len, bool fro
         // compare tail
         if (edge_len_m1 > 0 && memcmp(key_buff, key_cursor + 1, edge_len_m1) != 0) {
             break;
+        }
+        // If 4-byte boundary falls inside this edge and prefix matches, seed mid-edge entry.
+        if (from_add && len >= 4 && consumed < 4 && consumed + edge_len >= 4) {
+            uint8_t skip = static_cast<uint8_t>(4 - consumed);
+            PrefixCacheEntry e {};
+            e.edge_offset = edge_ptrs.offset;
+            e.edge_skip = skip;
+            e.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
+            memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
+            prefix_cache->PutAtDepth(key, 4, e);
         }
         // advance
         remain -= edge_len;
@@ -1094,14 +1114,27 @@ void Dict::MaybePutCache(const uint8_t* full_key, int full_len, int consumed,
         // All caches are shared; honor shared read-only flag
         if (shared_pc_readonly)
             return;
-        // Unified: seed at canonical 2- and 3-byte boundaries for both
+        // Unified: seed at canonical 2-, 3-, and 4-byte boundaries for both
         // shared and non-shared caches. Tag origin in lf_counter: 1=add, 2=read.
-        if (consumed == 3) {
-            PrefixCacheEntry e { edge_ptrs.offset, { 0 }, static_cast<uint32_t>(from_add ? 1 : 2) };
+        if (consumed == 4) {
+            PrefixCacheEntry e {};
+            e.edge_offset = edge_ptrs.offset;
+            e.edge_skip = 0;
+            e.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
+            memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
+            prefix_cache->PutAtDepth(full_key, 4, e);
+        } else if (consumed == 3) {
+            PrefixCacheEntry e {};
+            e.edge_offset = edge_ptrs.offset;
+            e.edge_skip = 0;
+            e.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
             memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
             prefix_cache->PutAtDepth(full_key, 3, e);
         } else if (consumed == 2) {
-            PrefixCacheEntry e2 { edge_ptrs.offset, { 0 }, static_cast<uint32_t>(from_add ? 1 : 2) };
+            PrefixCacheEntry e2 {};
+            e2.edge_offset = edge_ptrs.offset;
+            e2.edge_skip = 0;
+            e2.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
             memcpy(e2.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
             prefix_cache->PutAtDepth(full_key, 2, e2);
         }
@@ -1139,9 +1172,17 @@ void Dict::PrintPrefixCacheStats(std::ostream& os) const
     if (prefix_cache) {
         size_t e2 = prefix_cache->Size2();
         size_t e3 = prefix_cache->Size3();
+        size_t e4 = prefix_cache->Size4();
+        size_t m2 = prefix_cache->Memory2();
+        size_t m3 = prefix_cache->Memory3();
+        size_t m4 = prefix_cache->Memory4();
         os << "PrefixCache: enabled=1"
            << " entries2=" << e2
            << " entries3=" << e3
+           << " entries4=" << e4
+           << " mem2=" << m2
+           << " mem3=" << m3
+           << " mem4=" << m4
            << " entries_total=" << entries
            << " put=" << put
            << std::endl;

@@ -8,7 +8,6 @@
 #include "dict.h"
 #include "util/prefix_cache.h"
 #include <cstdlib>
-#include <cstdlib> // getenv
 #include <cstring>
 #include <time.h>
 
@@ -35,6 +34,7 @@ namespace detail {
         void add_traverse(uint64_t ns) { g_ns_trav.fetch_add(ns, std::memory_order_relaxed); }
         void add_resolve(uint64_t ns) { g_ns_resolve.fetch_add(ns, std::memory_order_relaxed); }
         void add_call() { g_calls.fetch_add(1, std::memory_order_relaxed); }
+
         void reset()
         {
             g_calls.store(0, std::memory_order_relaxed);
@@ -637,7 +637,13 @@ namespace detail {
 #endif
                 return MBError::UNKNOWN_ERROR;
             }
-            rval = dict.mm.NextEdge(key_cursor, edge_ptrs, node_buff, data);
+            // Use fast path when possible (prefix find doesn't need parent bookkeeping)
+            int rf = dict.mm.NextEdgeFast(key_cursor, edge_ptrs, data);
+            if (rf == MBError::INVALID_ARG) {
+                rval = dict.mm.NextEdge(key_cursor, edge_ptrs, node_buff, data);
+            } else {
+                rval = rf;
+            }
             if (rval != MBError::READ_ERROR) {
                 if (node_buff[0] & FLAG_NODE_MATCH) {
                     data.match_len = key_cursor - key_base;
@@ -658,13 +664,15 @@ namespace detail {
 #endif
             int edge_len = edge_ptrs.len_ptr[0];
             int edge_len_m1 = edge_len - 1;
-            // match edge string
+            // match edge string: prefer direct pointer into mmap to avoid copy
             if (edge_len > LOCAL_EDGE_LEN) {
-                if (dict.mm.ReadData(node_buff, edge_len_m1, Get5BInteger(edge_ptrs.ptr)) != edge_len_m1) {
+                size_t edge_str_off = Get5BInteger(edge_ptrs.ptr);
+                const uint8_t* p = dict.mm.GetShmPtr(edge_str_off, edge_len_m1);
+                if (p == nullptr) {
                     rval = MBError::READ_ERROR;
                     break;
                 }
-                key_buff = node_buff;
+                key_buff = p;
             } else {
                 key_buff = edge_ptrs.ptr;
             }
