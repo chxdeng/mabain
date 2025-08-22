@@ -30,17 +30,7 @@ struct BoundSearchState {
 
 namespace detail {
 
-    namespace profile {
-        bool enabled();
-        void add_cache_probe(uint64_t ns);
-        void add_root_step(uint64_t ns);
-        void add_traverse(uint64_t ns);
-        void add_resolve(uint64_t ns);
-        void add_call();
-        void reset();
-        void snapshot(uint64_t& calls, uint64_t& ns_cache, uint64_t& ns_root,
-            uint64_t& ns_traverse, uint64_t& ns_resolve);
-    }
+    // Removed obsolete profiling hooks
 
     class SearchEngine {
     public:
@@ -177,11 +167,17 @@ namespace detail {
     {
         if (edge_len_m1 > LOCAL_EDGE_LEN_M1) {
             size_t edge_str_off = Get5BInteger(edge_ptrs.ptr);
-            // Fast-path: get direct pointer into mmap region to avoid copy
+            // Prefer direct pointer into mmap region to avoid a copy. If that
+            // region is not currently mapped (e.g., small memcap or sliding
+            // window disabled), fall back to a buffered read.
             const uint8_t* p = dict.mm.GetShmPtr(edge_str_off, edge_len_m1);
-            if (p == nullptr)
-                return MBError::READ_ERROR;
-            key_buff = p;
+            if (p == nullptr) {
+                if (dict.mm.ReadData(data.node_buff, edge_len_m1, edge_str_off) != edge_len_m1)
+                    return MBError::READ_ERROR;
+                key_buff = data.node_buff;
+            } else {
+                key_buff = p;
+            }
         } else {
             key_buff = edge_ptrs.ptr;
         }

@@ -14,13 +14,10 @@
 namespace mabain {
 namespace detail {
 
-	    
-
     int SearchEngine::find(const uint8_t* key, int len, MBData& data)
     {
         int rval;
         size_t rc_root_offset = dict.GetHeaderPtr()->rc_root_offset.load(MEMORY_ORDER_READER);
-	        
 
         if (rc_root_offset != 0) {
             dict.reader_rc_off = rc_root_offset;
@@ -326,7 +323,7 @@ namespace detail {
 #ifdef __LOCK_FREE__
             ReaderLFGuard lf_guard(dict.lfree, data);
 #endif
-	            
+
             rval = dict.mm.GetRootEdge(root_off, key[0], edge_ptrs);
             if (rval != MBError::SUCCESS) {
                 return MBError::READ_ERROR;
@@ -415,7 +412,6 @@ namespace detail {
                     return _r;
             }
 #endif
-	            
         }
 
         if (used_cache) {
@@ -430,7 +426,7 @@ namespace detail {
     int SearchEngine::traverseFromEdge(const uint8_t*& key_cursor, int& len, int& consumed,
         const uint8_t* full_key, int full_len, EdgePtrs& edge_ptrs, MBData& data)
     {
-	        
+
         const uint8_t* key_buff;
         uint8_t* node_buff = data.node_buff;
         int rval = MBError::SUCCESS;
@@ -455,9 +451,10 @@ namespace detail {
             if (data.options & CONSTS::OPTION_FIND_AND_STORE_PARENT) {
                 rval = dict.mm.NextEdge(key_cursor, edge_ptrs, node_buff, data);
             } else {
+                // Try fast path first; on any non-success, fall back to the
+                // generic path which is more permissive and uses RandomRead.
                 int rf = dict.mm.NextEdgeFast(key_cursor, edge_ptrs, data);
-                if (rf == MBError::INVALID_ARG) {
-                    // Fallback to generic path if fast path not applicable
+                if (rf != MBError::SUCCESS) {
                     rval = dict.mm.NextEdge(key_cursor, edge_ptrs, node_buff, data);
                 } else {
                     rval = rf;
@@ -509,7 +506,7 @@ namespace detail {
                 return _r;
         }
 #endif
-	        
+
         return rval;
     }
 
