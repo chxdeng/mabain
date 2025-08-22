@@ -184,7 +184,7 @@ TEST_F(DictMemTest, InsertNode_test)
     offset = Get6BInteger(edge_ptrs.offset_ptr);
     shm_ptr = dmm->GetShmPtr(offset, dmm->GetNodeSizePtr()[0]);
     EXPECT_EQ(shm_ptr != NULL, true);
-    EXPECT_EQ(shm_ptr[0], FLAG_NODE_NONE | FLAG_NODE_MATCH);
+    EXPECT_EQ(shm_ptr[0], (uint8_t)(FLAG_NODE_NONE | FLAG_NODE_MATCH | FLAG_NODE_SORTED));
     EXPECT_EQ(shm_ptr[1], 0);
     EXPECT_EQ(shm_ptr[8], (uint8_t)'-');
     EXPECT_EQ(Get6BInteger(shm_ptr + 2), 1334u);
@@ -223,7 +223,7 @@ TEST_F(DictMemTest, InsertNode_test1)
     offset = Get6BInteger(edge_ptrs.offset_ptr);
     shm_ptr = dmm->GetShmPtr(offset, dmm->GetNodeSizePtr()[0]);
     EXPECT_EQ(shm_ptr != NULL, true);
-    EXPECT_EQ(shm_ptr[0], FLAG_NODE_NONE | FLAG_NODE_MATCH);
+    EXPECT_EQ(shm_ptr[0], (uint8_t)(FLAG_NODE_NONE | FLAG_NODE_MATCH | FLAG_NODE_SORTED));
     EXPECT_EQ(shm_ptr[1], 0);
     EXPECT_EQ(shm_ptr[8], (uint8_t)'-');
     EXPECT_EQ(Get6BInteger(shm_ptr + 2), 1334u);
@@ -262,7 +262,7 @@ TEST_F(DictMemTest, InsertNode_test2)
     offset = Get6BInteger(edge_ptrs.offset_ptr);
     shm_ptr = dmm->GetShmPtr(offset, dmm->GetNodeSizePtr()[0]);
     EXPECT_EQ(shm_ptr != NULL, true);
-    EXPECT_EQ(shm_ptr[0], FLAG_NODE_NONE | FLAG_NODE_MATCH);
+    EXPECT_EQ(shm_ptr[0], (uint8_t)(FLAG_NODE_NONE | FLAG_NODE_MATCH | FLAG_NODE_SORTED));
     EXPECT_EQ(shm_ptr[1], 0);
     EXPECT_EQ(shm_ptr[8], (uint8_t)'-');
     EXPECT_EQ(Get6BInteger(shm_ptr + 2), 1334u);
@@ -297,10 +297,11 @@ TEST_F(DictMemTest, AddLink_test)
     EXPECT_EQ(header->excep_updating_status, EXCEP_STATUS_NONE);
     EXPECT_EQ(Get6BInteger(edge_ptrs.offset_ptr), 3609u);
     shm_ptr = dmm->GetShmPtr(3609, 10);
-    EXPECT_EQ((int)shm_ptr[0], 0);
+    EXPECT_EQ((int)shm_ptr[0], (int)FLAG_NODE_SORTED);
     EXPECT_EQ((int)shm_ptr[1], 1);
-    EXPECT_EQ((char)shm_ptr[8], 't');
-    EXPECT_EQ((char)shm_ptr[9], 'k');
+    // Child ordering is sorted; expect 'k' then 't'
+    EXPECT_EQ((char)shm_ptr[8], 'k');
+    EXPECT_EQ((char)shm_ptr[9], 't');
     EXPECT_EQ(Get5BInteger(edge_ptrs.ptr), 3655u);
     shm_ptr = dmm->GetShmPtr(3655, 10);
     EXPECT_EQ(std::string((const char*)shm_ptr, 5).compare("abain"), 0);

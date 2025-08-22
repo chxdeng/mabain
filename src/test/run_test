@@ -1,0 +1,47 @@
+#!/bin/bash
+
+TEST_DIR=/var/tmp/mabain_test
+mkdir -p $TEST_DIR
+
+rm $TEST_DIR/_*
+./multi_writer_bug_test
+
+rm $TEST_DIR/_*
+./mb_bound_test 
+
+rm $TEST_DIR/_*
+./shared_prefix_cache_concurrency_test 1000000 8 88
+
+rm $TEST_DIR/_*
+./jemalloc_test /var/tmp/mabain_test/ ./jemalloc_test_list
+
+rm $TEST_DIR/_*
+./mb_bound_test
+
+rm $TEST_DIR/_*
+./mb_mm_test -iter 50 -k int -n 500000
+./mb_mm_test -iter 50 -k sha1 -n 500000
+
+rm $TEST_DIR/_*
+./mb_mm_prune_test -iter 50 -k int -n 500000
+./mb_mm_prune_test -iter 50 -k sha2 -n 500000
+
+rm $TEST_DIR/_*
+./mb_test $TEST_DIR ./test_list
+
+rm $TEST_DIR/_*
+./mb_test1 $TEST_DIR 1800
+
+rm $TEST_DIR/_*
+./mb_test2 $TEST_DIR 3600
+
+rm $TEST_DIR/_*
+echo "started master writer"
+./mb_test_mp -d /var/tmp/mabain_test -w -t 860 &
+sleep 1
+echo "started writer 1"
+./mb_test_mp -d /var/tmp/mabain_test -n 1800000 &
+echo "started writer 2"
+./mb_test_mp -d /var/tmp/mabain_test -n 1800000 -k sha1 &
+echo "started writer 3"
+./mb_test_mp -d /var/tmp/mabain_test -n 18000000 -k sha2 &

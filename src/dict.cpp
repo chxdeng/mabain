@@ -29,7 +29,6 @@
 #include "integer_4b_5b.h"
 #include "mabain_consts.h"
 #include "util/prefix_cache.h"
-#include "util/prefix_cache_shared.h"
 
 #define DATA_HEADER_SIZE 32
 
@@ -202,7 +201,6 @@ int Dict::Add(const uint8_t* key, int len, MBData& data, bool overwrite)
             header->count++;
             header->num_update++;
         }
-
         return MBError::SUCCESS;
     }
 
@@ -230,15 +228,13 @@ int Dict::Add(const uint8_t* key, int len, MBData& data, bool overwrite)
             bool next;
             key_cursor += edge_len;
             len -= edge_len;
-            // Writer populates shared prefix cache at boundary if configured
-            MaybePutCache(key, orig_len, orig_len - len, edge_ptrs);
+
             while ((next = mm.FindNext(key_cursor, len, match_len, edge_ptrs, tmp_key_buff))) {
                 if (match_len < edge_ptrs.len_ptr[0])
                     break;
 
                 key_cursor += match_len;
                 len -= match_len;
-                MaybePutCache(key, orig_len, orig_len - len, edge_ptrs);
                 if (len <= 0)
                     break;
             }
@@ -288,7 +284,245 @@ int Dict::Add(const uint8_t* key, int len, MBData& data, bool overwrite)
         if (inc_count)
             header->count++;
     }
+    // After a successful add, seed prefix cache at canonical 2/3-byte boundaries.
+    if (rval == MBError::SUCCESS && prefix_cache) {
+        SeedCanonicalBoundariesAfterAdd(key, orig_len, /*from_add=*/true);
+    }
     return rval;
+}
+
+void Dict::SeedCanonicalBoundariesAfterAdd(const uint8_t* key, int len, bool from_add) const
+{
+    if (!prefix_cache)
+        return;
+    if (len < 2)
+        return;
+
+    EdgePtrs edge_ptrs;
+    int rval = mm.GetRootEdge(0, key[0], edge_ptrs);
+    if (rval != MBError::SUCCESS)
+        return;
+    if (edge_ptrs.len_ptr[0] == 0)
+        return;
+
+    const uint8_t* key_cursor = key;
+    int remain = len;
+    int consumed = 0;
+    uint8_t tmp_key_buff[NUM_ALPHABET];
+
+    // Step 1: handle root edge like findInternal
+    int edge_len = edge_ptrs.len_ptr[0];
+    int edge_len_m1 = edge_len - 1;
+    const uint8_t* key_buff;
+    // load edge tail
+    if (edge_len_m1 > 0) {
+        if (edge_len_m1 > LOCAL_EDGE_LEN_M1) {
+            size_t off = Get5BInteger(edge_ptrs.ptr);
+            if (mm.ReadData(tmp_key_buff, edge_len_m1, off) != edge_len_m1)
+                return;
+            key_buff = tmp_key_buff;
+        } else {
+            key_buff = edge_ptrs.ptr;
+        }
+    } else {
+        key_buff = nullptr;
+    }
+
+    if (edge_len < remain) {
+        if (edge_len_m1 <= 0 || memcmp(key_buff, key_cursor + 1, edge_len_m1) == 0) {
+            // If 4-byte boundary falls inside this edge and prefix matches, seed a mid-edge entry.
+            if (from_add && len >= 4 && consumed < 4 && consumed + edge_len >= 4) {
+                uint8_t skip = static_cast<uint8_t>(4 - consumed);
+                PrefixCacheEntry e {};
+                e.edge_offset = edge_ptrs.offset;
+                e.edge_skip = skip;
+                e.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
+                memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
+                prefix_cache->PutAtDepth(key, 4, e);
+            }
+            key_cursor += edge_len;
+            consumed += edge_len;
+            remain -= edge_len;
+            if (remain <= 0) {
+                // final match at root: seed at consumed depth
+                if (consumed == 4) {
+                    PrefixCacheEntry e {};
+                    e.edge_offset = edge_ptrs.offset;
+                    e.edge_skip = 0;
+                    e.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
+                    memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
+                    prefix_cache->PutAtDepth(key, 4, e);
+                } else if (consumed == 3) {
+                    PrefixCacheEntry e {};
+                    e.edge_offset = edge_ptrs.offset;
+                    e.edge_skip = 0;
+                    e.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
+                    memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
+                    prefix_cache->PutAtDepth(key, 3, e);
+                } else if (consumed == 2) {
+                    PrefixCacheEntry e2 {};
+                    e2.edge_offset = edge_ptrs.offset;
+                    e2.edge_skip = 0;
+                    e2.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
+                    memcpy(e2.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
+                    prefix_cache->PutAtDepth(key, 2, e2);
+                }
+                return;
+            }
+            if (edge_ptrs.flag_ptr[0] & EDGE_FLAG_DATA_OFF)
+                return; // leaf
+            // Defer seeding at this consumed depth until we've loaded the
+            // next edge (so cache stores the correct traversal state).
+        } else {
+            return;
+        }
+    } else if (edge_len == remain) {
+        if (edge_len_m1 <= 0 || memcmp(key_buff, key_cursor + 1, edge_len_m1) == 0) {
+            // mirror find: seed at final depth (consumed + edge_len)
+            int c = consumed + edge_len;
+            if (c == 4) {
+                PrefixCacheEntry e {};
+                e.edge_offset = edge_ptrs.offset;
+                e.edge_skip = 0;
+                e.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
+                memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
+                prefix_cache->PutAtDepth(key, 4, e);
+            } else if (c == 3) {
+                PrefixCacheEntry e {};
+                e.edge_offset = edge_ptrs.offset;
+                e.edge_skip = 0;
+                e.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
+                memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
+                prefix_cache->PutAtDepth(key, 3, e);
+            } else if (c == 2) {
+                PrefixCacheEntry e2 {};
+                e2.edge_offset = edge_ptrs.offset;
+                e2.edge_skip = 0;
+                e2.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
+                memcpy(e2.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
+                prefix_cache->PutAtDepth(key, 2, e2);
+            }
+        }
+        return;
+    } else {
+        return; // key shorter than edge
+    }
+
+    // Step 2: traverse like traverseFromEdge()
+    MBData seed_mbd; // local scratch; options=0 (no special flags)
+    seed_mbd.options = 0;
+    while (true) {
+        rval = mm.NextEdge(key_cursor, edge_ptrs, seed_mbd.node_buff, seed_mbd);
+        if (rval != MBError::SUCCESS)
+            break;
+        edge_len = edge_ptrs.len_ptr[0];
+        edge_len_m1 = edge_len - 1;
+        // load edge key tail
+        if (edge_len_m1 > 0) {
+            if (edge_len_m1 > LOCAL_EDGE_LEN_M1) {
+                size_t off = Get5BInteger(edge_ptrs.ptr);
+                if (mm.ReadData(tmp_key_buff, edge_len_m1, off) != edge_len_m1)
+                    break;
+                key_buff = tmp_key_buff;
+            } else {
+                key_buff = edge_ptrs.ptr;
+            }
+        } else {
+            key_buff = nullptr;
+        }
+        // compare tail
+        if (edge_len_m1 > 0 && memcmp(key_buff, key_cursor + 1, edge_len_m1) != 0) {
+            break;
+        }
+        // If 4-byte boundary falls inside this edge and prefix matches, seed mid-edge entry.
+        if (from_add && len >= 4 && consumed < 4 && consumed + edge_len >= 4) {
+            uint8_t skip = static_cast<uint8_t>(4 - consumed);
+            PrefixCacheEntry e {};
+            e.edge_offset = edge_ptrs.offset;
+            e.edge_skip = skip;
+            e.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
+            memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
+            prefix_cache->PutAtDepth(key, 4, e);
+        }
+        // advance
+        remain -= edge_len;
+        if (remain <= 0) {
+            int c = consumed + edge_len;
+            if (c == 4) {
+                PrefixCacheEntry e {};
+                e.edge_offset = edge_ptrs.offset;
+                e.edge_skip = 0;
+                e.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
+                memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
+                prefix_cache->PutAtDepth(key, 4, e);
+            } else if (c == 3) {
+                PrefixCacheEntry e {};
+                e.edge_offset = edge_ptrs.offset;
+                e.edge_skip = 0;
+                e.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
+                memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
+                prefix_cache->PutAtDepth(key, 3, e);
+            } else if (c == 2) {
+                PrefixCacheEntry e2 {};
+                e2.edge_offset = edge_ptrs.offset;
+                e2.edge_skip = 0;
+                e2.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
+                memcpy(e2.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
+                prefix_cache->PutAtDepth(key, 2, e2);
+            }
+            break;
+        }
+        if (edge_ptrs.flag_ptr[0] & EDGE_FLAG_DATA_OFF) {
+            int c = consumed + edge_len;
+            if (c == 4) {
+                PrefixCacheEntry e {};
+                e.edge_offset = edge_ptrs.offset;
+                e.edge_skip = 0;
+                e.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
+                memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
+                prefix_cache->PutAtDepth(key, 4, e);
+            } else if (c == 3) {
+                PrefixCacheEntry e {};
+                e.edge_offset = edge_ptrs.offset;
+                e.edge_skip = 0;
+                e.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
+                memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
+                prefix_cache->PutAtDepth(key, 3, e);
+            } else if (c == 2) {
+                PrefixCacheEntry e2 {};
+                e2.edge_offset = edge_ptrs.offset;
+                e2.edge_skip = 0;
+                e2.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
+                memcpy(e2.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
+                prefix_cache->PutAtDepth(key, 2, e2);
+            }
+            break;
+        }
+        key_cursor += edge_len;
+        consumed += edge_len;
+        if (consumed == 4) {
+            PrefixCacheEntry e {};
+            e.edge_offset = edge_ptrs.offset;
+            e.edge_skip = 0;
+            e.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
+            memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
+            prefix_cache->PutAtDepth(key, 4, e);
+        } else if (consumed == 3) {
+            PrefixCacheEntry e {};
+            e.edge_offset = edge_ptrs.offset;
+            e.edge_skip = 0;
+            e.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
+            memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
+            prefix_cache->PutAtDepth(key, 3, e);
+        } else if (consumed == 2) {
+            PrefixCacheEntry e2 {};
+            e2.edge_offset = edge_ptrs.offset;
+            e2.edge_skip = 0;
+            e2.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
+            memcpy(e2.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
+            prefix_cache->PutAtDepth(key, 2, e2);
+        }
+    }
 }
 
 int Dict::ReadDataFromEdge(MBData& data, const EdgePtrs& edge_ptrs) const
@@ -348,7 +582,6 @@ int Dict::DeleteDataFromEdge(MBData& data, EdgePtrs& edge_ptrs)
             rel_size = free_lists->GetAlignmentSize(data_len + DATA_HDR_BYTE);
         }
         ReleaseBuffer(data_off, rel_size);
-
         rval = mm.RemoveEdgeByIndex(edge_ptrs, data);
     } else {
         // No exception handling in this case
@@ -617,10 +850,6 @@ int Dict::Remove(const uint8_t* key, int len, MBData& data)
         rval = engine.find(key, len, data);
     }
     if (rval == MBError::IN_DICT) {
-        // Invalidate shared prefix cache entry for this key's prefix and edge
-        if (prefix_cache_shared) {
-            prefix_cache_shared->InvalidateByPrefixAndEdge(key, len, data.edge_ptrs.offset);
-        }
         rval = DeleteDataFromEdge(data, data.edge_ptrs);
         while (rval == MBError::TRY_AGAIN) {
             data.Clear();
@@ -633,9 +862,6 @@ int Dict::Remove(const uint8_t* key, int len, MBData& data)
                 rval = engine.find(key, len, data);
             }
             if (MBError::IN_DICT == rval) {
-                if (prefix_cache_shared) {
-                    prefix_cache_shared->InvalidateByPrefixAndEdge(key, len, data.edge_ptrs.offset);
-                }
                 rval = mm.RemoveEdgeByIndex(data.edge_ptrs, data);
             }
         }
@@ -839,15 +1065,14 @@ int Dict::UpdateDataBuffer(EdgePtrs& edge_ptrs, bool overwrite, MBData& mbd, boo
         mbd.data_offset = Get6BInteger(edge_ptrs.offset_ptr);
         if (!overwrite)
             return MBError::IN_DICT;
-
         if (ReleaseBuffer(mbd.data_offset) != MBError::SUCCESS)
             Logger::Log(LOG_LEVEL_WARN, "failed to release data buffer: %llu", mbd.data_offset);
         ReserveData(mbd.buff, mbd.data_len, mbd.data_offset);
         Write6BInteger(edge_ptrs.offset_ptr, mbd.data_offset);
 
-        header->excep_lf_offset = edge_ptrs.offset;
         memcpy(header->excep_buff, edge_ptrs.offset_ptr, OFFSET_SIZE);
 #ifdef __LOCK_FREE__
+        header->excep_lf_offset = edge_ptrs.offset;
         lfree.WriterLockFreeStart(edge_ptrs.offset);
 #endif
         header->excep_updating_status = EXCEP_STATUS_ADD_DATA_OFF;
@@ -870,7 +1095,6 @@ int Dict::UpdateDataBuffer(EdgePtrs& edge_ptrs, bool overwrite, MBData& mbd, boo
                 return MBError::IN_DICT;
             if (ReleaseBuffer(mbd.data_offset) != MBError::SUCCESS)
                 Logger::Log(LOG_LEVEL_WARN, "failed to release data buffer %llu", mbd.data_offset);
-
             node_buff[NODE_EDGE_KEY_FIRST] = 0;
         } else {
             // set the match flag
@@ -970,70 +1194,23 @@ void Dict::Purge() const
 
 void Dict::EnablePrefixCache(int n, size_t capacity)
 {
-    if (n <= 0)
-        return;
-    // Ensure only one cache mode is active at a time
-    if (prefix_cache_shared)
-        prefix_cache_shared.reset();
-    prefix_cache = std::unique_ptr<PrefixCache>(new PrefixCache(n, capacity));
+    // Non-shared prefix cache support removed; no-op.
+    (void)n;
+    (void)capacity;
 }
 
 void Dict::DisablePrefixCache()
 {
-    prefix_cache.reset();
+    // No-op for non-shared path removal; shared cache uses DisableSharedPrefixCache.
 }
 
-void Dict::EnableSharedPrefixCache(int n, size_t capacity, uint32_t assoc)
+void Dict::EnableSharedPrefixCache(size_t capacity)
 {
-    if (n <= 0)
-        return;
-    // Ensure only one cache mode is active at a time
-    if (prefix_cache)
-        prefix_cache.reset();
-    // Create or open shared cache depending on access mode
-    if (options & CONSTS::ACCESS_MODE_WRITER) {
-        // Ensure cache file is fresh to avoid stale entries between runs
-        std::string shm_path = PrefixCacheShared::ShmPath(mbdir_);
-        ::unlink(shm_path.c_str());
-        prefix_cache_shared.reset(PrefixCacheShared::CreateWriter(mbdir_, n, capacity, assoc));
-    } else {
-        // Try open existing; if not present or mismatch, create exclusively; otherwise re-open.
-        std::unique_ptr<PrefixCacheShared> pcs(PrefixCacheShared::OpenReader(mbdir_));
-        if (!pcs || pcs->PrefixLen() != n) {
-            pcs.reset(PrefixCacheShared::CreateWriter(mbdir_, n, capacity, assoc));
-            if (!pcs) {
-                // Another thread/process likely created it; try open again
-                pcs.reset(PrefixCacheShared::OpenReader(mbdir_));
-            }
-        }
-        prefix_cache_shared = std::move(pcs);
-    }
+    // Unified cache with shared-memory backing
+    prefix_cache = std::unique_ptr<PrefixCache>(new PrefixCache(mbdir_, capacity));
 }
 
-void Dict::DisableSharedPrefixCache()
-{
-    prefix_cache_shared.reset();
-}
-
-void Dict::MaybePutCache(const uint8_t* full_key, int full_len, int consumed,
-    const EdgePtrs& edge_ptrs) const
-{
-    // Only update the active cache
-    // Shared cache is writer-managed only to minimize reader overhead
-    if (prefix_cache_shared && (options & CONSTS::ACCESS_MODE_WRITER)) {
-        if (consumed == prefix_cache_shared->PrefixLen()) {
-            PrefixCacheEntry e { edge_ptrs.offset, { 0 }, 0 };
-            memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
-            prefix_cache_shared->Put(full_key, full_len, e);
-        }
-    } else if (prefix_cache) {
-        if (consumed == prefix_cache->PrefixLen()) {
-            PrefixCacheEntry e { edge_ptrs.offset, { 0 }, 0 };
-            memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
-            prefix_cache->Put(full_key, full_len, e);
-        }
-    }
-}
+/* MaybePutCache removed: inlined seeding logic inside SeedCanonicalBoundariesAfterAdd */
 
 void Dict::GetPrefixCacheStats(uint64_t& hit, uint64_t& miss, uint64_t& put,
     size_t& entries, int& n) const
@@ -1044,8 +1221,8 @@ void Dict::GetPrefixCacheStats(uint64_t& hit, uint64_t& miss, uint64_t& put,
         n = 0;
         return;
     }
-    hit = prefix_cache->HitCount();
-    miss = prefix_cache->MissCount();
+    hit = 0;
+    miss = 0;
     put = prefix_cache->PutCount();
     entries = prefix_cache->Size();
     n = prefix_cache->PrefixLen();
@@ -1063,28 +1240,32 @@ void Dict::PrintPrefixCacheStats(std::ostream& os) const
     size_t entries;
     int pn;
     GetPrefixCacheStats(hit, miss, put, entries, pn);
-    os << "PrefixCache: enabled=" << (PrefixCacheEnabled() ? 1 : 0)
-       << " n=" << pn
-       << " entries=" << entries
-       << " hit=" << hit
-       << " miss=" << miss
-       << " put=" << put
-       << std::endl;
-}
-
-void Dict::PrintSharedPrefixCacheStats(std::ostream& os) const
-{
-    if (prefix_cache_shared) {
-        prefix_cache_shared->DumpStats(os);
+    if (prefix_cache) {
+        size_t e2 = prefix_cache->Size2();
+        size_t e3 = prefix_cache->Size3();
+        size_t e4 = prefix_cache->Size4();
+        size_t m2 = prefix_cache->Memory2();
+        size_t m3 = prefix_cache->Memory3();
+        size_t m4 = prefix_cache->Memory4();
+        os << "PrefixCache: enabled=1"
+           << " entries2=" << e2
+           << " entries3=" << e3
+           << " entries4=" << e4
+           << " mem2=" << m2
+           << " mem3=" << m3
+           << " mem4=" << m4
+           << " entries_total=" << entries
+           << " put=" << put
+           << std::endl;
     } else {
-        os << "PrefixCacheShared: disabled" << std::endl;
+        os << "PrefixCache: enabled=0"
+           << " entries_total=0"
+           << " put=0" << std::endl;
     }
 }
 
-PrefixCacheIface* Dict::ActivePrefixCache() const
+PrefixCache* Dict::ActivePrefixCache() const
 {
-    if (prefix_cache_shared)
-        return prefix_cache_shared.get();
     if (prefix_cache)
         return prefix_cache.get();
     return nullptr;

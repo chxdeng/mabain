@@ -32,14 +32,13 @@
 #include "mb_pipe.h"
 #include "rollable_file.h"
 #include "shm_queue_mgr.h"
-#include "util/prefix_cache_iface.h"
+#include "util/prefix_cache.h"
 // forward declare
 namespace mabain {
 namespace detail {
     class SearchEngine;
 }
 class PrefixCache;
-class PrefixCacheShared;
 }
 
 namespace mabain {
@@ -133,13 +132,9 @@ public:
     void ResetPrefixCacheStats();
     void PrintPrefixCacheStats(std::ostream& os) const;
 
-    // Shared prefix cache (multi-process, writer-managed updates)
-    void EnableSharedPrefixCache(int n, size_t capacity = 65536, uint32_t assoc = 4);
-    void DisableSharedPrefixCache();
-    bool SharedPrefixCacheEnabled() const { return static_cast<bool>(prefix_cache_shared); }
-    void PrintSharedPrefixCacheStats(std::ostream& os) const;
-    PrefixCacheIface* ActivePrefixCache() const;
-    void SetSharedPrefixCacheReadOnly(bool ro) { shared_pc_readonly = ro; }
+    // Unified prefix cache (shared-memory backed)
+    void EnableSharedPrefixCache(size_t capacity = 65536);
+    PrefixCache* ActivePrefixCache() const;
 
 private:
     // Allow internal SearchEngine to orchestrate lookups without exposing members publicly
@@ -178,13 +173,14 @@ private:
 
     // Optional lookup accelerators for Find
     std::unique_ptr<PrefixCache> prefix_cache;
-    std::unique_ptr<PrefixCacheShared> prefix_cache_shared;
     std::string mbdir_;
-    bool shared_pc_readonly = false;
 
-    // Prefix-cache helpers (no side effects when cache disabled)
-    void MaybePutCache(const uint8_t* full_key, int full_len, int consumed,
-        const EdgePtrs& edge_ptrs) const;
+    // Cache seeding for Add is handled inside SeedCanonicalBoundariesAfterAdd
+
+    // After a successful Add, seed cache at canonical 2/3-byte boundaries
+    // using the final structure (mirrors reader warm). Applies to shared and
+    // non-shared caches and detects boundary crossings within long edges.
+    void SeedCanonicalBoundariesAfterAdd(const uint8_t* key, int len, bool from_add = true) const;
 };
 
 }

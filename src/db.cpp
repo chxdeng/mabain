@@ -755,16 +755,10 @@ void DB::Purge() const
     dict->Purge();
 }
 
-void DB::EnablePrefixCache(int n, size_t capacity)
+void DB::EnablePrefixCache(size_t capacity)
 {
     if (dict)
-        dict->EnablePrefixCache(n, capacity);
-}
-
-void DB::DisablePrefixCache()
-{
-    if (dict)
-        dict->DisablePrefixCache();
+        dict->EnableSharedPrefixCache(capacity);
 }
 
 void DB::DumpPrefixCacheStats(std::ostream& os) const
@@ -773,34 +767,10 @@ void DB::DumpPrefixCacheStats(std::ostream& os) const
         dict->PrintPrefixCacheStats(os);
 }
 
-void DB::ResetPrefixCacheStats() const
+void DB::DisablePrefixCache()
 {
     if (dict)
-        dict->ResetPrefixCacheStats();
-}
-
-void DB::EnableSharedPrefixCache(int n, size_t capacity, uint32_t assoc)
-{
-    if (dict)
-        dict->EnableSharedPrefixCache(n, capacity, assoc);
-}
-
-void DB::DisableSharedPrefixCache()
-{
-    if (dict)
-        dict->DisableSharedPrefixCache();
-}
-
-void DB::DumpSharedPrefixCacheStats(std::ostream& os) const
-{
-    if (dict)
-        dict->PrintSharedPrefixCacheStats(os);
-}
-
-void DB::SetSharedPrefixCacheReadOnly(bool ro)
-{
-    if (dict)
-        dict->SetSharedPrefixCacheReadOnly(ro);
+        dict->DisablePrefixCache();
 }
 
 int DB::CollectResource(int64_t min_index_rc_size, int64_t min_data_rc_size,

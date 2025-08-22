@@ -7,7 +7,8 @@
 #include "detail/lf_guard.h"
 #include "dict.h"
 #include "util/prefix_cache.h"
-#include "util/prefix_cache_shared.h"
+#include <cstdlib>
+#include <cstring>
 #include <time.h>
 
 namespace mabain {
@@ -84,9 +85,13 @@ namespace detail {
         }
 #endif
 
-        // The longer match wins.
+        // The longer match wins. Ensure both value and match_len are carried over
+        // to mirror legacy behavior.
         if (data_rc.match_len > data.match_len) {
             data_rc.TransferValueTo(data.buff, data.data_len);
+            // match_len will be recalculated by callers based on consumed bytes,
+            // but align to legacy by overriding here as well.
+            data.match_len = data_rc.match_len;
             rval = MBError::SUCCESS;
         }
         return rval;
@@ -305,18 +310,29 @@ namespace detail {
         int orig_len = len;
         int consumed = 0;
         const uint8_t* key_buff;
-        bool use_cache = !(dict.reader_rc_off != 0 && root_off == dict.reader_rc_off);
+        // Allow disabling prefix-cache usage for debugging via env var
+        static int disable_pfx_cache = []() {
+            const char* e = std::getenv("MB_DISABLE_PFXCACHE");
+            return (e && *e && std::strcmp(e, "0") != 0) ? 1 : 0;
+        }();
+        // Do not seed from prefix cache for operations that require
+        // precise parent/edge bookkeeping (e.g., remove). Stale mid-edge
+        // cache entries can misguide traversal during structural updates.
+        bool use_cache = !disable_pfx_cache
+            && !(dict.reader_rc_off != 0 && root_off == dict.reader_rc_off)
+            && !(data.options & CONSTS::OPTION_FIND_AND_STORE_PARENT);
         bool used_cache = use_cache ? seedFromCache(key, len, edge_ptrs, data, key_cursor, len, consumed) : false;
 
         if (!used_cache) {
 #ifdef __LOCK_FREE__
             ReaderLFGuard lf_guard(dict.lfree, data);
 #endif
-        rval = dict.mm.GetRootEdge(root_off, key[0], edge_ptrs);
-        if (rval != MBError::SUCCESS) {
-            return MBError::READ_ERROR;
-        }
-        if (edge_ptrs.len_ptr[0] == 0) {
+
+            rval = dict.mm.GetRootEdge(root_off, key[0], edge_ptrs);
+            if (rval != MBError::SUCCESS) {
+                return MBError::READ_ERROR;
+            }
+            if (edge_ptrs.len_ptr[0] == 0) {
 #ifdef __LOCK_FREE__
                 {
                     int _r = lf_guard.stop(edge_ptrs.offset);
@@ -355,8 +371,9 @@ namespace detail {
                 key_cursor += edge_len;
                 consumed += edge_len;
                 len -= edge_len;
-                if (len <= 0)
+                if (len <= 0) {
                     return resolveMatchOrInDict(data, edge_ptrs, true);
+                }
                 if (isLeaf(edge_ptrs)) {
 #ifdef __LOCK_FREE__
                     {
@@ -367,10 +384,12 @@ namespace detail {
 #endif
                     return MBError::NOT_EXIST;
                 }
-                maybePutCache(key, orig_len, consumed, edge_ptrs);
+                // Find does not update prefix cache; writer seeds during Add
             } else if (edge_len == len) {
-                if (remainderMatches(key_buff, key_cursor, edge_len_m1))
+                if (remainderMatches(key_buff, key_cursor, edge_len_m1)) {
+                    // Find does not update prefix cache; writer seeds during Add
                     return resolveMatchOrInDict(data, edge_ptrs, true);
+                }
 #ifdef __LOCK_FREE__
                 {
                     int _r = lf_guard.stop(edge_ptrs.offset);
@@ -411,6 +430,7 @@ namespace detail {
     int SearchEngine::traverseFromEdge(const uint8_t*& key_cursor, int& len, int& consumed,
         const uint8_t* full_key, int full_len, EdgePtrs& edge_ptrs, MBData& data)
     {
+
         const uint8_t* key_buff;
         uint8_t* node_buff = data.node_buff;
         int rval = MBError::SUCCESS;
@@ -432,7 +452,18 @@ namespace detail {
 #endif
                 return MBError::UNKNOWN_ERROR;
             }
-            rval = dict.mm.NextEdge(key_cursor, edge_ptrs, node_buff, data);
+            if (data.options & CONSTS::OPTION_FIND_AND_STORE_PARENT) {
+                rval = dict.mm.NextEdge(key_cursor, edge_ptrs, node_buff, data);
+            } else {
+                // Try fast path first; on any non-success, fall back to the
+                // generic path which is more permissive and uses RandomRead.
+                int rf = dict.mm.NextEdgeFast(key_cursor, edge_ptrs, data);
+                if (rf != MBError::SUCCESS) {
+                    rval = dict.mm.NextEdge(key_cursor, edge_ptrs, node_buff, data);
+                } else {
+                    rval = rf;
+                }
+            }
             if (rval != MBError::SUCCESS)
                 break;
 
@@ -448,24 +479,23 @@ namespace detail {
             rval = compareCurrEdgeTail(edge_ptrs, data, key_cursor, key_buff, edge_len, edge_len_m1);
             if (rval == MBError::READ_ERROR)
                 break;
-            if (rval == MBError::NOT_EXIST) {
-                rval = MBError::NOT_EXIST;
+            if (rval == MBError::NOT_EXIST)
                 break;
-            }
 
             len -= edge_len;
             if (len <= 0) {
-                rval = resolveMatchOrInDict(data, edge_ptrs, false);
-                break;
+                // Find does not update prefix cache; writer seeds during Add
+                int _ret = resolveMatchOrInDict(data, edge_ptrs, false);
+                return _ret;
             }
             if (isLeaf(edge_ptrs)) {
-                rval = MBError::NOT_EXIST;
-                break;
+                // Find does not update prefix cache; writer seeds during Add
+                return MBError::NOT_EXIST;
             }
 
             key_cursor += edge_len;
             consumed += edge_len;
-            maybePutCache(full_key, full_len, consumed, edge_ptrs);
+            // Find does not update prefix cache; writer seeds during Add
 #ifdef __LOCK_FREE__
             edge_offset_prev = edge_ptrs.offset;
 #else
@@ -480,6 +510,7 @@ namespace detail {
                 return _r;
         }
 #endif
+
         return rval;
     }
 
@@ -507,6 +538,9 @@ namespace detail {
 #endif
                 return MBError::UNKNOWN_ERROR;
             }
+            // For prefix traversal we must read the node header into node_buff
+            // to detect FLAG_NODE_MATCH at internal nodes. NextEdgeFast does not
+            // populate node_buff and would miss recording the last matching node.
             rval = dict.mm.NextEdge(key_cursor, edge_ptrs, node_buff, data);
             if (rval != MBError::READ_ERROR) {
                 if (node_buff[0] & FLAG_NODE_MATCH) {
@@ -530,7 +564,8 @@ namespace detail {
             int edge_len_m1 = edge_len - 1;
             // match edge string
             if (edge_len > LOCAL_EDGE_LEN) {
-                if (dict.mm.ReadData(node_buff, edge_len_m1, Get5BInteger(edge_ptrs.ptr)) != edge_len_m1) {
+                size_t edge_str_off = Get5BInteger(edge_ptrs.ptr);
+                if (dict.mm.ReadData(node_buff, edge_len_m1, edge_str_off) != edge_len_m1) {
                     rval = MBError::READ_ERROR;
                     break;
                 }

@@ -65,6 +65,12 @@ To build with debug, run cmake with debug on
 cmake -DENABLE_DEBUG=ON ..
 ```
 
+To enable xxHash for the shared prefix cache hashing (optional), build with:
+```
+cmake -DMB_USE_XXHASH=ON ..
+```
+This requires `libxxhash` and `xxhash.h` available on your system. If not found, the build falls back to FNV-1a.
+
 #### (Optional) - Run the unit tests
 
 If you would like to run the unit tests you will need some additional dependencies:

@@ -3,7 +3,7 @@
 
 #include "detail/lf_guard.h"
 #include "dict.h"
-#include "util/prefix_cache_iface.h"
+#include "util/prefix_cache.h"
 #include <cstdint>
 #include <string>
 #include <time.h>
@@ -29,6 +29,8 @@ struct BoundSearchState {
 };
 
 namespace detail {
+
+    // Removed obsolete profiling hooks
 
     class SearchEngine {
     public:
@@ -58,7 +60,8 @@ namespace detail {
         // Prefix internals
         int findPrefixInternal(size_t root_off, const uint8_t* key, int len, MBData& data);
         int traversePrefixFromEdge(const uint8_t* key_base, const uint8_t*& key_cursor, int& len,
-            EdgePtrs& edge_ptrs, MBData& data, int& last_prefix_rval, uint8_t last_node_buffer[NODE_EDGE_KEY_FIRST]) const;
+            EdgePtrs& edge_ptrs, MBData& data, int& last_prefix_rval,
+            uint8_t last_node_buffer[NODE_EDGE_KEY_FIRST]) const;
 
         // Small helpers
         // Exact-match path helper: always copy edge tail into node_buff
@@ -69,10 +72,12 @@ namespace detail {
             const uint8_t*& key_buff, int& edge_len, int& edge_len_m1) const;
         inline int resolveMatchOrInDict(MBData& data, EdgePtrs& edge_ptrs, bool at_root) const;
         // Root-edge accessor (reads directly from DictMem)
+        // Fast-path: try to seed traversal state from the prefix cache.
+        // Returns true when an entry is found (depth 2 or 3), and advances
+        // key_cursor/len_remaining/consumed accordingly. For very short keys
+        // (len < 2) it returns false without making a virtual call.
         inline bool seedFromCache(const uint8_t* key, int len, EdgePtrs& edge_ptrs,
             MBData& data, const uint8_t*& key_cursor, int& len_remaining, int& consumed) const;
-        inline void maybePutCache(const uint8_t* full_key, int full_len, int consumed,
-            const EdgePtrs& edge_ptrs) const;
         // declared once above
 
         // Lower-bound internals
@@ -149,6 +154,9 @@ namespace detail {
             }
             return MBError::IN_DICT;
         }
+        if (data.options & CONSTS::OPTION_KEY_ONLY) {
+            return MBError::SUCCESS;
+        }
         return dict.ReadDataFromEdge(data, edge_ptrs);
     }
 
@@ -160,9 +168,17 @@ namespace detail {
     {
         if (edge_len_m1 > LOCAL_EDGE_LEN_M1) {
             size_t edge_str_off = Get5BInteger(edge_ptrs.ptr);
-            if (dict.mm.ReadData(data.node_buff, edge_len_m1, edge_str_off) != edge_len_m1)
-                return MBError::READ_ERROR;
-            key_buff = data.node_buff;
+            // Prefer direct pointer into mmap region to avoid a copy. If that
+            // region is not currently mapped (e.g., small memcap or sliding
+            // window disabled), fall back to a buffered read.
+            const uint8_t* p = dict.mm.GetShmPtr(edge_str_off, edge_len_m1);
+            if (p == nullptr) {
+                if (dict.mm.ReadData(data.node_buff, edge_len_m1, edge_str_off) != edge_len_m1)
+                    return MBError::READ_ERROR;
+                key_buff = data.node_buff;
+            } else {
+                key_buff = p;
+            }
         } else {
             key_buff = edge_ptrs.ptr;
         }
@@ -172,40 +188,64 @@ namespace detail {
     inline bool SearchEngine::seedFromCache(const uint8_t* key, int len, EdgePtrs& edge_ptrs,
         MBData& data, const uint8_t*& key_cursor, int& len_remaining, int& consumed) const
     {
-        PrefixCacheIface* pc = dict.ActivePrefixCache();
+        // Keys shorter than 2 bytes cannot hit the cache; avoid virtual call.
+        if (len < 2 || key == nullptr)
+            return false;
+        PrefixCache* pc = dict.ActivePrefixCache();
         if (!pc)
             return false;
 
         PrefixCacheEntry entry;
-        const int n = pc->PrefixLen();
-        if (len < n || !pc->Get(key, len, entry))
+        int n = pc->GetDepth(key, len, entry);
+        if (n == 0)
             return false;
 
-        if (pc->IsShared() && dict.GetHeaderPtr() && dict.GetHeaderPtr()->num_writer > 0) {
-            uint8_t curr_edge[EDGE_SIZE];
-            if (dict.mm.ReadData(curr_edge, EDGE_SIZE, entry.edge_offset) != EDGE_SIZE) {
-                return false;
-            }
-            if (memcmp(curr_edge, entry.edge_buff, EDGE_SIZE) != 0) {
-                return false;
-            }
-        }
+        // Stage all cursor updates and only commit on success
+        const uint8_t* kcur = key_cursor;
+        int lrem = len_remaining;
+        int cons = consumed;
 
+        // Use cached edge directly (shared and non-shared behave identically here).
         edge_ptrs.offset = entry.edge_offset;
         memcpy(edge_ptrs.edge_buff, entry.edge_buff, EDGE_SIZE);
         InitTempEdgePtrs(edge_ptrs);
-        data.options |= CONSTS::OPTION_READ_SAVED_EDGE;
 
-        key_cursor = key + n;
-        len_remaining -= n;
-        consumed += n;
+        // Advance by the cached prefix length first
+        kcur += n;
+        lrem -= n;
+        cons += n;
+
+        // If this cached entry begins mid-edge (edge_skip > 0), finish the current
+        // edge locally so that the subsequent traverseFromEdge() starts at a node
+        // boundary. Verify remaining edge tail vs key.
+        if (entry.edge_skip > 0) {
+            int edge_len = edge_ptrs.len_ptr[0];
+            int s = static_cast<int>(entry.edge_skip);
+            if (s > edge_len)
+                return false;
+            int edge_len_m1 = edge_len - 1;
+            const uint8_t* tail_ptr = nullptr;
+            if (edge_len_m1 > 0) {
+                if (loadEdgeKey(edge_ptrs, data, tail_ptr, edge_len_m1) != MBError::SUCCESS)
+                    return false;
+                int rem_tail = edge_len_m1 - (s - 1);
+                if (rem_tail > 0) {
+                    if (lrem < rem_tail)
+                        return false;
+                    if (memcmp(tail_ptr + (s - 1), kcur, rem_tail) != 0)
+                        return false;
+                    kcur += rem_tail;
+                    lrem -= rem_tail;
+                    cons += rem_tail;
+                }
+            }
+        }
+
+        // Commit staged cursor updates on success
+        key_cursor = kcur;
+        len_remaining = lrem;
+        consumed = cons;
         return true;
-    }
-
-    inline void SearchEngine::maybePutCache(const uint8_t* full_key, int full_len, int consumed,
-        const EdgePtrs& edge_ptrs) const
-    {
-        dict.MaybePutCache(full_key, full_len, consumed, edge_ptrs);
     }
 
 }

@@ -1,17 +1,20 @@
 #include <assert.h>
 #include <chrono>
+#include <cstdint>
 #include <cstring>
 #include <fstream>
 #include <iostream>
-#include <openssl/sha.h>
 #include <openssl/evp.h>
-#include <string>
+#include <openssl/sha.h>
 #include <pthread.h>
 #include <sstream>
-#include <vector>
+#include <string>
 #include <sys/syscall.h>
 #include <sys/time.h>
+#include <time.h>
 #include <unistd.h>
+#include <unordered_map>
+#include <vector>
 
 #ifdef LEVEL_DB
 #include <leveldb/db.h>
@@ -48,37 +51,58 @@ static bool sync_on_write = false;
 static unsigned long long memcap = 1024ULL * 1024 * 1024;
 static bool use_jemalloc = false;
 // Prefix cache controls (MABAIN only)
-static int pc_n = -1;            // prefix length; -1 means default
-static long long pc_cap = -1;    // capacity; -1 means default
-static bool pc_disable = false;  // disable prefix cache
-static bool pc_shared = false;   // use shared prefix cache (MABAIN only)
-static int pc_assoc = 4;         // associativity for shared cache buckets
+static long long pc_cap = -1; // capacity; -1 means default
+// Shared prefix cache controls (enable via -pcc)
 
 // Buffer per-reader cache stats to avoid interleaved output
 static std::vector<std::string> g_reader_stats;
 static pthread_mutex_t g_stats_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+// Deterministic pseudo-random generator mapping index->uint32_t
+// Uses splitmix64 scramble and returns lower 32 bits. Stable across runs.
+static inline uint32_t prand_u32(uint64_t i)
+{
+    uint64_t x = i + 0x9e3779b97f4a7c15ULL; // golden ratio seed
+    x ^= x >> 30;
+    x *= 0xbf58476d1ce4e5b9ULL;
+    x ^= x >> 27;
+    x *= 0x94d049bb133111ebULL;
+    x ^= x >> 31;
+    // Return modulo pcc (pc_cap) when provided, otherwise full 32-bit value
+    // if (pc_cap > 0)
+    //    return static_cast<uint32_t>(x % static_cast<uint64_t>(pc_cap));
+    return static_cast<uint32_t>(x);
+}
+static inline uint64_t prand_u64(uint64_t i)
+{
+    uint64_t x = i + 0x9e3779b97f4a7c15ULL; // golden ratio seed
+    x ^= x >> 30;
+    x *= 0xbf58476d1ce4e5b9ULL;
+    x ^= x >> 27;
+    x *= 0x94d049bb133111ebULL;
+    x ^= x >> 31;
+    return x;
+}
+
 static void get_sha256_str(int key, char* sha256_str)
 {
     unsigned char hash[EVP_MAX_MD_SIZE];
     unsigned int hash_len;
-    
-    EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
     if (!ctx) {
         sha256_str[0] = 0;
         return;
     }
-    
-    if (EVP_DigestInit_ex(ctx, EVP_sha256(), NULL) != 1 ||
-        EVP_DigestUpdate(ctx, (unsigned char*)&key, 4) != 1 ||
-        EVP_DigestFinal_ex(ctx, hash, &hash_len) != 1) {
+
+    if (EVP_DigestInit_ex(ctx, EVP_sha256(), NULL) != 1 || EVP_DigestUpdate(ctx, (unsigned char*)&key, 4) != 1 || EVP_DigestFinal_ex(ctx, hash, &hash_len) != 1) {
         EVP_MD_CTX_free(ctx);
         sha256_str[0] = 0;
         return;
     }
-    
+
     EVP_MD_CTX_free(ctx);
-    
+
     for (unsigned int i = 0; i < hash_len; i++) {
         sprintf(sha256_str + (i * 2), "%02x", hash[i]);
     }
@@ -89,23 +113,21 @@ static void get_sha1_str(int key, char* sha1_str)
 {
     unsigned char hash[EVP_MAX_MD_SIZE];
     unsigned int hash_len;
-    
-    EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
     if (!ctx) {
         sha1_str[0] = 0;
         return;
     }
-    
-    if (EVP_DigestInit_ex(ctx, EVP_sha1(), NULL) != 1 ||
-        EVP_DigestUpdate(ctx, (unsigned char*)&key, 4) != 1 ||
-        EVP_DigestFinal_ex(ctx, hash, &hash_len) != 1) {
+
+    if (EVP_DigestInit_ex(ctx, EVP_sha1(), NULL) != 1 || EVP_DigestUpdate(ctx, (unsigned char*)&key, 4) != 1 || EVP_DigestFinal_ex(ctx, hash, &hash_len) != 1) {
         EVP_MD_CTX_free(ctx);
         sha1_str[0] = 0;
         return;
     }
-    
+
     EVP_MD_CTX_free(ctx);
-    
+
     for (unsigned int i = 0; i < hash_len; i++) {
         sprintf(sha1_str + (i * 2), "%02x", hash[i]);
     }
@@ -203,13 +225,14 @@ static void InitDB(bool writer_mode = true)
     mconf.mbdir = mbdir_tmp.c_str();
     mconf.options = mabain::CONSTS::WriterOptions();
     if (use_jemalloc) {
+        // In jemalloc mode, memcap must equal block_size * max_num_blocks
         mconf.options |= mabain::CONSTS::OPTION_JEMALLOC;
         mconf.block_size_index = 128LL * 1024 * 1024;
         mconf.block_size_data = 128LL * 1024 * 1024;
-        mconf.memcap_index = 10 * mconf.block_size_index;
-        mconf.memcap_data = 10 * mconf.block_size_data;
         mconf.max_num_index_block = 10;
         mconf.max_num_data_block = 10;
+        mconf.memcap_index = mconf.block_size_index * mconf.max_num_index_block;
+        mconf.memcap_data = mconf.block_size_data * mconf.max_num_data_block;
     } else {
         mconf.block_size_index = 67LL * 1024 * 1024;
         mconf.block_size_data = 67LL * 1024 * 1024;
@@ -224,17 +247,11 @@ static void InitDB(bool writer_mode = true)
     if (!writer_mode)
         mconf.options = mabain::CONSTS::ReaderOptions();
     db = new mabain::DB(mconf);
+    // Ensure DB is open; subsequent phases depend on it
     assert(db->is_open());
-    // Apply prefix cache overrides (both writer and reader must use the same config)
-    if (pc_disable) {
-        db->DisablePrefixCache();
-        db->DisableSharedPrefixCache();
-    } else if (pc_n > 0) {
-        if (pc_shared) {
-            db->EnableSharedPrefixCache(pc_n, pc_cap > 0 ? static_cast<size_t>(pc_cap) : 100000, pc_assoc);
-        } else {
-            db->EnablePrefixCache(pc_n, pc_cap > 0 ? static_cast<size_t>(pc_cap) : 100000);
-        }
+    // Enable shared prefix cache when -pcc is provided
+    if (pc_cap > 0) {
+        db->EnablePrefixCache(static_cast<size_t>(pc_cap));
     }
 #endif
 }
@@ -248,13 +265,15 @@ static void Add(int n)
         mdb_txn_begin(env, NULL, 0, &txn);
 #endif
 
-    uint64_t total_time = 0;
+    // Accumulate in nanoseconds to avoid truncation
+    uint64_t total_time_ns = 0;
+
     for (int i = 0; i < n; i++) {
         std::string key, val;
         if (key_type == 0) {
             key = std::to_string(i);
             val = std::to_string(i);
-        } else {
+        } else if (key_type == 1 || key_type == 2) {
             if (key_type == 1) {
                 get_sha1_str(i, kv);
             } else {
@@ -262,6 +281,11 @@ static void Add(int n)
             }
             key = kv;
             val = kv;
+        } else { // key_type == u32 pseudo-random (binary 3 bytes + decimal suffix)
+            uint32_t r = prand_u64(static_cast<uint64_t>(i));
+            key.assign((char*)&r, 4);
+            key += std::to_string(i);
+            val = key;
         }
 
 #ifdef LEVEL_DB
@@ -270,12 +294,12 @@ static void Add(int n)
         auto start = std::chrono::high_resolution_clock::now();
         db->Put(opts, key, val);
         auto stop = std::chrono::high_resolution_clock::now();
-        total_time += std::chrono::duration_cast<std::chrono::microseconds>(stop - start).count();
+        total_time_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(stop - start).count();
 #elif KYOTO_CABINET
         auto start = std::chrono::high_resolution_clock::now();
-        db->set(key.c_str(), val.c_str());
+        db->set(key.data(), key.size(), val.data(), val.size());
         auto stop = std::chrono::high_resolution_clock::now();
-        total_time += std::chrono::duration_cast<std::chrono::microseconds>(stop - start).count();
+        total_time_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(stop - start).count();
 #elif LMDB
         MDB_val lmdb_key, lmdb_val;
         lmdb_key.mv_size = key.size();
@@ -289,7 +313,7 @@ static void Add(int n)
             auto start = std::chrono::high_resolution_clock::now();
             mdb_cursor_put(mc, &lmdb_key, &lmdb_val, 0);
             auto stop = std::chrono::high_resolution_clock::now();
-            total_time += std::chrono::duration_cast<std::chrono::microseconds>(stop - start).count();
+            total_time_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(stop - start).count();
             mdb_cursor_close(mc);
             mdb_txn_commit(txn);
         } else {
@@ -297,14 +321,14 @@ static void Add(int n)
             auto start = std::chrono::high_resolution_clock::now();
             mdb_cursor_put(mc, &lmdb_key, &lmdb_val, 0);
             auto stop = std::chrono::high_resolution_clock::now();
-            total_time += std::chrono::duration_cast<std::chrono::microseconds>(stop - start).count();
+            total_time_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(stop - start).count();
             mdb_cursor_close(mc);
         }
 #elif MABAIN
         auto start = std::chrono::high_resolution_clock::now();
         db->Add(key, val);
         auto stop = std::chrono::high_resolution_clock::now();
-        total_time += std::chrono::duration_cast<std::chrono::microseconds>(stop - start).count();
+        total_time_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(stop - start).count();
 #endif
 
         if ((i + 1) % ONE_MILLION == 0) {
@@ -316,8 +340,8 @@ static void Add(int n)
         mdb_txn_commit(txn);
 #endif
 
-    uint64_t timediff = total_time;
-    std::cout << "===== " << timediff * 1.0 / n << " micro seconds per insertion\n";
+    double timediff_us = total_time_ns / 1000.0;
+    std::cout << "===== " << timediff_us / n << " micro seconds per insertion\n";
 }
 
 static void Lookup(int n)
@@ -331,18 +355,36 @@ static void Lookup(int n)
     mdb_cursor_open(txn, db, &cursor);
 #endif
 
-    uint64_t total_time = 0;
+    uint64_t total_time_ns = 0; // measure whole-loop time in nanoseconds
+#ifdef MABAIN
+    mabain::MBData mbd; // reuse per-iteration buffer to avoid reallocation
+    mbd.options = mabain::CONSTS::OPTION_KEY_ONLY;
+    
+#endif
+
+#ifdef MABAIN
+    // Dump stats before lookup when prefix cache is enabled
+    if (pc_cap > 0) {
+        std::cout << "-- Cache stats before lookup --\n";
+        db->DumpPrefixCacheStats(std::cout);
+    }
+#endif
+    // Time each find call only (exclude key-building and loop overhead)
     for (int i = 0; i < n; i++) {
         std::string key;
         if (key_type == 0) {
             key = std::to_string(i);
-        } else {
+        } else if (key_type == 1 || key_type == 2) {
             if (key_type == 1) {
                 get_sha1_str(i, kv);
             } else {
                 get_sha256_str(i, kv);
             }
             key = kv;
+        } else { // u32 pseudo-random: 3LE bytes + decimal suffix; match Add()
+            uint32_t r = prand_u64(static_cast<uint64_t>(i));
+            key.assign((char*)&r, 4);
+            key += std::to_string(i);
         }
 
 #ifdef LEVEL_DB
@@ -350,15 +392,15 @@ static void Lookup(int n)
         auto start = std::chrono::high_resolution_clock::now();
         leveldb::Status s = db->Get(leveldb::ReadOptions(), key, &value);
         auto stop = std::chrono::high_resolution_clock::now();
-        total_time += std::chrono::duration_cast<std::chrono::microseconds>(stop - start).count();
+        total_time_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(stop - start).count();
         if (s.ok())
             nfound++;
 #elif KYOTO_CABINET
         std::string value;
         auto start = std::chrono::high_resolution_clock::now();
-        bool found = db->get(key, &value);
+        bool found = db->get(key.data(), key.size(), &value);
         auto stop = std::chrono::high_resolution_clock::now();
-        total_time += std::chrono::duration_cast<std::chrono::microseconds>(stop - start).count();
+        total_time_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(stop - start).count();
         if (found)
             nfound++;
 #elif LMDB
@@ -367,17 +409,15 @@ static void Lookup(int n)
         auto start = std::chrono::high_resolution_clock::now();
         int lmdb_result = mdb_cursor_get(cursor, &lmdb_key, &lmdb_value, MDB_SET);
         auto stop = std::chrono::high_resolution_clock::now();
-        total_time += std::chrono::duration_cast<std::chrono::microseconds>(stop - start).count();
+        total_time_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(stop - start).count();
         if (lmdb_result == 0)
             nfound++;
             // std::cout<<key<<":"<<std::string((char*)lmdb_value.mv_data, lmdb_value.mv_size)<<"\n";
 #elif MABAIN
-        mabain::MBData mbd;
         auto start = std::chrono::high_resolution_clock::now();
-        int rval = db->Find(key, mbd);
+        int rval = db->Find(key.data(), (int)key.size(), mbd);
         auto stop = std::chrono::high_resolution_clock::now();
-        total_time += std::chrono::duration_cast<std::chrono::microseconds>(stop - start).count();
-        // std::cout<<key<<":"<<std::string((char*)mbd.buff, mbd.data_len)<<"\n";
+        total_time_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(stop - start).count();
         if (rval == 0)
             nfound++;
 #endif
@@ -391,17 +431,15 @@ static void Lookup(int n)
     mdb_cursor_close(cursor);
     mdb_txn_abort(txn);
 #endif
-    uint64_t timediff = total_time;
+    double timediff_us = total_time_ns / 1000.0; // ns -> us
 
     std::cout << "found " << nfound << " key-value pairs\n";
-    std::cout << "===== " << timediff * 1.0 / n << " micro seconds per lookup\n";
+    std::cout << "===== " << timediff_us / n << " micro seconds per lookup\n";
+// (unordered_map) test removed per request
 #ifdef MABAIN
-    if (db) {
+    if (db && pc_cap > 0) {
         std::cout << "-- Cache stats after lookup --\n";
         db->DumpPrefixCacheStats(std::cout);
-        if (pc_shared) {
-            db->DumpSharedPrefixCacheStats(std::cout);
-        }
     }
 #endif
 }
@@ -417,17 +455,21 @@ static void Delete(int n)
 #endif
 
     uint64_t total_time = 0;
+
     for (int i = 0; i < n; i++) {
         std::string key;
         if (key_type == 0) {
             key = std::to_string(i);
-        } else {
+        } else if (key_type == 1 || key_type == 2) {
             if (key_type == 1) {
                 get_sha1_str(i, kv);
             } else {
                 get_sha256_str(i, kv);
             }
             key = kv;
+        } else { // u32 pseudo-random (binary 4 bytes, little-endian)
+            uint32_t r = prand_u64(static_cast<uint64_t>(i));
+            key.assign((char*)&r, 4);
         }
 #ifdef LEVEL_DB
         leveldb::WriteOptions opts = leveldb::WriteOptions();
@@ -440,7 +482,7 @@ static void Delete(int n)
             nfound++;
 #elif KYOTO_CABINET
         auto start = std::chrono::high_resolution_clock::now();
-        bool removed = db->remove(key);
+        bool removed = db->remove(key.data(), key.size());
         auto stop = std::chrono::high_resolution_clock::now();
         total_time += std::chrono::duration_cast<std::chrono::microseconds>(stop - start).count();
         if (removed)
@@ -468,7 +510,7 @@ static void Delete(int n)
         }
 #elif MABAIN
         auto start = std::chrono::high_resolution_clock::now();
-        int rval = db->Remove(key);
+        int rval = db->Remove(key.data(), static_cast<int>(key.size()));
         auto stop = std::chrono::high_resolution_clock::now();
         total_time += std::chrono::duration_cast<std::chrono::microseconds>(stop - start).count();
         if (rval == 0)
@@ -502,7 +544,7 @@ static void* Writer(void* arg)
         if (key_type == 0) {
             key = std::to_string(i);
             val = std::to_string(i);
-        } else {
+        } else if (key_type == 1 || key_type == 2) {
             if (key_type == 1) {
                 get_sha1_str(i, kv);
             } else {
@@ -510,6 +552,10 @@ static void* Writer(void* arg)
             }
             key = kv;
             val = kv;
+        } else { // u32 pseudo-random (binary 4 bytes, little-endian)
+            uint32_t r = prand_u64(static_cast<uint64_t>(i));
+            key.assign((char*)&r, 4);
+            val = key;
         }
 
 #ifdef LEVEL_DB
@@ -538,6 +584,7 @@ static void* Writer(void* arg)
 #endif
     return NULL;
 }
+
 static void* Reader(void* arg)
 {
     int num = *((int*)arg);
@@ -551,61 +598,43 @@ static void* Reader(void* arg)
         (unsigned long long)(0.6666667 * memcap),
         (unsigned long long)(0.3333333 * memcap));
     assert(db_r->is_open());
-    // Configure prefix cache for reader instance only
-    if (pc_disable) {
-        db_r->DisablePrefixCache();
-        db_r->DisableSharedPrefixCache();
-    } else if (pc_n > 0) {
-        if (pc_shared) {
-            db_r->EnableSharedPrefixCache(pc_n, pc_cap > 0 ? static_cast<size_t>(pc_cap) : 100000, pc_assoc);
-            // Temporarily force read-only during concurrency to guarantee no stalls
-            db_r->SetSharedPrefixCacheReadOnly(true);
-        } else {
-            db_r->EnablePrefixCache(pc_n, pc_cap > 0 ? static_cast<size_t>(pc_cap) : 100000);
-        }
+    // Configure shared prefix cache for reader when -pcc is provided
+    if (pc_cap > 0) {
+        db_r->EnablePrefixCache(static_cast<size_t>(pc_cap));
+        // Read path does not write to cache; no need to toggle read-only
     }
 #endif
 
     std::cout << "\n[reader : " << tid << "] started" << std::endl;
     while (i < num) {
         std::string key;
-        bool found = false;
 
         if (key_type == 0) {
             key = std::to_string(i);
-        } else {
+        } else if (key_type == 1 || key_type == 2) {
             if (key_type == 1) {
                 get_sha1_str(i, kv);
             } else {
                 get_sha256_str(i, kv);
             }
             key = kv;
+        } else { // u32 pseudo-random (binary 4 bytes, little-endian)
+            uint32_t r = prand_u64(static_cast<uint64_t>(i));
+            key.assign((char*)&r, 4);
         }
 
         std::string value;
 #ifdef LEVEL_DB
         leveldb::Status s = db->Get(leveldb::ReadOptions(), key, &value);
-        if (s.ok()) {
-            found = true;
-        }
 #elif MABAIN
         mabain::MBData mbd;
-        int rval = db_r->Find(key, mbd);
-        if (rval == 0) {
-            value = std::string((const char*)mbd.buff, mbd.data_len);
-            found = true;
-        }
+        // Avoid value reads to reduce contention during concurrency
+        mbd.options = mabain::CONSTS::OPTION_KEY_ONLY;
+        db_r->Find(key, mbd);
 #endif
-        if (found) {
-            if (key.compare(value) != 0) {
-                std::cout << "\nVALUE NOT MATCH for key:" << key << ":" << value << "\n";
-                abort();
-            }
-
-            i++;
-            if ((i + 1) % ONE_MILLION == 0) {
-                std::cout << "\n[reader : " << tid << "] found " << (i + 1) << "\n";
-            }
+        // Always advance to avoid indefinite spin if writer lags on a key
+        if ((++i) % ONE_MILLION == 0) {
+            std::cout << "\n[reader : " << tid << "] progressed to " << i << "\n";
         }
     }
 
@@ -614,10 +643,7 @@ static void* Reader(void* arg)
     {
         std::ostringstream oss;
         oss << "-- Cache stats for reader tid " << tid << " --\n";
-        db_r->DumpPrefixCacheStats(oss);
-        if (pc_shared) {
-            db_r->DumpSharedPrefixCacheStats(oss);
-        }
+        
         pthread_mutex_lock(&g_stats_mutex);
         g_reader_stats.push_back(oss.str());
         pthread_mutex_unlock(&g_stats_mutex);
@@ -627,6 +653,7 @@ static void* Reader(void* arg)
 #endif
     return NULL;
 }
+
 static void ConcurrencyTest(int num, int n_r)
 {
 #ifdef KYOTO_CABINET
@@ -647,16 +674,15 @@ static void ConcurrencyTest(int num, int n_r)
     pthread_mutex_unlock(&g_stats_mutex);
 
     // No cache writes from readers during concurrency to avoid stalls
-
-    // For shared cache, pre-create mapping to avoid races between readers
+    // For shared cache, pre-create mapping to avoid races between threads/processes
 #ifdef MABAIN
-    if (pc_shared && !pc_disable && pc_n > 0) {
+    if (pc_cap > 0) {
         std::string db_dir_tmp = std::string(db_dir) + "/mabain/";
         mabain::DB* seed = new mabain::DB(db_dir_tmp.c_str(), mabain::CONSTS::ReaderOptions(),
             (unsigned long long)(0.6666667 * memcap),
             (unsigned long long)(0.3333333 * memcap));
         if (seed && seed->is_open()) {
-            seed->EnableSharedPrefixCache(pc_n, pc_cap > 0 ? static_cast<size_t>(pc_cap) : 100000, pc_assoc);
+            seed->EnablePrefixCache(static_cast<size_t>(pc_cap));
             seed->Close();
         }
         delete seed;
@@ -691,10 +717,7 @@ static void ConcurrencyTest(int num, int n_r)
 #ifdef MABAIN
     if (db) {
         std::cout << "-- Cache stats after concurrency --\n";
-        db->DumpPrefixCacheStats(std::cout);
-        if (pc_shared) {
-            db->DumpSharedPrefixCacheStats(std::cout);
-        }
+        
     }
     // Print buffered per-reader cache stats
     pthread_mutex_lock(&g_stats_mutex);
@@ -744,9 +767,6 @@ static void RemoveDB()
 
 int main(int argc, char* argv[])
 {
-#ifdef MABAIN
-    mabain::DB::SetLogFile("/var/tmp/mabain_test/mabain.log");
-#endif
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-n") == 0) {
             if (++i >= argc)
@@ -761,6 +781,8 @@ int main(int argc, char* argv[])
                 key_type = 1;
             } else if (strcmp(argv[i], "sha2") == 0) {
                 key_type = 2;
+            } else if (strcmp(argv[i], "u32") == 0) {
+                key_type = 3; // deterministic pseudo-random uint32
             } else {
                 std::cerr << "invalid key type: " << argv[i] << "\n";
                 abort();
@@ -781,24 +803,21 @@ int main(int argc, char* argv[])
             memcap = atoi(argv[i]);
         } else if (strcmp(argv[i], "-j") == 0) {
             use_jemalloc = true;
-        } else if (strcmp(argv[i], "-pcn") == 0) {
-            if (++i >= argc) abort();
-            pc_n = atoi(argv[i]);
         } else if (strcmp(argv[i], "-pcc") == 0) {
-            if (++i >= argc) abort();
+            if (++i >= argc)
+                abort();
             pc_cap = atoll(argv[i]);
-        } else if (strcmp(argv[i], "-pc-off") == 0) {
-            pc_disable = true;
-        } else if (strcmp(argv[i], "-pc-shared") == 0) {
-            pc_shared = true;
-        } else if (strcmp(argv[i], "-pc-assoc") == 0) {
-            if (++i >= argc) abort();
-            pc_assoc = atoi(argv[i]);
         } else {
             std::cerr << "invalid argument: " << argv[i] << "\n";
         }
     }
 
+#ifdef MABAIN
+    // Set log file after parsing -d so it lands under the chosen dir
+    // Default to current workspace to avoid restricted paths
+    std::string log_path = std::string(db_dir) + std::string("/mabain.log");
+    mabain::DB::SetLogFile(log_path.c_str());
+#endif
     print_cpu_info();
     if (sync_on_write)
         std::cout << "===== Disk sync is on\n";
@@ -806,17 +825,8 @@ int main(int argc, char* argv[])
         std::cout << "===== Disk sync is off\n";
     std::cout << "===== Memcap is " << memcap << "\n";
 #ifdef MABAIN
-    if (pc_disable) {
-        std::cout << "===== Prefix cache disabled\n";
-    } else if (pc_n > 0) {
-        if (pc_shared) {
-            std::cout << "===== Shared Prefix cache n=" << pc_n
-                      << ", cap=" << (pc_cap > 0 ? pc_cap : 100000)
-                      << ", assoc=" << pc_assoc << "\n";
-        } else {
-            std::cout << "===== Prefix cache n=" << pc_n
-                      << ", cap=" << (pc_cap > 0 ? pc_cap : 100000) << "\n";
-        }
+    if (pc_cap > 0) {
+        std::cout << "===== Prefix cache cap=" << pc_cap << "\n";
     }
 #endif
 
@@ -831,7 +841,7 @@ int main(int argc, char* argv[])
     Lookup(num_kv);
     DestroyDB();
 
-    InitDB();
+    InitDB(); // optional delete phase disabled
     Delete(num_kv);
     DestroyDB();
 

@@ -1,12 +1,13 @@
 CPP=g++
 
 CPPFLAGS = -I. -I.. -I../util -Wall -Werror -g -O2 -c -std=c++17
-LDFLAGS  = -lpthread -lcrypto -ljemalloc -L../../build/lib -lmabain
+LDFLAGS  = -lpthread -lcrypto -ljemalloc -L../../build/lib -lmabain \
+	-Wl,-rpath,'$$ORIGIN/../../build/lib'
 
 TESTSOURCES=$(wildcard *.cpp)
 
 all: mb_test mb_test1 mb_test2 mb_test_mp multi_writer_bug_test mb_bound_test mb_header_test \
-	mb_mm_test mb_mm_prune_test sigbus_disk_pressure_test jemalloc_test
+	mb_mm_test mb_mm_prune_test sigbus_disk_pressure_test jemalloc_test shared_prefix_cache_concurrency_test hashmap_lookup_bench
 
 mb_mm_prune_test: mb_mm_prune_test.cpp
 	$(CPP) $(CPPFLAGS) mb_mm_prune_test.cpp
@@ -48,10 +49,20 @@ mb_header_test: mb_header_test.cpp
 	$(CPP) $(CPPFLAGS) mb_header_test.cpp
 	$(CPP) mb_header_test.o -o mb_header_test $(LDFLAGS)
 
-sigbus_disk_pressure_test: sigbus_disk_pressure_test.cpp ../libmabain.so
+sigbus_disk_pressure_test: sigbus_disk_pressure_test.cpp ../../build/lib/libmabain.so
 	$(CPP) $(CPPFLAGS) sigbus_disk_pressure_test.cpp
 	$(CPP) sigbus_disk_pressure_test.o -o sigbus_disk_pressure_test $(LDFLAGS)
 
+shared_prefix_cache_concurrency_test: shared_prefix_cache_concurrency_test.cpp ../../build/lib/libmabain.so
+	$(CPP) $(CPPFLAGS) shared_prefix_cache_concurrency_test.cpp
+	$(CPP) shared_prefix_cache_concurrency_test.o -o shared_prefix_cache_concurrency_test $(LDFLAGS)
+
+
+# Build standalone HashMap lookup benchmark
+hashmap_lookup_bench: hashmap_lookup_bench.cpp ../../build/lib/libmabain.so
+	$(CPP) $(CPPFLAGS) hashmap_lookup_bench.cpp
+	$(CPP) hashmap_lookup_bench.o -o hashmap_lookup_bench $(LDFLAGS)
+
 
 clean:
-	-rm -rf *.o mb_test* multi_writer_bug_test mb_bound_test mb_header_test mb_mm_test mb_mm_prune_test sigbus_disk_pressure_test jemalloc_test
+	-rm -rf *.o mb_test* multi_writer_bug_test mb_bound_test mb_header_test mb_mm_test mb_mm_prune_test sigbus_disk_pressure_test jemalloc_test shared_prefix_cache_concurrency_test hashmap_lookup_bench

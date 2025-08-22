@@ -77,6 +77,10 @@ public:
         bool map_new_sliding = true);
     int NextEdge(const uint8_t* key, EdgePtrs& edge_ptrs,
         uint8_t* tmp_buff, MBData& mbdata) const;
+    // Fast exact-match path: avoid copying node header/first-chars into tmp buffer
+    // by reading directly from mmap. Only safe for exact-match (no parent store)
+    // and when caller does not require internal node bookkeeping.
+    int NextEdgeFast(const uint8_t* key, EdgePtrs& edge_ptrs, MBData& mbdata) const;
     int NextLowerBoundEdge(const uint8_t* key, int len, EdgePtrs& edge_ptrs,
         uint8_t* node_buff, MBData& mbdata, EdgePtrs& less_edge_ptrs, int& le_edge_key) const;
     int NextMaxEdge(EdgePtrs& edge_ptrs, uint8_t* node_buff, MBData& mbdata, int& max_key) const;

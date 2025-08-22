@@ -35,6 +35,66 @@
 
 namespace mabain {
 
+// Binary search helper on the first-character array of a node.
+// Returns the first index i in [0, n] such that arr[i] >= key.
+// If i == n or arr[i] != key, then key is not present and i is the
+// insertion position (lower_bound).
+static inline int lower_bound_first_char(const uint8_t* arr, int n, uint8_t key)
+{
+    int l = 0, r = n;
+    while (l < r) {
+        int m = l + ((r - l) >> 1);
+        if (arr[m] < key)
+            l = m + 1;
+        else
+            r = m;
+    }
+    return l;
+}
+static inline size_t edge_offset_of(size_t node_off, int nt, int idx)
+{
+    return node_off + NODE_EDGE_KEY_FIRST + nt + (size_t)idx * EDGE_SIZE;
+}
+
+constexpr int kBinarySearchThreshold = 10;
+static inline bool use_binary_search(int nt) { return nt > kBinarySearchThreshold; }
+
+static inline void select_edge_indices(const uint8_t* first_chars,
+    int nt, uint8_t k, bool sorted, int& match_idx, int& less_idx, int& max_idx)
+{
+    match_idx = -1;
+    less_idx = -1;
+    max_idx = (nt > 0) ? (nt - 1) : -1;
+
+    if (nt <= 0)
+        return;
+
+    if (sorted && use_binary_search(nt)) {
+        int lb = lower_bound_first_char(first_chars, nt, k);
+        if (lb < nt && first_chars[lb] == k)
+            match_idx = lb;
+        less_idx = lb - 1;
+        if (less_idx < 0)
+            less_idx = -1;
+        return;
+    }
+
+    // Linear scan for small nt
+    int max_val = first_chars[0];
+    max_idx = 0;
+    for (int i = 0; i < nt; ++i) {
+        uint8_t c = first_chars[i];
+        if (c == k && match_idx < 0)
+            match_idx = i;
+        if (c < k && (less_idx < 0 || c > first_chars[less_idx]))
+            less_idx = i;
+        if (c > max_val) {
+            max_val = c;
+            max_idx = i;
+        }
+    }
+}
+
 /////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////
@@ -171,7 +231,7 @@ void DictMem::InitRootNode()
     }
     assert(root_offset == 0);
 
-    root_node[0] = FLAG_NODE_NONE;
+    root_node[0] = FLAG_NODE_NONE | FLAG_NODE_SORTED;
     root_node[1] = NUM_ALPHABET - 1;
     for (int i = 0; i < NUM_ALPHABET; i++) {
         root_node[NODE_EDGE_KEY_FIRST + i] = static_cast<uint8_t>(i);
@@ -308,8 +368,23 @@ void DictMem::UpdateHeadEdge(EdgePtrs& edge_ptrs, int match_len,
     edge_ptrs.flag_ptr[0] = 0;
 }
 
-// Insert a new node on the current edge
-// The old edge becomes two edges.
+// Insert a new node by splitting the current edge at match_len.
+//
+// Scenario:
+// - We matched 'match_len' bytes on the current edge, and the incoming key ends here
+//   (i.e., we need a node boundary at this split point to attach the value).
+//
+// What this does:
+// - Creates a new node and rewires the parent edge to point to it.
+// - The original edge is split into two parts:
+//   1) Head: the first 'match_len' bytes stay on the parent edge (edge_ptrs) and now point
+//      to the new node (no data flag).
+//   2) Tail: the remaining suffix (old key bytes after 'match_len') becomes an edge of the
+//      new node (new_edge_ptrs), keeping the previous child/data linkage.
+// - Marks the new node as a match (FLAG_NODE_MATCH) and writes the provided data_offset to
+//   the node so the exact-key lookup resolves here.
+// - Handles local vs remote (buffered) edge strings and releases any obsolete buffers.
+// - Writes back the modified parent edge with lock-free writer guards if enabled.
 int DictMem::InsertNode(EdgePtrs& edge_ptrs, int match_len,
     size_t data_offset, MBData& data)
 {
@@ -340,7 +415,7 @@ int DictMem::InsertNode(EdgePtrs& edge_ptrs, int match_len,
 
     // Update the new node
     // match found for the new node
-    node[0] = FLAG_NODE_NONE | FLAG_NODE_MATCH;
+    node[0] = FLAG_NODE_NONE | FLAG_NODE_MATCH | FLAG_NODE_SORTED;
     // Update data offset in the node
     Write6BInteger(node_ptrs.ptr + 2, data_offset);
     // Update the first character in edge key
@@ -366,9 +441,23 @@ int DictMem::InsertNode(EdgePtrs& edge_ptrs, int match_len,
     return MBError::SUCCESS;
 }
 
-// Insert a new node on the current edge.
-// Add a new edge to the new node. The new node will have two edges.
-// The old edge becomes two edges.
+// Insert a branching node by splitting the current edge at match_len and
+// adding a second edge for the new key's remaining suffix.
+//
+// Scenario:
+// - We matched 'match_len' bytes on the current edge, and the incoming key
+//   continues beyond the split point, diverging from the existing edge suffix.
+//
+// What this does:
+// - Creates a new node with two edges and rewires the parent edge to point to it.
+// - Splits the original edge into a tail suffix (bytes after match_len) that becomes
+//   one edge of the new node, preserving its previous child/data linkage.
+// - Builds a second edge for the incoming key's remaining bytes and stores the
+//   provided data_off there.
+// - Orders the two edges in the new node by first character to keep first-chars array sorted.
+// - Updates the parent edge head to length 'match_len' and clears its data flag.
+// - Handles local vs remote edge strings and releases any obsolete buffers.
+// - Writes back the modified parent edge with lock-free writer guards if enabled.
 int DictMem::AddLink(EdgePtrs& edge_ptrs, int match_len, const uint8_t* key,
     int key_len, size_t data_off, MBData& data)
 {
@@ -383,13 +472,21 @@ int DictMem::AddLink(EdgePtrs& edge_ptrs, int match_len, const uint8_t* key,
     if (node_move)
         map_new_sliding = true;
     InitNodePtrs(node, 1, node_ptrs);
-    node[0] = FLAG_NODE_NONE;
+    node[0] = FLAG_NODE_NONE | FLAG_NODE_SORTED;
     node[1] = 1;
     InitEdgePtrs(node_ptrs, 0, new_edge_ptrs[0]);
     InitEdgePtrs(node_ptrs, 1, new_edge_ptrs[1]);
 
     uint8_t new_key_first;
-    UpdateTailEdge(edge_ptrs, match_len, data, new_edge_ptrs[0], new_key_first,
+    // Build tail edge into a temporary buffer first so we can place it
+    // into the correct sorted slot without extra swaps.
+    uint8_t tail_edge_tmp[EDGE_SIZE];
+    EdgePtrs tail_edge_tmp_ptrs;
+    tail_edge_tmp_ptrs.ptr = tail_edge_tmp;
+    tail_edge_tmp_ptrs.len_ptr = tail_edge_tmp + EDGE_LEN_POS;
+    tail_edge_tmp_ptrs.flag_ptr = tail_edge_tmp + EDGE_FLAG_POS;
+    tail_edge_tmp_ptrs.offset_ptr = tail_edge_tmp_ptrs.flag_ptr + 1;
+    UpdateTailEdge(edge_ptrs, match_len, data, tail_edge_tmp_ptrs, new_key_first,
         map_new_sliding);
 
     int release_buffer_size = 0;
@@ -400,23 +497,33 @@ int DictMem::AddLink(EdgePtrs& edge_ptrs, int match_len, const uint8_t* key,
 
     // Update the new node
     // match not found for the new node, should not set node[1] and data offset
-    node_ptrs.edge_key_ptr[0] = new_key_first;
-    node_ptrs.edge_key_ptr[1] = key[0];
+    // Decide sorted order by first character
+    int new_idx = 0;
+    int tail_idx = 1;
+    if (key[0] >= new_key_first) {
+        new_idx = 1;
+        tail_idx = 0;
+    }
+    node_ptrs.edge_key_ptr[tail_idx] = new_key_first;
+    node_ptrs.edge_key_ptr[new_idx] = key[0];
+    // Place tail edge into its slot
+    memcpy(new_edge_ptrs[tail_idx].ptr, tail_edge_tmp, EDGE_SIZE);
 
     // Update the new edge
-    new_edge_ptrs[1].len_ptr[0] = key_len;
+    InitEdgePtrs(node_ptrs, new_idx, new_edge_ptrs[new_idx]);
+    new_edge_ptrs[new_idx].len_ptr[0] = key_len;
     if (key_len > LOCAL_EDGE_LEN) {
         size_t new_key_off;
         ReserveData(key + 1, key_len - 1, new_key_off, map_new_sliding);
-        Write5BInteger(new_edge_ptrs[1].ptr, new_key_off);
+        Write5BInteger(new_edge_ptrs[new_idx].ptr, new_key_off);
     } else {
         // edge key is local
         if (key_len > 1)
-            memcpy(new_edge_ptrs[1].ptr, key + 1, key_len - 1);
+            memcpy(new_edge_ptrs[new_idx].ptr, key + 1, key_len - 1);
     }
     // Indicate this new edge holds a data offset
-    new_edge_ptrs[1].flag_ptr[0] = EDGE_FLAG_DATA_OFF;
-    Write6BInteger(new_edge_ptrs[1].offset_ptr, data_off);
+    new_edge_ptrs[new_idx].flag_ptr[0] = EDGE_FLAG_DATA_OFF;
+    Write6BInteger(new_edge_ptrs[new_idx].offset_ptr, data_off);
 
     if (node_move)
         WriteData(node, node_size[1], node_ptrs.offset);
@@ -439,9 +546,25 @@ int DictMem::AddLink(EdgePtrs& edge_ptrs, int match_len, const uint8_t* key,
     return MBError::SUCCESS;
 }
 
-// Add a new edge in current node
-// This involves creating a new node and copying data from old node to the new node
-// and updating the child node offset in edge_ptrs (parent edge).
+// Add a new edge into the current child node without splitting an edge.
+//
+// Scenario:
+// - We arrived at a node (child of the parent edge in edge_ptrs) and there is
+//   no matching first character among its existing edges, so we need to append
+//   one more edge for the remaining key bytes.
+//
+// What this does:
+// - Allocates a new node buffer sized for (old_nt + 1) edges.
+// - If the old child was a leaf encoded on the parent edge (EDGE_FLAG_DATA_OFF),
+//   converts it into a node-with-data by moving that data offset into the node
+//   header (FLAG_NODE_MATCH) and clearing the flag on the parent edge.
+// - Otherwise copies the old node’s header, first-chars array, and edges into
+//   the new node buffer.
+// - Inserts the new edge in sorted order by first character, writes its data
+//   offset, and stores the remainder of the key (local or remote as needed).
+// - Updates the parent edge to point to the new node offset, preserves/updates
+//   the node’s sorted flag, and releases the old node via free list when needed.
+// - Protects the parent edge write with lock-free writer guards when enabled.
 int DictMem::UpdateNode(EdgePtrs& edge_ptrs, const uint8_t* key, int key_len,
     size_t data_off)
 {
@@ -483,15 +606,37 @@ int DictMem::UpdateNode(EdgePtrs& edge_ptrs, const uint8_t* key, int key_len,
     }
 
     node[1] = static_cast<uint8_t>(nt);
-
-    // Update the first edge key character for the new edge
-    node_ptrs.edge_key_ptr[nt] = key[0];
+    // Insert the new edge in sorted order by first character
+    int old_nt = nt; // number of existing edges in old node
+    bool is_sorted_old = true;
+    for (int si = 1; si < old_nt; ++si) {
+        if (node_ptrs.edge_key_ptr[si] < node_ptrs.edge_key_ptr[si - 1]) {
+            is_sorted_old = false;
+            break;
+        }
+    }
+    uint8_t fk = key[0];
+    int ins = 0;
+    for (; ins < old_nt; ++ins) {
+        if (node_ptrs.edge_key_ptr[ins] >= fk)
+            break;
+    }
+    // Shift first-chars and edges to make room at index 'ins'
+    if (ins < old_nt) {
+        memmove(node_ptrs.edge_key_ptr + ins + 1,
+            node_ptrs.edge_key_ptr + ins,
+            old_nt - ins);
+        memmove(node_ptrs.edge_ptr + (ins + 1) * EDGE_SIZE,
+            node_ptrs.edge_ptr + ins * EDGE_SIZE,
+            (size_t)(old_nt - ins) * EDGE_SIZE);
+    }
+    node_ptrs.edge_key_ptr[ins] = fk;
 
     Write6BInteger(edge_ptrs.offset_ptr, node_ptrs.offset);
 
     // Create the new edge
     EdgePtrs new_edge_ptrs;
-    InitEdgePtrs(node_ptrs, nt, new_edge_ptrs);
+    InitEdgePtrs(node_ptrs, ins, new_edge_ptrs);
     new_edge_ptrs.len_ptr[0] = key_len;
     if (key_len > LOCAL_EDGE_LEN) {
         size_t new_key_off;
@@ -506,6 +651,12 @@ int DictMem::UpdateNode(EdgePtrs& edge_ptrs, const uint8_t* key, int key_len,
     // Indicate this new edge holds a data offset
     new_edge_ptrs.flag_ptr[0] = EDGE_FLAG_DATA_OFF;
     Write6BInteger(new_edge_ptrs.offset_ptr, data_off);
+
+    // Update sorted flag based on original ordering
+    if (is_sorted_old)
+        node_ptrs.ptr[0] |= FLAG_NODE_SORTED;
+    else
+        node_ptrs.ptr[0] &= ~FLAG_NODE_SORTED;
 
     if (node_move)
         WriteData(node, node_size[nt], node_ptrs.offset);
@@ -535,52 +686,72 @@ bool DictMem::FindNext(const unsigned char* key, int keylen, int& match_len,
         return false;
     }
 
-    size_t node_off = Get6BInteger(edge_ptr.offset_ptr);
+    const size_t node_base_off = Get6BInteger(edge_ptr.offset_ptr);
 #ifdef __DEBUG__
-    assert(node_off != 0);
+    assert(node_base_off != 0);
 #endif
-    if (ReadData(key_tmp, 1, node_off + 1) != 1)
+    // Read node flags and nt-1
+    uint8_t node_flag;
+    if (ReadData(&node_flag, 1, node_base_off) != 1)
         return false;
+    if (ReadData(key_tmp, 1, node_base_off + 1) != 1)
+        return false;
+    bool sorted = (node_flag & FLAG_NODE_SORTED);
     int nt = key_tmp[0];
     edge_ptr.curr_nt = nt;
     nt++;
     // Load edge key first
-    node_off += NODE_EDGE_KEY_FIRST;
-    if (ReadData(key_tmp, nt, node_off) != nt)
+    const size_t first_char_off = node_base_off + NODE_EDGE_KEY_FIRST;
+    if (ReadData(key_tmp, nt, first_char_off) != nt)
         return false;
-    int i;
-    for (i = 0; i < nt; i++) {
-        if (key_tmp[i] == key[0])
-            break;
-    }
-
-    if (i >= nt)
+    int match_idx, less_idx_unused, max_idx_unused;
+    select_edge_indices(key_tmp, nt, key[0], sorted, match_idx, less_idx_unused, max_idx_unused);
+    if (match_idx < 0)
         return false;
 
     match_len = 1;
 
     // Load the new edge
-    edge_ptr.offset = node_off + nt + i * EDGE_SIZE;
+    edge_ptr.offset = edge_offset_of(node_base_off, nt, match_idx);
     if (ReadData(header->excep_buff, EDGE_SIZE, edge_ptr.offset) != EDGE_SIZE)
         return false;
-    uint8_t* key_string_ptr;
-    int len = edge_ptr.len_ptr[0] - 1;
-    if (len > LOCAL_EDGE_LEN_M1) {
-        if (ReadData(key_tmp, len, Get5BInteger(edge_ptr.ptr)) != len)
+
+    int edge_len_m1 = edge_ptr.len_ptr[0] - 1;
+    if (edge_len_m1 <= 0)
+        return true;
+
+    // Compare only up to the available key bytes
+    int cmp_len = keylen - 1;
+    if (cmp_len > edge_len_m1)
+        cmp_len = edge_len_m1;
+    if (cmp_len <= 0)
+        return true;
+
+    const uint8_t* edge_bytes = nullptr;
+    if (edge_len_m1 > LOCAL_EDGE_LEN_M1) {
+        // Remote string: only read the needed prefix
+        if (ReadData(key_tmp, cmp_len, Get5BInteger(edge_ptr.ptr)) != cmp_len)
             return false;
-        key_string_ptr = key_tmp;
-    } else if (len > 0) {
-        key_string_ptr = header->excep_buff;
+        edge_bytes = key_tmp;
     } else {
+        // Local string is stored inline starting at ptr
+        edge_bytes = header->excep_buff;
+    }
+
+    int cmp = memcmp(edge_bytes, key + 1, (size_t)cmp_len);
+    if (cmp == 0) {
+        match_len += cmp_len;
         return true;
     }
 
-    for (i = 1; i < keylen; i++) {
-        if (i > len || key_string_ptr[i - 1] != key[i])
-            break;
-        match_len++;
+    // Find first mismatch position without reading extra remote bytes
+    for (int j = 0; j < cmp_len; ++j) {
+        if (edge_bytes[j] != key[1 + j]) {
+            match_len += j;
+            return true;
+        }
     }
-
+    // Should not reach here because cmp != 0 guarantees a mismatch within cmp_len
     return true;
 }
 
@@ -824,7 +995,7 @@ size_t DictMem::InitRootNode_RC()
     uint8_t* root_node;
 
     node_move = ReserveNode(NUM_ALPHABET - 1, root_offset_rc, root_node);
-    root_node[0] = FLAG_NODE_NONE;
+    root_node[0] = FLAG_NODE_NONE | FLAG_NODE_SORTED;
     root_node[1] = NUM_ALPHABET - 1;
     for (int i = 0; i < NUM_ALPHABET; i++) {
         root_node[NODE_EDGE_KEY_FIRST + i] = static_cast<uint8_t>(i);
@@ -931,17 +1102,15 @@ int DictMem::NextMaxEdge(EdgePtrs& edge_ptrs, uint8_t* node_buff, MBData& mbdata
         return MBError::NOT_EXIST;
     }
 
-    int curr_max_index = 0;
-    max_key = static_cast<int>(node_buff[0 + NODE_EDGE_KEY_FIRST]);
-    for (int i = 1; i < nt; i++) {
-        auto key = (int)node_buff[i + NODE_EDGE_KEY_FIRST];
-        if (key > max_key) {
-            max_key = key;
-            curr_max_index = i;
-        }
-    }
-
-    edge_ptrs.offset = node_off + NODE_EDGE_KEY_FIRST + nt + curr_max_index * EDGE_SIZE;
+    // Select indices (works for both small and large nt).
+    const uint8_t* first_chars = node_buff + NODE_EDGE_KEY_FIRST;
+    bool sorted = (node_buff[0] & FLAG_NODE_SORTED);
+    int match_idx, less_idx, curr_max_index;
+    select_edge_indices(first_chars, nt, /*k*/ 0, sorted, match_idx, less_idx, curr_max_index);
+    if (curr_max_index < 0)
+        return MBError::NOT_EXIST;
+    max_key = static_cast<int>(first_chars[curr_max_index]);
+    edge_ptrs.offset = edge_offset_of(node_off, nt, curr_max_index);
     int byte_read = ReadData(edge_ptrs.edge_buff, EDGE_SIZE, edge_ptrs.offset);
     if (byte_read != EDGE_SIZE)
         return MBError::READ_ERROR;
@@ -973,36 +1142,29 @@ int DictMem::NextLowerBoundEdge(const uint8_t* key, int len,
         le_node = true;
     }
 
-    int le_edge_index = -1;
-    int byte_read;
-    ret = MBError::NOT_EXIST;
-    for (int i = 0; i < nt; i++) {
-        int curr = (int)node_buff[i + NODE_EDGE_KEY_FIRST];
-        if (curr == key[0]) {
-            edge_ptrs.offset = node_off + NODE_EDGE_KEY_FIRST + nt + i * EDGE_SIZE;
-            byte_read = ReadData(edge_ptrs.edge_buff, EDGE_SIZE, edge_ptrs.offset);
+    {
+        const uint8_t* first_chars = node_buff + NODE_EDGE_KEY_FIRST;
+        bool sorted = (node_buff[0] & FLAG_NODE_SORTED);
+        int match_idx, le_edge_index, max_index_unused;
+        select_edge_indices(first_chars, nt, key[0], sorted, match_idx, le_edge_index, max_index_unused);
+        ret = MBError::NOT_EXIST;
+        if (match_idx >= 0) {
+            edge_ptrs.offset = edge_offset_of(node_off, nt, match_idx);
+            int byte_read = ReadData(edge_ptrs.edge_buff, EDGE_SIZE, edge_ptrs.offset);
             if (byte_read != EDGE_SIZE)
                 return MBError::READ_ERROR;
             ret = MBError::SUCCESS;
-        } else if (curr < key[0] && curr > le_edge_key) {
-            le_edge_index = i;
-            le_edge_key = curr;
         }
-    }
 
-    if (le_edge_index >= 0) {
-        // A lesser edge key was found in the current node,
-        // so we prefer it over the internal node match.
-        // Clear the INTERNAL_NODE_BOUND flag to indicate that.
-        mbdata.options &= ~CONSTS::OPTION_INTERNAL_NODE_BOUND;
-        less_edge_ptrs.curr_edge_index = le_edge_index;
-        less_edge_ptrs.offset = node_off + NODE_EDGE_KEY_FIRST + nt
-            + le_edge_index * EDGE_SIZE;
-    } else if (le_node) {
-        // No lesser edge found, but the current node is an internal match.
-        // So we fall back to using that.
-        less_edge_ptrs.curr_edge_index = 0;
-        le_edge_key = key[0];
+        if (le_edge_index >= 0) {
+            mbdata.options &= ~CONSTS::OPTION_INTERNAL_NODE_BOUND;
+            less_edge_ptrs.curr_edge_index = le_edge_index;
+            less_edge_ptrs.offset = edge_offset_of(node_off, nt, le_edge_index);
+            le_edge_key = first_chars[le_edge_index];
+        } else if (le_node) {
+            less_edge_ptrs.curr_edge_index = 0;
+            le_edge_key = key[0];
+        }
     }
 
     return ret;
@@ -1017,30 +1179,67 @@ int DictMem::NextEdge(const uint8_t* key, EdgePtrs& edge_ptrs, uint8_t* node_buf
     if (ret != MBError::SUCCESS)
         return ret;
 
-    ret = MBError::NOT_EXIST;
-    for (int i = 0; i < nt; i++) {
-        if (node_buff[i + NODE_EDGE_KEY_FIRST] == key[0]) {
+    {
+        const uint8_t* first_chars = node_buff + NODE_EDGE_KEY_FIRST;
+        bool sorted = (node_buff[0] & FLAG_NODE_SORTED);
+        int match_idx, less_idx_unused, max_idx_unused;
+        select_edge_indices(first_chars, nt, key[0], sorted, match_idx, less_idx_unused, max_idx_unused);
+        if (match_idx >= 0) {
             if (mbdata.options & CONSTS::OPTION_FIND_AND_STORE_PARENT) {
-                // update parent node/edge info for deletion
                 edge_ptrs.curr_nt = nt;
-                edge_ptrs.curr_edge_index = i;
+                edge_ptrs.curr_edge_index = match_idx;
                 edge_ptrs.parent_offset = edge_ptrs.offset;
                 edge_ptrs.curr_node_offset = node_off;
             }
-            size_t offset_new = node_off + NODE_EDGE_KEY_FIRST + nt + i * EDGE_SIZE;
+            size_t offset_new = edge_offset_of(node_off, nt, match_idx);
             int byte_read = ReadData(edge_ptrs.edge_buff, EDGE_SIZE, offset_new);
-            if (byte_read != EDGE_SIZE) {
-                ret = MBError::READ_ERROR;
-                break;
-            }
-
+            if (byte_read != EDGE_SIZE)
+                return MBError::READ_ERROR;
             edge_ptrs.offset = offset_new;
-            ret = MBError::SUCCESS;
-            break;
+            return MBError::SUCCESS;
         }
+        return MBError::NOT_EXIST;
+    }
+}
+
+int DictMem::NextEdgeFast(const uint8_t* key, EdgePtrs& edge_ptrs, MBData& mbdata) const
+{
+    // Resolve node offset, respecting saved-edge option as in ReadNode
+    size_t node_off;
+    if ((mbdata.options & CONSTS::OPTION_READ_SAVED_EDGE) && edge_ptrs.offset == mbdata.edge_ptrs.offset)
+        node_off = Get6BInteger(mbdata.edge_ptrs.offset_ptr);
+    else
+        node_off = Get6BInteger(edge_ptrs.offset_ptr);
+
+    // Read header (NODE_EDGE_KEY_FIRST) directly from mmap
+    const uint8_t* hdr = GetShmPtr(node_off, NODE_EDGE_KEY_FIRST);
+    if (hdr == nullptr)
+        return MBError::READ_ERROR;
+    int nt = hdr[1] + 1;
+    // Read first-chars table directly
+    const uint8_t* first_chars = GetShmPtr(node_off + NODE_EDGE_KEY_FIRST, nt);
+    if (first_chars == nullptr)
+        return MBError::READ_ERROR;
+    bool sorted = (hdr[0] & FLAG_NODE_SORTED) != 0;
+
+    // Select matching child index for key[0]
+    int match_idx, less_idx_unused, max_idx_unused;
+    select_edge_indices(first_chars, nt, key[0], sorted, match_idx, less_idx_unused, max_idx_unused);
+    if (match_idx < 0)
+        return MBError::NOT_EXIST;
+
+    // Option FIND_AND_STORE_PARENT requires bookkeeping; caller should not use fast path in that mode
+    if (mbdata.options & CONSTS::OPTION_FIND_AND_STORE_PARENT) {
+        return MBError::INVALID_ARG;
     }
 
-    return ret;
+    size_t offset_new = edge_offset_of(node_off, nt, match_idx);
+    // Load the edge into edge_ptrs.edge_buff
+    int byte_read = ReadData(edge_ptrs.edge_buff, EDGE_SIZE, offset_new);
+    if (byte_read != EDGE_SIZE)
+        return MBError::READ_ERROR;
+    edge_ptrs.offset = offset_new;
+    return MBError::SUCCESS;
 }
 
 void DictMem::RemoveRootEdge(const EdgePtrs& edge_ptrs)
