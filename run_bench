@@ -15,11 +15,13 @@ cd ..
 cd db_comparisons
 make || exit 1
 
-./db_comp_mb -pcn 4 -pcc 500000 -pc-shared -pc-assoc 8 -j
+./db_comp_mb -pcc 500000 -k u32 -j
 
-./db_comp_mb -pcn 4 -pcc 500000 -pc-shared -pc-assoc 8 -k sha1 -j
+./db_comp_mb -pcc 500000 -k int -j
 
-./db_comp_mb -pcn 4 -pcc 500000 -pc-shared -pc-assoc 8 -k sha2 -j
+./db_comp_mb -pcc 500000 -k sha1 -j
+
+./db_comp_mb -pcc 500000 -k sha2 -j
 
 cd ../src/test
 make || exit 1

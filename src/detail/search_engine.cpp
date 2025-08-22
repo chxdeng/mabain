@@ -314,7 +314,12 @@ namespace detail {
             const char* e = std::getenv("MB_DISABLE_PFXCACHE");
             return (e && *e && std::strcmp(e, "0") != 0) ? 1 : 0;
         }();
-        bool use_cache = !disable_pfx_cache && !(dict.reader_rc_off != 0 && root_off == dict.reader_rc_off);
+        // Do not seed from prefix cache for operations that require
+        // precise parent/edge bookkeeping (e.g., remove). Stale mid-edge
+        // cache entries can misguide traversal during structural updates.
+        bool use_cache = !disable_pfx_cache
+            && !(dict.reader_rc_off != 0 && root_off == dict.reader_rc_off)
+            && !(data.options & CONSTS::OPTION_FIND_AND_STORE_PARENT);
         bool used_cache = use_cache ? seedFromCache(key, len, edge_ptrs, data, key_cursor, len, consumed) : false;
 
         if (!used_cache) {
