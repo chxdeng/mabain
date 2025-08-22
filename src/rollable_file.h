@@ -65,6 +65,9 @@ public:
     size_t GetResourceCollectionOffset() const;
     void RemoveUnused(size_t max_size, bool writer_mode);
 
+    // Expose block size for clients that need chunked operations
+    size_t GetBlockSize() const { return block_size; }
+
     static const long page_size;
     static int ShmSync(uint8_t* addr, int size);
 

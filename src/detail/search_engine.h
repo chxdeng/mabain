@@ -60,7 +60,8 @@ namespace detail {
         // Prefix internals
         int findPrefixInternal(size_t root_off, const uint8_t* key, int len, MBData& data);
         int traversePrefixFromEdge(const uint8_t* key_base, const uint8_t*& key_cursor, int& len,
-            EdgePtrs& edge_ptrs, MBData& data, int& last_prefix_rval, uint8_t last_node_buffer[NODE_EDGE_KEY_FIRST]) const;
+            EdgePtrs& edge_ptrs, MBData& data, int& last_prefix_rval,
+            uint8_t last_node_buffer[NODE_EDGE_KEY_FIRST]) const;
 
         // Small helpers
         // Exact-match path helper: always copy edge tail into node_buff

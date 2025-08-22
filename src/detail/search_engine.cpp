@@ -85,9 +85,13 @@ namespace detail {
         }
 #endif
 
-        // The longer match wins.
+        // The longer match wins. Ensure both value and match_len are carried over
+        // to mirror legacy behavior.
         if (data_rc.match_len > data.match_len) {
             data_rc.TransferValueTo(data.buff, data.data_len);
+            // match_len will be recalculated by callers based on consumed bytes,
+            // but align to legacy by overriding here as well.
+            data.match_len = data_rc.match_len;
             rval = MBError::SUCCESS;
         }
         return rval;
@@ -534,13 +538,10 @@ namespace detail {
 #endif
                 return MBError::UNKNOWN_ERROR;
             }
-            // Use fast path when possible (prefix find doesn't need parent bookkeeping)
-            int rf = dict.mm.NextEdgeFast(key_cursor, edge_ptrs, data);
-            if (rf == MBError::INVALID_ARG) {
-                rval = dict.mm.NextEdge(key_cursor, edge_ptrs, node_buff, data);
-            } else {
-                rval = rf;
-            }
+            // For prefix traversal we must read the node header into node_buff
+            // to detect FLAG_NODE_MATCH at internal nodes. NextEdgeFast does not
+            // populate node_buff and would miss recording the last matching node.
+            rval = dict.mm.NextEdge(key_cursor, edge_ptrs, node_buff, data);
             if (rval != MBError::READ_ERROR) {
                 if (node_buff[0] & FLAG_NODE_MATCH) {
                     data.match_len = key_cursor - key_base;
@@ -561,15 +562,14 @@ namespace detail {
 #endif
             int edge_len = edge_ptrs.len_ptr[0];
             int edge_len_m1 = edge_len - 1;
-            // match edge string: prefer direct pointer into mmap to avoid copy
+            // match edge string
             if (edge_len > LOCAL_EDGE_LEN) {
                 size_t edge_str_off = Get5BInteger(edge_ptrs.ptr);
-                const uint8_t* p = dict.mm.GetShmPtr(edge_str_off, edge_len_m1);
-                if (p == nullptr) {
+                if (dict.mm.ReadData(node_buff, edge_len_m1, edge_str_off) != edge_len_m1) {
                     rval = MBError::READ_ERROR;
                     break;
                 }
-                key_buff = p;
+                key_buff = node_buff;
             } else {
                 key_buff = edge_ptrs.ptr;
             }
