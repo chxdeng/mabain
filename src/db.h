@@ -215,17 +215,11 @@ public:
     const iterator end() const;
 
     // Prefix cache control
-    void EnablePrefixCache(int n, size_t capacity = 65536);
+    void EnablePrefixCache(size_t capacity = 65536);
     void DisablePrefixCache();
     void DumpPrefixCacheStats(std::ostream& os = std::cout) const;
-    void ResetPrefixCacheStats() const;
-    // Find profiling
-    void DumpFindProfileStats(std::ostream& os = std::cout) const;
-    void ResetFindProfileStats() const;
 
-    // Shared prefix cache control
-    void EnableSharedPrefixCache(size_t capacity = 65536);
-    void SetSharedPrefixCacheReadOnly(bool ro);
+    // Shared prefix cache control removed from public API; use EnablePrefixCache
 
 private:
     void InitDB(MBConfig& config);

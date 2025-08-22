@@ -3,7 +3,7 @@
 
 #include "detail/lf_guard.h"
 #include "dict.h"
-#include "util/prefix_cache_iface.h"
+#include "util/prefix_cache.h"
 #include <cstdint>
 #include <string>
 #include <time.h>
@@ -194,7 +194,7 @@ namespace detail {
         // Keys shorter than 2 bytes cannot hit the cache; avoid virtual call.
         if (len < 2 || key == nullptr)
             return false;
-        PrefixCacheIface* pc = dict.ActivePrefixCache();
+        PrefixCache* pc = dict.ActivePrefixCache();
         if (!pc)
             return false;
 

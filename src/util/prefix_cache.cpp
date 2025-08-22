@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -13,6 +14,7 @@
 
 namespace mabain {
 
+// Returns the largest power-of-two <= x (0 for x==0).
 static inline size_t floor_pow2(size_t x)
 {
     if (x == 0)
@@ -24,6 +26,8 @@ static inline size_t floor_pow2(size_t x)
     return p;
 }
 
+// Helper: compute a power-of-two size for the 3-byte table from a total capacity.
+// Keeps the first 64K for the 2-byte table, caps 3-byte table at 2^24 slots.
 static inline size_t cap3_from_capacity(size_t capacity)
 {
     // Allocate 3-byte table only for capacity in excess of 2-byte coverage (65536)
@@ -35,7 +39,11 @@ static inline size_t cap3_from_capacity(size_t capacity)
     return p2; // may be 0 if excess < 1
 }
 
-// Shared-mapped constructor
+// Construct a prefix cache and back it with a single shared-memory mapping.
+// Layout (in order):
+//   header | tag2 | tab2 | tag3 | tab3 | valid4 | tag4 | tab4
+// tag2/tag3 store (prefix+1) to differentiate empty(0) from real 0-value keys when aliased.
+// 4-byte table uses a separate valid[] to allow full 32-bit tags without +1.
 PrefixCache::PrefixCache(const std::string& mbdir, size_t capacity)
     : cap2(0)
     , cap3(0)
@@ -73,26 +81,7 @@ PrefixCache::PrefixCache(const std::string& mbdir, size_t capacity)
     full2 = (cap2 == 65536);
     shm_path = PrefixCache::ShmPath(mbdir);
     if (!map_shared(shm_path)) {
-        // fallback to in-process arrays
-        size_t cap2_eff = (cap2 ? cap2 : 1);
-        tag2 = new std::atomic<uint32_t>[cap2_eff]();
-        tab2 = new PrefixCacheEntry[cap2_eff]();
-        if (cap3 > 0) {
-            tag3 = new std::atomic<uint32_t>[cap3]();
-            tab3 = new PrefixCacheEntry[cap3]();
-        } else {
-            tag3 = nullptr;
-            tab3 = nullptr;
-        }
-        if (cap4 > 0) {
-            valid4 = new std::atomic<uint32_t>[cap4]();
-            tag4 = new std::atomic<uint32_t>[cap4]();
-            tab4 = new PrefixCacheEntry[cap4]();
-        } else {
-            valid4 = nullptr;
-            tag4 = nullptr;
-            tab4 = nullptr;
-        }
+        throw std::runtime_error("PrefixCache: failed to map shared memory");
     }
 }
 
@@ -108,6 +97,8 @@ struct PCShmHeader {
     uint32_t mask4;
 };
 
+// Create or open the shared-memory file and map the cache arrays.
+// Initializes tags/valids on first creation; otherwise issues MADV_WILLNEED.
 bool PrefixCache::map_shared(const std::string& path)
 {
     const uint32_t MAGIC = 0x50434632; // 'PCF2'
@@ -198,6 +189,7 @@ bool PrefixCache::map_shared(const std::string& path)
     return true;
 }
 
+// Unmap and close the shared-memory resources.
 void PrefixCache::unmap_shared()
 {
     if (shm_base) {
@@ -210,7 +202,7 @@ void PrefixCache::unmap_shared()
     }
 }
 
-// Build 2-byte prefix index from key bytes in little-endian order
+// Build 2-byte prefix index from key bytes in little-endian order.
 inline bool PrefixCache::build2(const uint8_t* key, int len, uint16_t& p2) const
 {
     if (key == nullptr || len < 2)
@@ -220,7 +212,7 @@ inline bool PrefixCache::build2(const uint8_t* key, int len, uint16_t& p2) const
     return true;
 }
 
-// Build 3-byte prefix index from key bytes in little-endian order
+// Build 3-byte prefix index from key bytes in little-endian order.
 inline bool PrefixCache::build3(const uint8_t* key, int len, uint32_t& p3) const
 {
     if (key == nullptr || len < 3)
@@ -231,7 +223,7 @@ inline bool PrefixCache::build3(const uint8_t* key, int len, uint32_t& p3) const
     return true;
 }
 
-// Build 4-byte prefix index from key bytes in little-endian order
+// Build 4-byte prefix index from key bytes in little-endian order.
 inline bool PrefixCache::build4(const uint8_t* key, int len, uint32_t& p4) const
 {
     if (key == nullptr || len < 4)
@@ -241,6 +233,8 @@ inline bool PrefixCache::build4(const uint8_t* key, int len, uint32_t& p4) const
     return true;
 }
 
+// Lookup the deepest available cached entry for the given key prefix.
+// Returns 4, 3, 2 for hits at that depth; 0 on miss. Out param receives the cached entry.
 int PrefixCache::GetDepth(const uint8_t* key, int len, PrefixCacheEntry& out) const
 {
     if (cap4 > 0 && key != nullptr && len >= 4) {
@@ -290,6 +284,8 @@ int PrefixCache::GetDepth(const uint8_t* key, int len, PrefixCacheEntry& out) co
     return 0;
 }
 
+// Insert a cache entry for all eligible depths present in the key (4->3->2).
+// Uses release-ordering on tag/valid to publish after the entry body is written.
 void PrefixCache::Put(const uint8_t* key, int len, const PrefixCacheEntry& in)
 {
     // Insert into 4-byte table if we have at least 4 bytes
@@ -336,6 +332,8 @@ void PrefixCache::Put(const uint8_t* key, int len, const PrefixCacheEntry& in)
     }
 }
 
+// Insert a cache entry at a specific prefix depth (2/3/4).
+// Used by writer to seed canonical boundaries and mid-edge seeds.
 void PrefixCache::PutAtDepth(const uint8_t* key, int depth, const PrefixCacheEntry& in)
 {
     if (depth == 4 && cap4 > 0) {
@@ -383,8 +381,10 @@ void PrefixCache::PutAtDepth(const uint8_t* key, int depth, const PrefixCacheEnt
     }
 }
 
+// Total number of populated entries across all tables (best-effort, no locking).
 size_t PrefixCache::Size() const { return Size2() + Size3() + Size4(); }
 
+// Count populated slots in the 2-byte table.
 size_t PrefixCache::Size2() const
 {
     size_t cnt = 0;
@@ -394,6 +394,7 @@ size_t PrefixCache::Size2() const
     return cnt;
 }
 
+// Count populated slots in the 3-byte table.
 size_t PrefixCache::Size3() const
 {
     size_t cnt = 0;
@@ -402,6 +403,7 @@ size_t PrefixCache::Size3() const
     return cnt;
 }
 
+// Clear all tables by resetting tag/valid arrays (entries remain but are ignored).
 void PrefixCache::Clear()
 {
     size_t c2 = (cap2 ? cap2 : 1);
@@ -419,6 +421,7 @@ void PrefixCache::Clear()
     }
 }
 
+// Count populated slots in the 4-byte table using the valid[] bitmap.
 size_t PrefixCache::Size4() const
 {
     size_t cnt = 0;
@@ -427,43 +430,32 @@ size_t PrefixCache::Size4() const
     return cnt;
 }
 
+// Report memory used by the 2-byte table (tags + entries).
 size_t PrefixCache::Memory2() const
 {
     size_t c2 = (cap2 ? cap2 : 1);
     return c2 * (sizeof(uint32_t) + sizeof(PrefixCacheEntry));
 }
 
+// Report memory used by the 3-byte table (tags + entries).
 size_t PrefixCache::Memory3() const
 {
     size_t c3 = cap3;
     return c3 * (sizeof(uint32_t) + sizeof(PrefixCacheEntry));
 }
 
+// Report memory used by the 4-byte table (valid + tags + entries).
 size_t PrefixCache::Memory4() const
 {
     size_t c4 = cap4;
     return c4 * (sizeof(uint32_t) /*valid*/ + sizeof(uint32_t) /*tag*/ + sizeof(PrefixCacheEntry));
 }
 
+// Destructor: unmap shared memory if mapped.
 PrefixCache::~PrefixCache()
 {
     if (shm_base) {
         unmap_shared();
-    } else {
-        delete[] tag2;
-        tag2 = nullptr;
-        delete[] tab2;
-        tab2 = nullptr;
-        delete[] tag3;
-        tag3 = nullptr;
-        delete[] tab3;
-        tab3 = nullptr;
-        delete[] valid4;
-        valid4 = nullptr;
-        delete[] tag4;
-        tag4 = nullptr;
-        delete[] tab4;
-        tab4 = nullptr;
     }
 }
 

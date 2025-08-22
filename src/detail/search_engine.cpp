@@ -14,13 +14,13 @@
 namespace mabain {
 namespace detail {
 
-    // Profiling code removed
+	    
 
     int SearchEngine::find(const uint8_t* key, int len, MBData& data)
     {
         int rval;
         size_t rc_root_offset = dict.GetHeaderPtr()->rc_root_offset.load(MEMORY_ORDER_READER);
-        // profiling removed
+	        
 
         if (rc_root_offset != 0) {
             dict.reader_rc_off = rc_root_offset;
@@ -321,7 +321,7 @@ namespace detail {
 #ifdef __LOCK_FREE__
             ReaderLFGuard lf_guard(dict.lfree, data);
 #endif
-            // profiling removed
+	            
             rval = dict.mm.GetRootEdge(root_off, key[0], edge_ptrs);
             if (rval != MBError::SUCCESS) {
                 return MBError::READ_ERROR;
@@ -410,7 +410,7 @@ namespace detail {
                     return _r;
             }
 #endif
-            // profiling removed
+	            
         }
 
         if (used_cache) {
@@ -425,7 +425,7 @@ namespace detail {
     int SearchEngine::traverseFromEdge(const uint8_t*& key_cursor, int& len, int& consumed,
         const uint8_t* full_key, int full_len, EdgePtrs& edge_ptrs, MBData& data)
     {
-        // profiling removed
+	        
         const uint8_t* key_buff;
         uint8_t* node_buff = data.node_buff;
         int rval = MBError::SUCCESS;
@@ -504,7 +504,7 @@ namespace detail {
                 return _r;
         }
 #endif
-        // profiling removed
+	        
         return rval;
     }
 

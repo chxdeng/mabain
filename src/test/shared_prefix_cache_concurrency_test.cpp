@@ -82,7 +82,7 @@ static bool initialize_db_header(const TestConfig& cfg)
         return false;
     }
     // Optionally enable shared prefix cache to create its backing file early
-    writer.EnableSharedPrefixCache(cfg.pfx_cap);
+    writer.EnablePrefixCache(cfg.pfx_cap);
     // writer goes out of scope here and closes; header and directory are now created
     return true;
 }
@@ -103,7 +103,7 @@ static void reader_thread_fn(const TestConfig& cfg, const std::vector<std::strin
         std::cerr << "reader open failed" << std::endl;
         return;
     }
-    rdb.EnableSharedPrefixCache(cfg.pfx_cap);
+    rdb.EnablePrefixCache(cfg.pfx_cap);
     std::mt19937 rng(1234 ^ (unsigned)reinterpret_cast<uintptr_t>(&cfg));
     std::uniform_int_distribution<int> dist_all(0, cfg.nkeys - 1);
     MBData md;
@@ -172,7 +172,7 @@ static bool run_interleaved_workload(const TestConfig& cfg, const std::vector<st
         std::cerr << "writer open failed: " << writer.StatusStr() << std::endl;
         return false;
     }
-    writer.EnableSharedPrefixCache(cfg.pfx_cap);
+    writer.EnablePrefixCache(cfg.pfx_cap);
 
     Timer t;
     t.start();
@@ -303,7 +303,7 @@ int main(int argc, char** argv)
         std::cerr << "verify writer open failed: " << verify_db.StatusStr() << std::endl;
         return 1;
     }
-    verify_db.EnableSharedPrefixCache(cfg.pfx_cap);
+    verify_db.EnablePrefixCache(cfg.pfx_cap);
     bool all_removed = verify_all_removed(verify_db, keys);
     std::cout << "Post-remove verification " << (all_removed ? "OK" : "FAILED")
               << " (" << (all_removed ? cfg.nkeys : 0) << "/" << cfg.nkeys << ")" << std::endl;

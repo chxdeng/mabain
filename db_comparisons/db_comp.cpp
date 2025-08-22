@@ -251,7 +251,7 @@ static void InitDB(bool writer_mode = true)
     assert(db->is_open());
     // Enable shared prefix cache when -pcc is provided
     if (pc_cap > 0) {
-        db->EnableSharedPrefixCache(static_cast<size_t>(pc_cap));
+        db->EnablePrefixCache(static_cast<size_t>(pc_cap));
     }
 #endif
 }
@@ -359,18 +359,15 @@ static void Lookup(int n)
 #ifdef MABAIN
     mabain::MBData mbd; // reuse per-iteration buffer to avoid reallocation
     mbd.options = mabain::CONSTS::OPTION_KEY_ONLY;
-    const char* prof_env = std::getenv("MB_PROFILE_FIND");
-    if (prof_env && *prof_env && std::strcmp(prof_env, "0") != 0) {
-        db->ResetFindProfileStats();
-    }
+    
 #endif
 
 #ifdef MABAIN
-    // Dump stats before lookup; cache has been seeded by writer already
-    std::cout << "-- Cache stats before lookup --\n";
-    db->DumpPrefixCacheStats(std::cout);
-    if (pc_cap > 0)
-        db->ResetPrefixCacheStats();
+    // Dump stats before lookup when prefix cache is enabled
+    if (pc_cap > 0) {
+        std::cout << "-- Cache stats before lookup --\n";
+        db->DumpPrefixCacheStats(std::cout);
+    }
 #endif
     // Time each find call only (exclude key-building and loop overhead)
     for (int i = 0; i < n; i++) {
@@ -440,13 +437,9 @@ static void Lookup(int n)
     std::cout << "===== " << timediff_us / n << " micro seconds per lookup\n";
 // (unordered_map) test removed per request
 #ifdef MABAIN
-    if (db) {
+    if (db && pc_cap > 0) {
         std::cout << "-- Cache stats after lookup --\n";
         db->DumpPrefixCacheStats(std::cout);
-        const char* prof2 = std::getenv("MB_PROFILE_FIND");
-        if (prof2 && *prof2 && std::strcmp(prof2, "0") != 0) {
-            db->DumpFindProfileStats(std::cout);
-        }
     }
 #endif
 }
@@ -607,7 +600,7 @@ static void* Reader(void* arg)
     assert(db_r->is_open());
     // Configure shared prefix cache for reader when -pcc is provided
     if (pc_cap > 0) {
-        db_r->EnableSharedPrefixCache(static_cast<size_t>(pc_cap));
+        db_r->EnablePrefixCache(static_cast<size_t>(pc_cap));
         // Read path does not write to cache; no need to toggle read-only
     }
 #endif
@@ -650,7 +643,7 @@ static void* Reader(void* arg)
     {
         std::ostringstream oss;
         oss << "-- Cache stats for reader tid " << tid << " --\n";
-        db_r->DumpPrefixCacheStats(oss);
+        
         pthread_mutex_lock(&g_stats_mutex);
         g_reader_stats.push_back(oss.str());
         pthread_mutex_unlock(&g_stats_mutex);
@@ -689,7 +682,7 @@ static void ConcurrencyTest(int num, int n_r)
             (unsigned long long)(0.6666667 * memcap),
             (unsigned long long)(0.3333333 * memcap));
         if (seed && seed->is_open()) {
-            seed->EnableSharedPrefixCache(static_cast<size_t>(pc_cap));
+            seed->EnablePrefixCache(static_cast<size_t>(pc_cap));
             seed->Close();
         }
         delete seed;
@@ -724,7 +717,7 @@ static void ConcurrencyTest(int num, int n_r)
 #ifdef MABAIN
     if (db) {
         std::cout << "-- Cache stats after concurrency --\n";
-        db->DumpPrefixCacheStats(std::cout);
+        
     }
     // Print buffered per-reader cache stats
     pthread_mutex_lock(&g_stats_mutex);

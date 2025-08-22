@@ -32,7 +32,7 @@
 #include "mb_pipe.h"
 #include "rollable_file.h"
 #include "shm_queue_mgr.h"
-#include "util/prefix_cache_iface.h"
+#include "util/prefix_cache.h"
 // forward declare
 namespace mabain {
 namespace detail {
@@ -134,8 +134,7 @@ public:
 
     // Unified prefix cache (shared-memory backed)
     void EnableSharedPrefixCache(size_t capacity = 65536);
-    PrefixCacheIface* ActivePrefixCache() const;
-    void SetSharedPrefixCacheReadOnly(bool ro);
+    PrefixCache* ActivePrefixCache() const;
 
 private:
     // Allow internal SearchEngine to orchestrate lookups without exposing members publicly
@@ -175,11 +174,8 @@ private:
     // Optional lookup accelerators for Find
     std::unique_ptr<PrefixCache> prefix_cache;
     std::string mbdir_;
-    bool shared_pc_readonly = false;
 
-    // Prefix-cache helpers (no side effects when cache disabled)
-    void MaybePutCache(const uint8_t* full_key, int full_len, int consumed,
-        const EdgePtrs& edge_ptrs, bool from_add = false) const;
+    // Cache seeding for Add is handled inside SeedCanonicalBoundariesAfterAdd
 
     // After a successful Add, seed cache at canonical 2/3-byte boundaries
     // using the final structure (mirrors reader warm). Applies to shared and

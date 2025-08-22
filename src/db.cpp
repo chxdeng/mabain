@@ -755,16 +755,10 @@ void DB::Purge() const
     dict->Purge();
 }
 
-void DB::EnablePrefixCache(int n, size_t capacity)
+void DB::EnablePrefixCache(size_t capacity)
 {
     if (dict)
-        dict->EnablePrefixCache(n, capacity);
-}
-
-void DB::DisablePrefixCache()
-{
-    if (dict)
-        dict->DisablePrefixCache();
+        dict->EnableSharedPrefixCache(capacity);
 }
 
 void DB::DumpPrefixCacheStats(std::ostream& os) const
@@ -773,33 +767,13 @@ void DB::DumpPrefixCacheStats(std::ostream& os) const
         dict->PrintPrefixCacheStats(os);
 }
 
-void DB::ResetPrefixCacheStats() const
+void DB::DisablePrefixCache()
 {
     if (dict)
-        dict->ResetPrefixCacheStats();
+        dict->DisablePrefixCache();
 }
 
-void DB::DumpFindProfileStats(std::ostream& os) const
-{
-    os << "FindProfile: disabled" << std::endl;
-}
-
-void DB::ResetFindProfileStats() const
-{
-    // no-op: profiling removed
-}
-
-void DB::EnableSharedPrefixCache(size_t capacity)
-{
-    if (dict)
-        dict->EnableSharedPrefixCache(capacity);
-}
-
-void DB::SetSharedPrefixCacheReadOnly(bool ro)
-{
-    if (dict)
-        dict->SetSharedPrefixCacheReadOnly(ro);
-}
+ 
 
 int DB::CollectResource(int64_t min_index_rc_size, int64_t min_data_rc_size,
     int64_t max_dbsz, int64_t max_dbcnt)

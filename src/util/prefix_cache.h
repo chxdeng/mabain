@@ -11,22 +11,77 @@
 #include <string>
 
 #include "drm_base.h" // for EDGE_SIZE
-#include "util/prefix_cache_iface.h"
 
 namespace mabain {
 
-class PrefixCache : public PrefixCacheIface {
+// PrefixCache tables overview
+//
+// The cache is composed of three independent tables addressed by a little-endian
+// prefix derived from the user key:
+//
+// - 2-byte table (tab2/tag2):
+//   - Dense coverage of all 2-byte prefixes when `cap2 == 65536` (full2 == true).
+//     In this mode there is no aliasing and lookups only check that tag2[idx] is
+//     non-zero to consider the slot populated (we still store `p2+1` as the tag).
+//   - When `cap2 < 65536`, `mask2` induces aliasing. We store `p2+1` in tag2 to
+//     distinguish empty (0) from the real prefix value 0, and to verify hits under
+//     aliasing (compare tag2[idx] == p2+1).
+//   - This table provides the broadest coverage and is the most effective
+//     fast-path for short keys and early traversal seeding.
+//
+// - 3-byte table (tab3/tag3):
+//   - Capacity is a power-of-two (possibly zero) selected from the requested
+//     capacity remainder. The index uses `p3 & mask3` and the tag stores `p3+1`.
+//   - Because of masking there can be aliasing; the `+1` tag scheme allows us to
+//     safely differentiate empty from a legitimate `p3 == 0` and validate hits.
+//   - This table provides higher specificity than 2-byte, reducing false positives
+//     under aliasing while remaining compact.
+//
+// - 4-byte sparse table (tab4/tag4/valid4):
+//   - Capacity is also a power-of-two and indexing uses `p4 & mask4`.
+//   - We store the exact 32-bit prefix in `tag4` and keep a separate `valid4`
+//     bitmap (0 = empty, 1 = populated). Readers check `valid4[idx] != 0` and
+//     then compare `tag4[idx] == p4` to validate. Writers clear `valid4` first,
+//     store the entry body and tag, and finally set `valid4` — this provides a
+//     simple publish protocol without relying on `p4+1` which does not fit the
+//     full 32-bit space cleanly.
+//
+// Concurrency & publication protocol
+// - All tag/valid arrays are std::atomic<uint32_t> and are accessed with
+//   acquire on reads and release on writes. For 2/3-byte tables, publication is
+//   done by writing `tag=0`, storing the body, then `tag=p+1` (release). For the
+//   4-byte table, publication is `valid=0`, store body, store `tag=p4` (release),
+//   then `valid=1` (release). Reads use acquire loads to validate and then copy
+//   the body directly.
+//
+// Notes
+// - `lf_counter` is carried over on overwrites to preserve origin bits when the
+//   same slot is reused (e.g., due to aliasing).
+// - All pointers reference a single shared-memory mapping; there is no
+//   process-local fallback.
+
+struct PrefixCacheEntry {
+    size_t edge_offset;
+    uint8_t edge_buff[EDGE_SIZE];
+    // Number of bytes already consumed within the current edge label
+    // when this entry is used (1..edge_len). 0 means start-of-edge.
+    uint8_t edge_skip;
+    uint8_t reserved_[3];
+    uint32_t lf_counter;
+};
+
+class PrefixCache {
 public:
     ~PrefixCache();
     // Shared cache backed by shared memory file (multi-process).
     PrefixCache(const std::string& mbdir, size_t capacity = 65536);
 
-    void Put(const uint8_t* key, int len, const PrefixCacheEntry& in) override;
-    void PutAtDepth(const uint8_t* key, int depth, const PrefixCacheEntry& in) override;
-    int GetDepth(const uint8_t* key, int len, PrefixCacheEntry& out) const override;
+    void Put(const uint8_t* key, int len, const PrefixCacheEntry& in);
+    void PutAtDepth(const uint8_t* key, int depth, const PrefixCacheEntry& in);
+    int GetDepth(const uint8_t* key, int len, PrefixCacheEntry& out) const;
     // Report the maximum prefix length this cache can seed from (3 bytes reported for compatibility)
-    int PrefixLen() const override { return 3; }
-    bool IsShared() const override { return true; }
+    int PrefixLen() const { return 3; }
+    bool IsShared() const { return true; }
     size_t Size() const; // total entries across tables
     size_t Size2() const; // entries in 2-byte table
     size_t Size3() const; // entries in 3-byte table
@@ -60,7 +115,8 @@ private:
     size_t mask4 = 0; // cap4-1
     bool full2 = false; // true when cap2 == 65536 (no aliasing)
 
-    // Direct pointers for table/tag arrays (shared-mapped or process-local fallback)
+    // Direct pointers for table/tag arrays (shared-mapped only). See the
+    // table overview above for design and usage semantics.
     PrefixCacheEntry* tab2 = nullptr;
     std::atomic<uint32_t>* tag2 = nullptr;
     PrefixCacheEntry* tab3 = nullptr;

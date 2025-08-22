@@ -344,8 +344,29 @@ void Dict::SeedCanonicalBoundariesAfterAdd(const uint8_t* key, int len, bool fro
             consumed += edge_len;
             remain -= edge_len;
             if (remain <= 0) {
-                // final match at root
-                MaybePutCache(key, len, consumed, edge_ptrs, from_add);
+                // final match at root: seed at consumed depth
+                if (consumed == 4) {
+                    PrefixCacheEntry e {};
+                    e.edge_offset = edge_ptrs.offset;
+                    e.edge_skip = 0;
+                    e.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
+                    memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
+                    prefix_cache->PutAtDepth(key, 4, e);
+                } else if (consumed == 3) {
+                    PrefixCacheEntry e {};
+                    e.edge_offset = edge_ptrs.offset;
+                    e.edge_skip = 0;
+                    e.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
+                    memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
+                    prefix_cache->PutAtDepth(key, 3, e);
+                } else if (consumed == 2) {
+                    PrefixCacheEntry e2 {};
+                    e2.edge_offset = edge_ptrs.offset;
+                    e2.edge_skip = 0;
+                    e2.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
+                    memcpy(e2.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
+                    prefix_cache->PutAtDepth(key, 2, e2);
+                }
                 return;
             }
             if (edge_ptrs.flag_ptr[0] & EDGE_FLAG_DATA_OFF)
@@ -358,7 +379,29 @@ void Dict::SeedCanonicalBoundariesAfterAdd(const uint8_t* key, int len, bool fro
     } else if (edge_len == remain) {
         if (edge_len_m1 <= 0 || memcmp(key_buff, key_cursor + 1, edge_len_m1) == 0) {
             // mirror find: seed at final depth (consumed + edge_len)
-            MaybePutCache(key, len, consumed + edge_len, edge_ptrs, from_add);
+            int c = consumed + edge_len;
+            if (c == 4) {
+                PrefixCacheEntry e {};
+                e.edge_offset = edge_ptrs.offset;
+                e.edge_skip = 0;
+                e.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
+                memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
+                prefix_cache->PutAtDepth(key, 4, e);
+            } else if (c == 3) {
+                PrefixCacheEntry e {};
+                e.edge_offset = edge_ptrs.offset;
+                e.edge_skip = 0;
+                e.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
+                memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
+                prefix_cache->PutAtDepth(key, 3, e);
+            } else if (c == 2) {
+                PrefixCacheEntry e2 {};
+                e2.edge_offset = edge_ptrs.offset;
+                e2.edge_skip = 0;
+                e2.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
+                memcpy(e2.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
+                prefix_cache->PutAtDepth(key, 2, e2);
+            }
         }
         return;
     } else {
@@ -404,16 +447,81 @@ void Dict::SeedCanonicalBoundariesAfterAdd(const uint8_t* key, int len, bool fro
         // advance
         remain -= edge_len;
         if (remain <= 0) {
-            MaybePutCache(key, len, consumed + edge_len, edge_ptrs, from_add);
+            int c = consumed + edge_len;
+            if (c == 4) {
+                PrefixCacheEntry e {};
+                e.edge_offset = edge_ptrs.offset;
+                e.edge_skip = 0;
+                e.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
+                memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
+                prefix_cache->PutAtDepth(key, 4, e);
+            } else if (c == 3) {
+                PrefixCacheEntry e {};
+                e.edge_offset = edge_ptrs.offset;
+                e.edge_skip = 0;
+                e.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
+                memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
+                prefix_cache->PutAtDepth(key, 3, e);
+            } else if (c == 2) {
+                PrefixCacheEntry e2 {};
+                e2.edge_offset = edge_ptrs.offset;
+                e2.edge_skip = 0;
+                e2.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
+                memcpy(e2.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
+                prefix_cache->PutAtDepth(key, 2, e2);
+            }
             break;
         }
         if (edge_ptrs.flag_ptr[0] & EDGE_FLAG_DATA_OFF) {
-            MaybePutCache(key, len, consumed + edge_len, edge_ptrs, from_add);
+            int c = consumed + edge_len;
+            if (c == 4) {
+                PrefixCacheEntry e {};
+                e.edge_offset = edge_ptrs.offset;
+                e.edge_skip = 0;
+                e.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
+                memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
+                prefix_cache->PutAtDepth(key, 4, e);
+            } else if (c == 3) {
+                PrefixCacheEntry e {};
+                e.edge_offset = edge_ptrs.offset;
+                e.edge_skip = 0;
+                e.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
+                memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
+                prefix_cache->PutAtDepth(key, 3, e);
+            } else if (c == 2) {
+                PrefixCacheEntry e2 {};
+                e2.edge_offset = edge_ptrs.offset;
+                e2.edge_skip = 0;
+                e2.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
+                memcpy(e2.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
+                prefix_cache->PutAtDepth(key, 2, e2);
+            }
             break;
         }
         key_cursor += edge_len;
         consumed += edge_len;
-        MaybePutCache(key, len, consumed, edge_ptrs, from_add);
+        if (consumed == 4) {
+            PrefixCacheEntry e {};
+            e.edge_offset = edge_ptrs.offset;
+            e.edge_skip = 0;
+            e.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
+            memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
+            prefix_cache->PutAtDepth(key, 4, e);
+        } else if (consumed == 3) {
+            PrefixCacheEntry e {};
+            e.edge_offset = edge_ptrs.offset;
+            e.edge_skip = 0;
+            e.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
+            memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
+            prefix_cache->PutAtDepth(key, 3, e);
+        } else if (consumed == 2) {
+            PrefixCacheEntry e2 {};
+            e2.edge_offset = edge_ptrs.offset;
+            e2.edge_skip = 0;
+            e2.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
+            memcpy(e2.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
+            prefix_cache->PutAtDepth(key, 2, e2);
+        }
     }
 }
 
@@ -1102,44 +1210,7 @@ void Dict::EnableSharedPrefixCache(size_t capacity)
     prefix_cache = std::unique_ptr<PrefixCache>(new PrefixCache(mbdir_, capacity));
 }
 
-void Dict::SetSharedPrefixCacheReadOnly(bool ro)
-{
-    shared_pc_readonly = ro;
-}
-
-void Dict::MaybePutCache(const uint8_t* full_key, int full_len, int consumed,
-    const EdgePtrs& edge_ptrs, bool from_add) const
-{
-    if (prefix_cache) {
-        // All caches are shared; honor shared read-only flag
-        if (shared_pc_readonly)
-            return;
-        // Unified: seed at canonical 2-, 3-, and 4-byte boundaries for both
-        // shared and non-shared caches. Tag origin in lf_counter: 1=add, 2=read.
-        if (consumed == 4) {
-            PrefixCacheEntry e {};
-            e.edge_offset = edge_ptrs.offset;
-            e.edge_skip = 0;
-            e.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
-            memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
-            prefix_cache->PutAtDepth(full_key, 4, e);
-        } else if (consumed == 3) {
-            PrefixCacheEntry e {};
-            e.edge_offset = edge_ptrs.offset;
-            e.edge_skip = 0;
-            e.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
-            memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
-            prefix_cache->PutAtDepth(full_key, 3, e);
-        } else if (consumed == 2) {
-            PrefixCacheEntry e2 {};
-            e2.edge_offset = edge_ptrs.offset;
-            e2.edge_skip = 0;
-            e2.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
-            memcpy(e2.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
-            prefix_cache->PutAtDepth(full_key, 2, e2);
-        }
-    }
-}
+/* MaybePutCache removed: inlined seeding logic inside SeedCanonicalBoundariesAfterAdd */
 
 void Dict::GetPrefixCacheStats(uint64_t& hit, uint64_t& miss, uint64_t& put,
     size_t& entries, int& n) const
@@ -1193,7 +1264,7 @@ void Dict::PrintPrefixCacheStats(std::ostream& os) const
     }
 }
 
-PrefixCacheIface* Dict::ActivePrefixCache() const
+PrefixCache* Dict::ActivePrefixCache() const
 {
     if (prefix_cache)
         return prefix_cache.get();

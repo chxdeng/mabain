@@ -10,7 +10,7 @@
 #include "../db.h"
 #include "../dict.h"
 #include "../resource_pool.h"
-#include "../util/prefix_cache_iface.h"
+#include "../util/prefix_cache.h"
 
 using namespace mabain;
 
@@ -44,8 +44,8 @@ public:
 
         db = new DB(MB_DIR, CONSTS::WriterOptions());
         ASSERT_NE(db, nullptr);
-        // Enable shared prefix cache
-        db->EnableSharedPrefixCache(4096);
+        // Enable prefix cache
+        db->EnablePrefixCache(4096);
     }
 
     void TearDown() override
@@ -96,7 +96,7 @@ TEST_F(PrefixCacheTest, NoPutOnFind)
     Dict* dict = db->GetDictPtr();
     ASSERT_NE(dict, nullptr);
     // Reset put counter; entries remain but put should stay 0 if Find doesn't seed
-    db->ResetPrefixCacheStats();
+    dict->ResetPrefixCacheStats();
 
     // Perform finds via a fresh reader handle without enabling shared cache
     DB rdb(MB_DIR, CONSTS::ReaderOptions());
@@ -125,7 +125,7 @@ TEST_F(PrefixCacheTest, SeedFromCache_GetDepth)
 
     Dict* dict = db->GetDictPtr();
     ASSERT_NE(dict, nullptr);
-    PrefixCacheIface* pc = dict->ActivePrefixCache();
+    PrefixCache* pc = dict->ActivePrefixCache();
     ASSERT_NE(pc, nullptr);
 
     PrefixCacheEntry e {};
