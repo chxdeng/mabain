@@ -28,10 +28,23 @@ static inline size_t floor_pow2_sz(size_t x)
     return p;
 }
 
-// Fast 64-bit hash (XXH3); avoids 0 as publish value
+// Fast 64-bit hash; uses XXH3 when available, otherwise FNV-1a.
+// Always avoids publishing 0 by substituting a fixed non-zero value.
 uint64_t HashMap::fnv1a64(const uint8_t* data, int len)
 {
-    uint64_t h = XXH3_64bits(data, (size_t)len);
+    uint64_t h = 0;
+#ifdef MB_HAVE_XXHASH
+    h = XXH3_64bits(data, (size_t)len);
+#else
+    // 64-bit FNV-1a
+    const uint64_t kOffset = 1469598103934665603ULL;
+    const uint64_t kPrime  = 1099511628211ULL;
+    h = kOffset;
+    for (int i = 0; i < len; ++i) {
+        h ^= (uint64_t)data[i];
+        h *= kPrime;
+    }
+#endif
     return h ? h : 0xA5A5A5A5A5A5A5A5ULL;
 }
 
