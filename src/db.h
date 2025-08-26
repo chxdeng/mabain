@@ -214,10 +214,13 @@ public:
     const iterator begin(const std::string& prefix) const;
     const iterator end() const;
 
-    // Prefix cache control
+    // Prefix cache control (deprecated; no-op). Use OPTION_PREFIX_CACHE at DB creation.
     void EnablePrefixCache(size_t capacity = 65536);
     void DisablePrefixCache();
+
+    // Prefix cache stats
     void DumpPrefixCacheStats(std::ostream& os = std::cout) const;
+    static bool PrefixCacheConfigured(int options) { return (options & CONSTS::OPTION_PREFIX_CACHE) != 0; }
 
     // Shared prefix cache control removed from public API; use EnablePrefixCache
 

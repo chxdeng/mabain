@@ -73,8 +73,8 @@ struct PrefixCacheEntry {
 class PrefixCache {
 public:
     ~PrefixCache();
-    // Shared cache backed by shared memory file (multi-process).
-    PrefixCache(const std::string& mbdir, size_t capacity = 65536);
+    // Shared cache backed by embedded region in _mabain_d.
+    PrefixCache(const std::string& mbdir, const IndexHeader* hdr, size_t capacity = 65536);
 
     void Put(const uint8_t* key, int len, const PrefixCacheEntry& in);
     void PutAtDepth(const uint8_t* key, int depth, const PrefixCacheEntry& in);
@@ -130,12 +130,17 @@ private:
     mutable uint64_t put_count = 0;
 
     // Shared-mapping settings
+    // Underlying mapping base/size (may include a leading delta before cache)
     void* shm_base = nullptr;
     size_t shm_size = 0;
+    size_t shm_delta = 0; // bytes from shm_base to the start of cache region
     int shm_fd = -1;
     std::string shm_path;
     bool map_shared(const std::string& path);
+    bool map_embedded(const std::string& mbdir);
     void unmap_shared();
+
+    const IndexHeader* hdr_ = nullptr; // header for embedded layout discovery
 
 public:
     static std::string ShmPath(const std::string& mbdir)

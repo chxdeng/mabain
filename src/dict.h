@@ -123,17 +123,15 @@ public:
     void Purge() const;
     int ExceptionRecovery();
 
-    // Optional: enable/disable prefix cache for Find
-    void EnablePrefixCache(int n, size_t capacity = 65536);
-    void DisablePrefixCache();
+    // Prefix cache status and stats
     bool PrefixCacheEnabled() const { return static_cast<bool>(prefix_cache); }
     void GetPrefixCacheStats(uint64_t& hit, uint64_t& miss, uint64_t& put,
         size_t& entries, int& n) const;
     void ResetPrefixCacheStats();
     void PrintPrefixCacheStats(std::ostream& os) const;
 
-    // Unified prefix cache (shared-memory backed)
-    void EnableSharedPrefixCache(size_t capacity = 65536);
+    // Unified prefix cache (shared-memory backed): automatically enabled
+    // when the DB was created with embedded cache. Readers attach if present.
     PrefixCache* ActivePrefixCache() const;
 
 private:
@@ -141,7 +139,7 @@ private:
     friend class detail::SearchEngine;
     // Search internals moved to detail::SearchEngine
     // Prefix traversal helpers moved to SearchEngine.
-    // Helpers removed from header; SearchEngine owns traversal.
+    // Traversal helpers are owned by SearchEngine.
     int ReleaseBuffer(size_t offset);
     int UpdateDataBuffer(EdgePtrs& edge_ptrs, bool overwrite, MBData& mbd, bool& inc_count);
     int ReadDataFromEdge(MBData& data, const EdgePtrs& edge_ptrs) const;
@@ -181,6 +179,10 @@ private:
     // using the final structure (mirrors reader warm). Applies to shared and
     // non-shared caches and detects boundary crossings within long edges.
     void SeedCanonicalBoundariesAfterAdd(const uint8_t* key, int len, bool from_add = true) const;
+
+    // Initialize the embedded prefix cache layout in the data file header
+    // and set the starting data offset accordingly.
+    void InitEmbeddedPrefixCacheLayout();
 };
 
 }

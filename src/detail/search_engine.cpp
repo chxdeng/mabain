@@ -85,12 +85,10 @@ namespace detail {
         }
 #endif
 
-        // The longer match wins. Ensure both value and match_len are carried over
-        // to mirror legacy behavior.
+        // Prefer the longer match: copy value and match_len when rc-path wins.
         if (data_rc.match_len > data.match_len) {
             data_rc.TransferValueTo(data.buff, data.data_len);
-            // match_len will be recalculated by callers based on consumed bytes,
-            // but align to legacy by overriding here as well.
+            // Preserve the longer match length from rc-path.
             data.match_len = data_rc.match_len;
             rval = MBError::SUCCESS;
         }
@@ -310,15 +308,9 @@ namespace detail {
         int orig_len = len;
         int consumed = 0;
         const uint8_t* key_buff;
-        // Allow disabling prefix-cache usage for debugging via env var
-        static int disable_pfx_cache = []() {
-            const char* e = std::getenv("MB_DISABLE_PFXCACHE");
-            return (e && *e && std::strcmp(e, "0") != 0) ? 1 : 0;
-        }();
         // Do not seed from prefix cache for operations that require
-        // precise parent/edge bookkeeping (e.g., remove). Stale mid-edge
-        // cache entries can misguide traversal during structural updates.
-        bool use_cache = !disable_pfx_cache
+        // precise parent/edge bookkeeping (e.g., remove) or during rc view.
+        bool use_cache = true
             && !(dict.reader_rc_off != 0 && root_off == dict.reader_rc_off)
             && !(data.options & CONSTS::OPTION_FIND_AND_STORE_PARENT);
         bool used_cache = use_cache ? seedFromCache(key, len, edge_ptrs, data, key_cursor, len, consumed) : false;
@@ -484,12 +476,10 @@ namespace detail {
 
             len -= edge_len;
             if (len <= 0) {
-                // Find does not update prefix cache; writer seeds during Add
                 int _ret = resolveMatchOrInDict(data, edge_ptrs, false);
                 return _ret;
             }
             if (isLeaf(edge_ptrs)) {
-                // Find does not update prefix cache; writer seeds during Add
                 return MBError::NOT_EXIST;
             }
 

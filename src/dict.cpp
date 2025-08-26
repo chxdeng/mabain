@@ -92,7 +92,16 @@ Dict::Dict(const std::string& mbdir, bool init_header, int datasize,
         header->data_block_size = block_sz_data;
         header->data_size = datasize;
         header->count = 0;
-        header->m_data_offset = GetStartDataOffset(); // start from a non-zero offset
+        // Initialize embedded prefix cache layout only if option is set.
+        // Otherwise, do not reserve space; readers will self-check consistency.
+        if (options & CONSTS::OPTION_PREFIX_CACHE) {
+            InitEmbeddedPrefixCacheLayout();
+        } else {
+            header->pfxcache_offset = 0;
+            header->pfxcache_size = 0;
+            header->pfx_cap2 = header->pfx_cap3 = header->pfx_cap4 = 0;
+            header->m_data_offset = DATA_HEADER_SIZE; // start from a non-zero offset
+        }
     } else {
         if (options & CONSTS::ACCESS_MODE_WRITER) {
             if (header->entry_per_bucket != entry_per_bucket) {
@@ -110,6 +119,31 @@ Dict::Dict(const std::string& mbdir, bool init_header, int datasize,
                 throw (int)MBError::INVALID_ARG;
             }
         }
+        // Self-consistency: if DB lacks embedded cache region, ignore option.
+        if (!(header->pfxcache_size > 0) && (options & CONSTS::OPTION_PREFIX_CACHE)) {
+            std::cerr << "Prefix cache option set but DB has no embedded cache; disabling.\n";
+            options &= ~CONSTS::OPTION_PREFIX_CACHE;
+        }
+    }
+
+    // In jemalloc mode, ensure the data-file arena starts after the reserved
+    // embedded prefix-cache region so allocations do not overwrite cache tables.
+    if ((options & CONSTS::OPTION_JEMALLOC) && header->pfxcache_size > 0) {
+        // header->m_data_offset already points to the first user-data byte.
+        // PreAlloc advances the arena's alloc_size to this offset for block 0.
+        (void)kv_file->PreAlloc(header->m_data_offset);
+    }
+    // Instantiate the prefix cache only if the DB has an embedded cache region
+    // and the caller requested prefix cache via OPTION_PREFIX_CACHE.
+    if (!(options & CONSTS::ASYNC_WRITER_MODE)) {
+        bool want_cache = (header->pfxcache_size > 0) && (options & CONSTS::OPTION_PREFIX_CACHE);
+        if (want_cache) {
+            try {
+                prefix_cache = std::unique_ptr<PrefixCache>(new PrefixCache(mbdir_, header, /*capacity hint*/65536));
+            } catch (...) {
+                // Leave cache disabled on failure; DB remains operational.
+            }
+        }
     }
     if (mm.IsValid())
         status = MBError::SUCCESS;
@@ -119,6 +153,68 @@ Dict::Dict(const std::string& mbdir, bool init_header, int datasize,
 
 Dict::~Dict()
 {
+}
+
+// Compute and set embedded prefix-cache layout in the data header.
+// This keeps calculations localized and avoids cluttering the constructor.
+void Dict::InitEmbeddedPrefixCacheLayout()
+{
+    // Choose capacities: full 2-byte coverage and modest 3/4 byte tables
+    auto compute_floor_pow2 = [](size_t x) -> size_t {
+        if (x == 0)
+            return 0;
+        size_t p = 1;
+        while ((p << 1) && ((p << 1) <= x))
+            p <<= 1;
+        return p;
+    };
+
+    size_t cap2 = 65536;                      // full 2-byte coverage
+    size_t cap3 = compute_floor_pow2(1u << 18); // 256K entries
+    size_t cap4 = compute_floor_pow2(1u << 16); // 64K entries
+
+    auto calc_pfx_bytes = [&](size_t c2, size_t c3, size_t c4) -> size_t {
+        size_t t2 = sizeof(PrefixCacheEntry) * (c2 ? c2 : 1);
+        size_t g2 = sizeof(uint32_t) * (c2 ? c2 : 1);
+        size_t t3 = sizeof(PrefixCacheEntry) * (c3 ? c3 : 1);
+        size_t g3 = sizeof(uint32_t) * (c3 ? c3 : 1);
+        size_t t4 = sizeof(PrefixCacheEntry) * (c4 ? c4 : 1);
+        size_t g4 = sizeof(uint32_t) * (c4 ? c4 : 1);
+        size_t v4 = sizeof(uint32_t) * (c4 ? c4 : 1);
+        // PCShmHeader: magic(u32) + version(u16) + reserved(u16) + 6*u32(caps/masks)
+        return sizeof(uint32_t) + sizeof(uint16_t) + sizeof(uint16_t) + 6 * sizeof(uint32_t)
+            + g2 + t2 + g3 + t3 + v4 + g4 + t4;
+    };
+
+    size_t pfx_bytes = calc_pfx_bytes(cap2, cap3, cap4);
+    size_t pfx_off = DATA_HEADER_SIZE; // place right after the small header
+    size_t block0 = header->data_block_size;
+
+    header->pfxcache_offset = 0;
+    header->pfxcache_size = 0;
+    header->pfx_cap2 = header->pfx_cap3 = header->pfx_cap4 = 0;
+    header->m_data_offset = DATA_HEADER_SIZE;
+
+    if (block0 > 0) {
+        while (pfx_off + pfx_bytes > block0) {
+            if (cap4 > 0)
+                cap4 >>= 1;
+            else if (cap3 > 0)
+                cap3 >>= 1;
+            else
+                break;
+            pfx_bytes = calc_pfx_bytes(cap2, cap3, cap4);
+        }
+
+        if (pfx_off + pfx_bytes <= block0) {
+            header->pfxcache_offset = pfx_off;
+            header->pfxcache_size = pfx_bytes;
+            header->pfx_cap2 = static_cast<uint32_t>(cap2);
+            header->pfx_cap3 = static_cast<uint32_t>(cap3);
+            header->pfx_cap4 = static_cast<uint32_t>(cap4);
+            header->m_data_offset = header->pfxcache_offset + header->pfxcache_size;
+        }
+    }
 }
 
 // This function only needs to be called by writer.
@@ -171,7 +267,7 @@ int Dict::Status() const
     return status;
 }
 
-// Search wrappers removed; DB now calls SearchEngine directly.
+// DB calls SearchEngine directly for lookups.
 
 // Add a key-value pair
 // if overwrite is true and an entry with input key already exists, the old data will
@@ -1163,8 +1259,10 @@ DictMem* Dict::GetMM() const
 
 size_t Dict::GetStartDataOffset() const
 {
-    // TODO: handle data header allocation in jemalloc mode.
-    // Note this header is not used currently
+    // Start of user data within _mabain_d: after embedded prefix cache if present.
+    if (header && header->pfxcache_size > 0) {
+        return header->pfxcache_offset + header->pfxcache_size;
+    }
     return DATA_HEADER_SIZE;
 }
 
@@ -1192,23 +1290,7 @@ void Dict::Purge() const
     }
 }
 
-void Dict::EnablePrefixCache(int n, size_t capacity)
-{
-    // Non-shared prefix cache support removed; no-op.
-    (void)n;
-    (void)capacity;
-}
-
-void Dict::DisablePrefixCache()
-{
-    // No-op for non-shared path removal; shared cache uses DisableSharedPrefixCache.
-}
-
-void Dict::EnableSharedPrefixCache(size_t capacity)
-{
-    // Unified cache with shared-memory backing
-    prefix_cache = std::unique_ptr<PrefixCache>(new PrefixCache(mbdir_, capacity));
-}
+// Cache is enabled implicitly based on DB layout; no public toggles.
 
 /* MaybePutCache removed: inlined seeding logic inside SeedCanonicalBoundariesAfterAdd */
 

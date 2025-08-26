@@ -409,7 +409,8 @@ void DB::InitDBEx(MBConfig& config)
         return;
     }
 
-    // Prefix cache is disabled by default; apps/benchmarks can enable via API.
+    // Prefix cache: auto-enable only if DB was created with OPTION_PREFIX_CACHE
+    // (embedded) or reader requested the option and cache can attach.
 
     PostDBUpdate(config, init_header, update_header);
 }
@@ -757,20 +758,19 @@ void DB::Purge() const
 
 void DB::EnablePrefixCache(size_t capacity)
 {
-    if (dict)
-        dict->EnableSharedPrefixCache(capacity);
+    // Deprecated: prefix cache toggling only at DB creation.
+    (void)capacity;
+}
+
+void DB::DisablePrefixCache()
+{
+    // Deprecated: prefix cache toggling only at DB creation.
 }
 
 void DB::DumpPrefixCacheStats(std::ostream& os) const
 {
     if (dict)
         dict->PrintPrefixCacheStats(os);
-}
-
-void DB::DisablePrefixCache()
-{
-    if (dict)
-        dict->DisablePrefixCache();
 }
 
 int DB::CollectResource(int64_t min_index_rc_size, int64_t min_data_rc_size,
