@@ -401,6 +401,8 @@ size_t RollableFile::GetResourceCollectionOffset() const
 
 void RollableFile::RemoveUnused(size_t max_size, bool writer_mode)
 {
+    // Never remove/truncate block 0 because it contains reserved regions
+    // like embedded prefix cache and metadata in our design.
     unsigned ibeg = max_size / (block_size + 1) + 1;
     for (auto i = ibeg; i < files.size(); i++) {
         if (files[i] != NULL) {

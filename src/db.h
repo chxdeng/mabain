@@ -214,12 +214,9 @@ public:
     const iterator begin(const std::string& prefix) const;
     const iterator end() const;
 
-    // Prefix cache control
-    void EnablePrefixCache(size_t capacity = 65536);
-    void DisablePrefixCache();
+    // Prefix cache stats
     void DumpPrefixCacheStats(std::ostream& os = std::cout) const;
-
-    // Shared prefix cache control removed from public API; use EnablePrefixCache
+    static bool PrefixCacheConfigured(int options) { return (options & CONSTS::OPTION_PREFIX_CACHE) != 0; }
 
 private:
     void InitDB(MBConfig& config);

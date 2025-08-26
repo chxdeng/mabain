@@ -246,13 +246,13 @@ static void InitDB(bool writer_mode = true)
     }
     if (!writer_mode)
         mconf.options = mabain::CONSTS::ReaderOptions();
+    // Enable embedded prefix cache when -pcc is non-zero
+    if (pc_cap > 0) {
+        mconf.options |= mabain::CONSTS::OPTION_PREFIX_CACHE;
+    }
     db = new mabain::DB(mconf);
     // Ensure DB is open; subsequent phases depend on it
     assert(db->is_open());
-    // Enable shared prefix cache when -pcc is provided
-    if (pc_cap > 0) {
-        db->EnablePrefixCache(static_cast<size_t>(pc_cap));
-    }
 #endif
 }
 
@@ -594,15 +594,13 @@ static void* Reader(void* arg)
 
 #if MABAIN
     std::string db_dir_tmp = std::string(db_dir) + "/mabain/";
-    mabain::DB* db_r = new mabain::DB(db_dir_tmp.c_str(), mabain::CONSTS::ReaderOptions(),
+    int ropts = mabain::CONSTS::ReaderOptions();
+    if (pc_cap > 0) ropts |= mabain::CONSTS::OPTION_PREFIX_CACHE;
+    mabain::DB* db_r = new mabain::DB(db_dir_tmp.c_str(), ropts,
         (unsigned long long)(0.6666667 * memcap),
         (unsigned long long)(0.3333333 * memcap));
     assert(db_r->is_open());
-    // Configure shared prefix cache for reader when -pcc is provided
-    if (pc_cap > 0) {
-        db_r->EnablePrefixCache(static_cast<size_t>(pc_cap));
-        // Read path does not write to cache; no need to toggle read-only
-    }
+    // Runtime toggle removed; capacity is fixed by DB layout
 #endif
 
     std::cout << "\n[reader : " << tid << "] started" << std::endl;
@@ -678,14 +676,15 @@ static void ConcurrencyTest(int num, int n_r)
 #ifdef MABAIN
     if (pc_cap > 0) {
         std::string db_dir_tmp = std::string(db_dir) + "/mabain/";
-        mabain::DB* seed = new mabain::DB(db_dir_tmp.c_str(), mabain::CONSTS::ReaderOptions(),
+        int ropts_seed = mabain::CONSTS::ReaderOptions() | mabain::CONSTS::OPTION_PREFIX_CACHE;
+        mabain::DB* seed = new mabain::DB(db_dir_tmp.c_str(), ropts_seed,
             (unsigned long long)(0.6666667 * memcap),
             (unsigned long long)(0.3333333 * memcap));
-        if (seed && seed->is_open()) {
-            seed->EnablePrefixCache(static_cast<size_t>(pc_cap));
+        if (seed) {
+            // Mapping is configured via options at construction; nothing else needed
             seed->Close();
+            delete seed;
         }
-        delete seed;
     }
 #endif
 

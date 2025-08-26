@@ -61,6 +61,49 @@
 
 namespace mabain {
 
+//
+// File/Layout Overview
+// ---------------------
+// Mabain stores its persistent state across three logical files per DB path:
+//
+// - <mbdir>_mabain_h  (header file; single page)
+//   - Contains the IndexHeader structure below. This holds global metadata,
+//     fixed configuration (block sizes, options), and runtime counters.
+//
+// - <mbdir>_mabain_i<N>  (index files; block 0..max)
+//   - Offset 0 of block 0 stores the root node (fixed at 0).
+//   - Nodes and edge data are addressed with 6‑byte offsets relative to the
+//     beginning of block 0. RC (resource collection/shrink) can relocate nodes,
+//     but the root node remains at offset 0.
+//
+// - <mbdir>_mabain_d<N>  (data/value files; block 0..max)
+//   - Block 0, beginning of file, has a small fixed header region of
+//     DATA_HEADER_SIZE bytes reserved for future use.
+//   - Embedded Prefix Cache Region (optional, fixed at initialization):
+//       [ pfxcache_offset, pfxcache_offset + pfxcache_size )
+//     The prefix cache is a contiguous area in block 0 of _mabain_d reserved
+//     and described by the fields below. Its internal layout is:
+//         PCShmHeader | tag2 | tab2 | tag3 | tab3 | valid4 | tag4 | tab4
+//     Capacities (pfx_cap2/3/4) are fixed after DB creation. When present,
+//     writers seed the cache during Add; readers never write here. In jemalloc
+//     mode, the value allocator (arena) starts AFTER m_data_offset so it never
+//     overlaps with the cache region.
+//   - User data region:
+//       [ m_data_offset, ... )
+//     All value buffers live here (either via jemalloc arena or free‑list).
+//
+// RC/Truncation Rules
+// - RC may move data within the files but must not move or truncate block 0
+//   below GetStartDataOffset() (i.e., below m_data_offset for new DBs with an
+//   embedded cache). Code paths avoid removing block 0 in RemoveUnused.
+// - The embedded cache is ephemeral; contents may be cleared on start. Only the
+//   reserved space and capacities are persistent and fixed.
+//
+// Backward Compatibility
+// - If pfxcache_size == 0, no embedded cache is present. Legacy deployments may
+//   use a standalone shared cache file (<mbdir>_pfxcache). New DBs initialize
+//   the embedded layout and avoid creating the legacy cache file.
+//
 // Mabain DB header
 typedef struct _IndexHeader {
     uint16_t version[4];
@@ -112,6 +155,14 @@ typedef struct _IndexHeader {
     std::atomic<uint32_t> queue_index;
     uint32_t writer_index;
     std::atomic<uint32_t> rc_flag;
+
+    // Embedded prefix cache (fixed capacity, set at DB initialization)
+    // If pfxcache_size == 0, legacy external cache file is used.
+    size_t pfxcache_offset; // offset within _mabain_d where cache starts
+    size_t pfxcache_size;   // total bytes reserved for cache region
+    uint32_t pfx_cap2;      // number of slots in 2-byte table
+    uint32_t pfx_cap3;      // number of slots in 3-byte table
+    uint32_t pfx_cap4;      // number of slots in 4-byte table
 } IndexHeader;
 
 // An abstract interface class for Dict and DictMem

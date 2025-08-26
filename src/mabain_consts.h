@@ -40,6 +40,7 @@ public:
     static const int MAX_DATA_SIZE;
     static const int OPTION_SHMQ_RETRY;
     static const int OPTION_JEMALLOC;
+    static const int OPTION_PREFIX_CACHE; // Enable embedded prefix cache at DB creation
 
     // Max retries for lock-free reader retry loops before returning TRY_AGAIN
     static const int LOCK_FREE_RETRY_LIMIT;

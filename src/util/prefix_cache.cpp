@@ -39,23 +39,39 @@ static inline size_t cap3_from_capacity(size_t capacity)
     return p2; // may be 0 if excess < 1
 }
 
-// Construct a prefix cache and back it with a single shared-memory mapping.
-// Layout (in order):
-//   header | tag2 | tab2 | tag3 | tab3 | valid4 | tag4 | tab4
-// tag2/tag3 store (prefix+1) to differentiate empty(0) from real 0-value keys when aliased.
-// 4-byte table uses a separate valid[] to allow full 32-bit tags without +1.
-PrefixCache::PrefixCache(const std::string& mbdir, size_t capacity)
+// Construct a prefix cache backed by an embedded mapping in _mabain_d.
+//
+// Embedded Region Layout (in block 0 of _mabain_d):
+//   PCShmHeader | tag2 | tab2 | tag3 | tab3 | valid4 | tag4 | tab4
+// where:
+//   - PCShmHeader carries magic/version and fixed capacities/masks for tables.
+//   - tag2/tag3 hold (prefix+1) to distinguish empty from p == 0.
+//   - 4-byte table uses a separate valid[] bitmap and exact tag4 values to avoid
+//     overflow; publish protocol clears valid, writes body+tag, then sets valid.
+//
+// Publication/reads use release/acquire on the atomic tag/valid arrays.
+PrefixCache::PrefixCache(const std::string& mbdir, const IndexHeader* hdr, size_t capacity)
     : cap2(0)
     , cap3(0)
     , cap4(0)
 {
+    hdr_ = hdr;
     // Allow capacity beyond 2^24 to provision a sparse 4-byte table.
     size_t norm_cap = capacity;
     size_t base2 = std::min<size_t>(norm_cap, (size_t)65536);
     size_t c2 = floor_pow2(base2);
     if (norm_cap > 0 && c2 < 16384)
         c2 = 16384;
-    const_cast<size_t&>(cap2) = c2;
+    // Require embedded region; readers will not map external files anymore.
+    if (hdr_ && hdr_->pfxcache_size > 0 && hdr_->pfx_cap2) {
+        const_cast<size_t&>(cap2) = hdr_->pfx_cap2;
+    } else {
+        // No embedded cache: disable completely.
+        const_cast<size_t&>(cap2) = 0;
+        const_cast<size_t&>(cap3) = 0;
+        const_cast<size_t&>(cap4) = 0;
+        return; // leave uninitialized; ActivePrefixCache() will stay null
+    }
     // Split remainder between 3-byte and 4-byte sparse tables
     size_t remainder = (norm_cap > 65536 ? norm_cap - 65536 : 0);
     // Allow biasing 4-byte table via env: MB_PFXCACHE_4_RATIO=[0..100]
@@ -72,6 +88,16 @@ PrefixCache::PrefixCache(const std::string& mbdir, size_t capacity)
     size_t target3 = (remainder > target4 ? remainder - target4 : 0);
     size_t c3 = floor_pow2(target3);
     size_t c4 = floor_pow2(target4);
+    if (hdr_ && hdr_->pfxcache_size > 0) {
+        if (hdr_->pfx_cap3)
+            c3 = hdr_->pfx_cap3;
+        else
+            c3 = 0;
+        if (hdr_->pfx_cap4)
+            c4 = hdr_->pfx_cap4;
+        else
+            c4 = 0;
+    }
     const_cast<size_t&>(cap3) = c3;
     const_cast<size_t&>(cap4) = c4;
 
@@ -79,9 +105,12 @@ PrefixCache::PrefixCache(const std::string& mbdir, size_t capacity)
     mask3 = (cap3 ? cap3 - 1 : 0);
     mask4 = (cap4 ? cap4 - 1 : 0);
     full2 = (cap2 == 65536);
-    shm_path = PrefixCache::ShmPath(mbdir);
-    if (!map_shared(shm_path)) {
-        throw std::runtime_error("PrefixCache: failed to map shared memory");
+    // Embedded mapping only
+    if (hdr_ && hdr_->pfxcache_size > 0) {
+        if (!map_embedded(mbdir))
+            throw std::runtime_error("PrefixCache: failed to map embedded cache");
+    } else {
+        throw std::runtime_error("PrefixCache: no embedded cache available");
     }
 }
 
@@ -185,6 +214,100 @@ bool PrefixCache::map_shared(const std::string& path)
         }
     } else {
         (void)::madvise(shm_base, shm_size, MADV_WILLNEED);
+    }
+    return true;
+}
+
+// Map the embedded cache region inside _mabain_d.
+// We map the whole first block if necessary and then set pointers at the HDR offset.
+bool PrefixCache::map_embedded(const std::string& mbdir)
+{
+    // Resolve data file block0 path and open.
+    std::string data_path0 = mbdir + std::string("_mabain_d0");
+    // Create the first data block file if it does not exist yet
+    int fd = ::open(data_path0.c_str(), O_CREAT | O_RDWR, 0666);
+    if (fd < 0) return false;
+    struct stat st;
+    if (fstat(fd, &st) != 0) { ::close(fd); return false; }
+    // Ensure file is at least large enough to cover the cache region
+    size_t end_needed = hdr_->pfxcache_offset + hdr_->pfxcache_size;
+    if ((size_t)st.st_size < end_needed) {
+        // Prefer posix_fallocate to avoid sparse files; fall back to ftruncate if unavailable
+        int rc = 0;
+#ifdef _XOPEN_SOURCE
+        rc = posix_fallocate(fd, 0, static_cast<off_t>(end_needed));
+#endif
+        if (rc != 0) {
+            if (ftruncate(fd, static_cast<off_t>(end_needed)) != 0) { ::close(fd); return false; }
+        }
+    }
+    size_t map_len = std::max<size_t>(end_needed, (size_t)st.st_size);
+    void* base = ::mmap(nullptr, map_len, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (base == MAP_FAILED) { ::close(fd); return false; }
+
+    shm_base = base;
+    shm_size = map_len;
+    shm_delta = hdr_->pfxcache_offset;
+    shm_fd = fd;
+
+    // Recreate the same header and tables layout offsets as map_shared, but relative to base+delta
+    const uint32_t MAGIC = 0x50434632; // 'PCF2'
+    const uint16_t VER = 2;
+    size_t t2 = sizeof(PrefixCacheEntry) * (cap2 ? cap2 : 1);
+    size_t g2 = sizeof(uint32_t) * (cap2 ? cap2 : 1);
+    size_t t3 = sizeof(PrefixCacheEntry) * (cap3 ? cap3 : 1);
+    size_t g3 = sizeof(uint32_t) * (cap3 ? cap3 : 1);
+    size_t t4 = sizeof(PrefixCacheEntry) * (cap4 ? cap4 : 1);
+    size_t g4 = sizeof(uint32_t) * (cap4 ? cap4 : 1); // tag4
+    size_t v4 = sizeof(uint32_t) * (cap4 ? cap4 : 1); // valid4
+    size_t need = sizeof(PCShmHeader) + g2 + t2 + g3 + t3 + v4 + g4 + t4;
+    if (need != hdr_->pfxcache_size) {
+        // Capacity mismatch vs header; clear mapped region and try to proceed if space allows
+        // to keep running. Readers/writers can still function without cache.
+        ::munmap(shm_base, shm_size);
+        ::close(fd);
+        shm_base = nullptr;
+        shm_fd = -1;
+        return false;
+    }
+
+    auto* hdr = reinterpret_cast<PCShmHeader*>((uint8_t*)base + shm_delta);
+    bool init = (hdr->magic != MAGIC || hdr->version != VER);
+    if (init) {
+        hdr->magic = MAGIC;
+        hdr->version = VER;
+        hdr->reserved = 0;
+        hdr->cap2 = static_cast<uint32_t>(cap2 ? cap2 : 1);
+        hdr->cap3 = static_cast<uint32_t>(cap3 ? cap3 : 0);
+        hdr->cap4 = static_cast<uint32_t>(cap4 ? cap4 : 0);
+        hdr->mask2 = static_cast<uint32_t>(mask2);
+        hdr->mask3 = static_cast<uint32_t>(mask3);
+        hdr->mask4 = static_cast<uint32_t>(mask4);
+    }
+    uint8_t* p = reinterpret_cast<uint8_t*>(hdr) + sizeof(PCShmHeader);
+    tag2 = reinterpret_cast<std::atomic<uint32_t>*>(p);
+    p += sizeof(uint32_t) * (cap2 ? cap2 : 1);
+    tab2 = reinterpret_cast<PrefixCacheEntry*>(p);
+    p += sizeof(PrefixCacheEntry) * (cap2 ? cap2 : 1);
+    tag3 = (cap3 ? reinterpret_cast<std::atomic<uint32_t>*>(p) : nullptr);
+    p += sizeof(uint32_t) * (cap3 ? cap3 : 0);
+    tab3 = (cap3 ? reinterpret_cast<PrefixCacheEntry*>(p) : nullptr);
+    p += sizeof(PrefixCacheEntry) * (cap3 ? cap3 : 0);
+    valid4 = (cap4 ? reinterpret_cast<std::atomic<uint32_t>*>(p) : nullptr);
+    p += sizeof(uint32_t) * (cap4 ? cap4 : 0);
+    tag4 = (cap4 ? reinterpret_cast<std::atomic<uint32_t>*>(p) : nullptr);
+    p += sizeof(uint32_t) * (cap4 ? cap4 : 0);
+    tab4 = (cap4 ? reinterpret_cast<PrefixCacheEntry*>(p) : nullptr);
+
+    if (init) {
+        size_t c2 = (cap2 ? cap2 : 1);
+        for (size_t i = 0; i < c2; ++i) tag2[i].store(0u, std::memory_order_relaxed);
+        if (cap3) for (size_t i = 0; i < cap3; ++i) tag3[i].store(0u, std::memory_order_relaxed);
+        if (cap4) {
+            for (size_t i = 0; i < cap4; ++i) { valid4[i].store(0u, std::memory_order_relaxed); tag4[i].store(0u, std::memory_order_relaxed); }
+        }
+    } else {
+        (void)::madvise((uint8_t*)base + shm_delta, need, MADV_WILLNEED);
     }
     return true;
 }
@@ -389,8 +512,10 @@ size_t PrefixCache::Size2() const
 {
     size_t cnt = 0;
     size_t cap2_eff = (cap2 ? cap2 : 1);
-    for (size_t i = 0; i < cap2_eff; ++i)
-        cnt += (tag2 && tag2[i] != 0);
+    for (size_t i = 0; i < cap2_eff; ++i) {
+        if (tag2 && tag2[i].load(std::memory_order_relaxed) != 0)
+            ++cnt;
+    }
     return cnt;
 }
 
@@ -398,8 +523,10 @@ size_t PrefixCache::Size2() const
 size_t PrefixCache::Size3() const
 {
     size_t cnt = 0;
-    for (size_t i = 0; i < cap3; ++i)
-        cnt += (tag3 && tag3[i] != 0);
+    for (size_t i = 0; i < cap3; ++i) {
+        if (tag3 && tag3[i].load(std::memory_order_relaxed) != 0)
+            ++cnt;
+    }
     return cnt;
 }
 
@@ -425,8 +552,10 @@ void PrefixCache::Clear()
 size_t PrefixCache::Size4() const
 {
     size_t cnt = 0;
-    for (size_t i = 0; i < cap4; ++i)
-        cnt += (valid4 && valid4[i] != 0);
+    for (size_t i = 0; i < cap4; ++i) {
+        if (valid4 && valid4[i].load(std::memory_order_relaxed) != 0)
+            ++cnt;
+    }
     return cnt;
 }
 

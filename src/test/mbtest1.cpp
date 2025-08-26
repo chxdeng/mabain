@@ -71,6 +71,9 @@ static void* Reader(void* arg)
                 std::cout << "value not match for key " << ikey << ": " << keystr << "\n";
                 abort();
             }
+        } else if (rval == MBError::TRY_AGAIN) {
+            // Transient race in lock-free snapshot; retry on next loop
+            continue;
         } else if (rval != MBError::NOT_EXIST) {
             std::cout << "unexpected return from Find: " << rval << "\n";
             abort();

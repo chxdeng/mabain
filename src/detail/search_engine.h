@@ -160,9 +160,7 @@ namespace detail {
         return dict.ReadDataFromEdge(data, edge_ptrs);
     }
 
-    // Tiny per-thread cache of root edges to avoid a ReadData on hot prefixes.
-    // Safe only when no writers are active; guarded by header->num_writer == 0.
-    // (getRootEdgeFast removed; callers read via dict.mm.GetRootEdge)
+    // Reads root edges via DictMem; no per-thread root cache.
 
     inline int SearchEngine::loadEdgeKey(const EdgePtrs& edge_ptrs, MBData& data, const uint8_t*& key_buff, int edge_len_m1) const
     {
@@ -191,6 +189,7 @@ namespace detail {
         // Keys shorter than 2 bytes cannot hit the cache; avoid virtual call.
         if (len < 2 || key == nullptr)
             return false;
+        // Attach to cache on first use for readers/writers if available.
         PrefixCache* pc = dict.ActivePrefixCache();
         if (!pc)
             return false;
