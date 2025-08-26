@@ -11,7 +11,10 @@
 
 #include "error.h"
 #include "logger.h"
+
+#ifdef MB_HAVE_XXHASH
 #include <xxhash.h>
+#endif
 
 namespace mabain {
 
