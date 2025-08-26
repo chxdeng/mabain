@@ -27,8 +27,6 @@ extern "C" {
 }
 #elif MABAIN
 #include <mabain/db.h>
-// Local bit for OPTION_PREFIX_CACHE (matches new lib); older libs will ignore it.
-static const int MB_OPT_PREFIX_CACHE = 0x100;
 #endif
 
 #ifdef LEVEL_DB
@@ -248,18 +246,13 @@ static void InitDB(bool writer_mode = true)
     }
     if (!writer_mode)
         mconf.options = mabain::CONSTS::ReaderOptions();
-    // Enable embedded prefix cache when -pcc is non-zero (new lib); also keep runtime
-    // EnablePrefixCache call for old lib compatibility.
+    // Enable embedded prefix cache when -pcc is non-zero
     if (pc_cap > 0) {
-        mconf.options |= MB_OPT_PREFIX_CACHE;
+        mconf.options |= mabain::CONSTS::OPTION_PREFIX_CACHE;
     }
     db = new mabain::DB(mconf);
     // Ensure DB is open; subsequent phases depend on it
     assert(db->is_open());
-    // For older libs, also call runtime enable (no-op on new lib).
-    if (pc_cap > 0) {
-        db->EnablePrefixCache(static_cast<size_t>(pc_cap));
-    }
 #endif
 }
 
@@ -602,15 +595,12 @@ static void* Reader(void* arg)
 #if MABAIN
     std::string db_dir_tmp = std::string(db_dir) + "/mabain/";
     int ropts = mabain::CONSTS::ReaderOptions();
-    if (pc_cap > 0) ropts |= MB_OPT_PREFIX_CACHE;
+    if (pc_cap > 0) ropts |= mabain::CONSTS::OPTION_PREFIX_CACHE;
     mabain::DB* db_r = new mabain::DB(db_dir_tmp.c_str(), ropts,
         (unsigned long long)(0.6666667 * memcap),
         (unsigned long long)(0.3333333 * memcap));
     assert(db_r->is_open());
-    // For older libs, call runtime enable (no-op on new lib)
-    if (pc_cap > 0) {
-        db_r->EnablePrefixCache(static_cast<size_t>(pc_cap));
-    }
+    // Runtime toggle removed; capacity is fixed by DB layout
 #endif
 
     std::cout << "\n[reader : " << tid << "] started" << std::endl;
@@ -686,13 +676,12 @@ static void ConcurrencyTest(int num, int n_r)
 #ifdef MABAIN
     if (pc_cap > 0) {
         std::string db_dir_tmp = std::string(db_dir) + "/mabain/";
-        int ropts_seed = mabain::CONSTS::ReaderOptions() | MB_OPT_PREFIX_CACHE;
+        int ropts_seed = mabain::CONSTS::ReaderOptions() | mabain::CONSTS::OPTION_PREFIX_CACHE;
         mabain::DB* seed = new mabain::DB(db_dir_tmp.c_str(), ropts_seed,
             (unsigned long long)(0.6666667 * memcap),
             (unsigned long long)(0.3333333 * memcap));
         if (seed) {
-            // For older libs, ensuring EnablePrefixCache creates mapping
-            seed->EnablePrefixCache(static_cast<size_t>(pc_cap));
+            // Mapping is configured via options at construction; nothing else needed
             seed->Close();
             delete seed;
         }

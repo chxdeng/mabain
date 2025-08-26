@@ -756,16 +756,8 @@ void DB::Purge() const
     dict->Purge();
 }
 
-void DB::EnablePrefixCache(size_t capacity)
-{
-    // Deprecated: prefix cache toggling only at DB creation.
-    (void)capacity;
-}
-
-void DB::DisablePrefixCache()
-{
-    // Deprecated: prefix cache toggling only at DB creation.
-}
+// EnablePrefixCache/DisablePrefixCache APIs removed; prefix cache must be
+// configured via CONSTS::OPTION_PREFIX_CACHE at DB creation.
 
 void DB::DumpPrefixCacheStats(std::ostream& os) const
 {

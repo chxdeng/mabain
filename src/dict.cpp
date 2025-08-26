@@ -121,7 +121,7 @@ Dict::Dict(const std::string& mbdir, bool init_header, int datasize,
         }
         // Self-consistency: if DB lacks embedded cache region, ignore option.
         if (!(header->pfxcache_size > 0) && (options & CONSTS::OPTION_PREFIX_CACHE)) {
-            std::cerr << "Prefix cache option set but DB has no embedded cache; disabling.\n";
+            Logger::Log(LOG_LEVEL_WARN, "Prefix cache option set but DB has no embedded cache; disabling.");
             options &= ~CONSTS::OPTION_PREFIX_CACHE;
         }
     }

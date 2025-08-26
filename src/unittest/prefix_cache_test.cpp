@@ -44,8 +44,7 @@ public:
 
         db = new DB(MB_DIR, CONSTS::WriterOptions());
         ASSERT_NE(db, nullptr);
-        // Enable prefix cache
-        db->EnablePrefixCache(4096);
+        // Prefix cache configuration is done at DB creation time.
     }
 
     void TearDown() override
