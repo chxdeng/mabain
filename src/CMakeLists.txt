@@ -40,11 +40,19 @@ set(MB_WARN_OPTS -Wall -Wwrite-strings -Wsign-compare -Wcast-align -Wformat-secu
 if(MB_WERROR)
     list(APPEND MB_WARN_OPTS -Werror)
 endif()
-target_compile_options(mabain PRIVATE
-    ${MB_WARN_OPTS}
-    -g -ggdb -fPIC -O2 -std=c++17 -D__LOCK_FREE__
-    -march=native -fomit-frame-pointer
-)
+# Base optimization flags that work across all supported CPUs
+set(MB_OPT_FLAGS -g -ggdb -fPIC -O2 -std=c++17 -D__LOCK_FREE__)
+
+# Allow callers to opt-in to native instruction set optimizations when they
+# know the build host and target host share the same CPU features. Leaving
+# this off by default keeps released binaries portable and avoids SIGILL
+# crashes on older hardware.
+option(MB_ENABLE_NATIVE_OPTIMIZATIONS "Enable -march=native for local builds" OFF)
+if(MB_ENABLE_NATIVE_OPTIMIZATIONS)
+    list(APPEND MB_OPT_FLAGS -march=native)
+endif()
+
+target_compile_options(mabain PRIVATE ${MB_WARN_OPTS} ${MB_OPT_FLAGS})
 
 # Link-time optimization (optional)
 option(ENABLE_IPO "Enable interprocedural optimization" OFF)
