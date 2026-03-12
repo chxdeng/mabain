@@ -172,11 +172,16 @@ int FileIO::AllocateFile(off_t filesize)
             return 0;
         }
 
-        // Do NOT fall back to ftruncate - fallocate failure should be an error
-        // because ftruncate creates sparse files that can cause SIGBUS under disk pressure
-        Logger::Log(LOG_LEVEL_ERROR, "fallocate failed for file %s, errno=%d, not using ftruncate to avoid sparse files",
+        int falloc_errno = errno;
+        Logger::Log(LOG_LEVEL_WARN, "fallocate failed for file %s, errno=%d, falling back to ftruncate",
+            path.c_str(), falloc_errno);
+
+        if (ftruncate(fd, filesize) == 0)
+            return 0;
+
+        Logger::Log(LOG_LEVEL_ERROR, "ftruncate fallback failed for file %s, errno=%d",
             path.c_str(), errno);
-        return 1; // Return error instead of falling back to ftruncate
+        return 1;
     }
 
     // File is already the right size
