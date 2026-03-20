@@ -149,8 +149,10 @@ DictMem::DictMem(const std::string& mbdir, bool init_header, size_t memsize,
         return;
     }
     header = reinterpret_cast<IndexHeader*>(header_file->GetMapAddr());
-    if (header == NULL)
+    if (header == NULL) {
+        ResourcePool::getInstance().RemoveResourceByPath(mbdir + "_mabain_h");
         return;
+    }
 
     // Both reader and writer need to open the mmapped file.
     if (!init_header) {

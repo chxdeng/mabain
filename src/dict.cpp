@@ -222,8 +222,9 @@ int Dict::Init(uint32_t id)
 {
     Logger::Log(LOG_LEVEL_DEBUG, "connector %u initializing db", id);
     if (!(options & CONSTS::ACCESS_MODE_WRITER)) {
+        status = MBError::NOT_ALLOWED;
         Logger::Log(LOG_LEVEL_ERROR, "dict initialization not allowed for non-writer");
-        return MBError::NOT_ALLOWED;
+        return status;
     }
 
     if (status != MBError::NOT_INITIALIZED) {
@@ -233,16 +234,25 @@ int Dict::Init(uint32_t id)
     }
 
     if (header == NULL) {
+        status = MBError::ALLOCATION_ERROR;
         Logger::Log(LOG_LEVEL_ERROR, "connector %u header not mapped", id);
-        return MBError::ALLOCATION_ERROR;
+        return status;
     }
 
     Logger::Log(LOG_LEVEL_DEBUG, "connector %u initializing DictMem", id);
-    mm.InitRootNode();
+    try {
+        mm.InitRootNode();
+    } catch (int error) {
+        status = error;
+        Logger::Log(LOG_LEVEL_ERROR, "connector %u failed to initialize DictMem: %s",
+            id, MBError::get_error_str(status));
+        return status;
+    }
 
     if (header->data_size > CONSTS::MAX_DATA_SIZE) {
+        status = MBError::INVALID_SIZE;
         Logger::Log(LOG_LEVEL_ERROR, "data size %d is too large", header->data_size);
-        return MBError::INVALID_SIZE;
+        return status;
     }
 
     if (mm.IsValid())

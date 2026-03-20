@@ -158,6 +158,8 @@ int RollableFile::OpenAndMapBlockFile(size_t block_order, bool create_file)
         block_size,
         map_file,
         create_file);
+    if (files[block_order] == nullptr)
+        return MBError::OPEN_FAILURE;
     if (map_file) {
         mem_used += block_size;
         if (init_jem) {
