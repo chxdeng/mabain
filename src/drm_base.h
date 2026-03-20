@@ -108,6 +108,7 @@ public:
     DRMBase()
     {
         // Derived classes will initialize these objects.
+        header = NULL;
         kv_file = NULL;
         free_lists = NULL;
     }

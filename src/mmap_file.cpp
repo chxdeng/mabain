@@ -92,6 +92,7 @@ uint8_t* MmapFileIO::MapFile(size_t size, off_t offset, bool sliding)
         Logger::Log(LOG_LEVEL_WARN, "%s mmap (%s) failed errno=%d offset=%llu size=%llu",
             (options & MMAP_ANONYMOUS_MODE) ? "anon" : "",
             path.c_str(), errno, offset, size);
+        addr = NULL;
         return NULL;
     }
 
