@@ -99,6 +99,11 @@ std::shared_ptr<MmapFileIO> ResourcePool::OpenFile(const std::string& fpath,
                 flags,
                 file_size,
                 mode & CONSTS::SYNC_ON_WRITE));
+        if (!(mode & CONSTS::MEMORY_ONLY_MODE) && !mmap_file->IsOpen()) {
+            pthread_mutex_unlock(&pool_mutex);
+            return NULL;
+        }
+
         if (map_file) {
             if (mmap_file->MapFile(file_size, 0) != NULL) {
                 if (!(mode & CONSTS::MEMORY_ONLY_MODE))
