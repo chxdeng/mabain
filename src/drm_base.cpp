@@ -24,6 +24,35 @@
 
 namespace mabain {
 
+namespace {
+
+bool HeaderVersionMatchesCurrent(const uint16_t hdr_ver[4])
+{
+    return hdr_ver[0] == version[0]
+        && hdr_ver[1] == version[1]
+        && hdr_ver[2] == version[2];
+}
+
+const char* RebuildStateToString(int state)
+{
+    switch (state) {
+    case REBUILD_STATE_NORMAL:
+        return "NORMAL";
+    case REBUILD_STATE_PREP:
+        return "REBUILD_PREP";
+    case REBUILD_STATE_COPY:
+        return "REBUILD_COPY";
+    case REBUILD_STATE_CUTOVER:
+        return "REBUILD_CUTOVER";
+    case REBUILD_STATE_POST:
+        return "REBUILD_POST";
+    default:
+        return "UNKNOWN";
+    }
+}
+
+} // namespace
+
 void DRMBase::ReadHeaderVersion(const std::string& header_path, uint16_t ver[4])
 {
     memset(ver, 0, sizeof(uint16_t) * 4);
@@ -70,61 +99,20 @@ void DRMBase::WriteHeader(const std::string& header_path, uint8_t* buff)
 void DRMBase::ValidateHeaderFile(const std::string& header_path, int mode,
     int queue_size, bool& update_header)
 {
+    (void)mode;
+    (void)queue_size;
+    update_header = false;
+
     uint16_t hdr_ver[4];
     ReadHeaderVersion(header_path, hdr_ver);
-    if (hdr_ver[0] >= 1 && hdr_ver[1] >= 3)
+    if (HeaderVersionMatchesCurrent(hdr_ver))
         return;
-    if (!(mode & CONSTS::ACCESS_MODE_WRITER))
-        throw (int)MBError::VERSION_MISMATCH;
 
     Logger::Log(LOG_LEVEL_INFO, "header version: %u.%u.%u does not match "
                                 "library version: %u.%u.%u",
         hdr_ver[0], hdr_ver[1], hdr_ver[2],
         version[0], version[1], version[2]);
-    // Load the old header first
-    uint8_t buff[RollableFile::page_size];
-    ReadHeader(header_path, buff, RollableFile::page_size);
-    // Update version field
-    uint16_t* curr_version = reinterpret_cast<uint16_t*>(buff);
-    memcpy(curr_version, version, 4 * sizeof(uint16_t));
-
-    // Write the new header file
-    std::string tmp_header_path = header_path + ".tmp";
-    Logger::Log(LOG_LEVEL_INFO, "updating header to newer version %s", tmp_header_path.c_str());
-    WriteHeader(tmp_header_path, buff);
-
-    // Set up inode number
-    bool map_hdr = true;
-    std::shared_ptr<MmapFileIO> hdr_file;
-    hdr_file = ResourcePool::getInstance().OpenFile(tmp_header_path,
-        mode,
-        RollableFile::page_size,
-        map_hdr,
-        false);
-    if (hdr_file == NULL || !map_hdr)
-        throw (int)MBError::OPEN_FAILURE;
-    IndexHeader* hdr = reinterpret_cast<IndexHeader*>(hdr_file->GetMapAddr());
-    hdr->shm_queue_id = get_file_inode(tmp_header_path);
-    hdr->async_queue_size = queue_size;
-    Logger::Log(LOG_LEVEL_INFO, "setting shm queue id to be %ld", hdr->shm_queue_id);
-    hdr_file->Flush();
-    ResourcePool::getInstance().RemoveResourceByPath(tmp_header_path);
-
-    // Swap header files
-    std::string old_header_path = header_path + "_" + std::to_string(hdr_ver[0]) + "_"
-        + std::to_string(hdr_ver[1]) + "_" + std::to_string(hdr_ver[2]);
-    if (rename(header_path.c_str(), old_header_path.c_str()) != 0) {
-        Logger::Log(LOG_LEVEL_ERROR, "failed to move file %s to %s", header_path.c_str(),
-            old_header_path.c_str());
-        throw (int)MBError::OPEN_FAILURE;
-    }
-    if (rename(tmp_header_path.c_str(), header_path.c_str()) != 0) {
-        Logger::Log(LOG_LEVEL_ERROR, "failed to move file %s to %s", tmp_header_path.c_str(),
-            header_path.c_str());
-        throw (int)MBError::OPEN_FAILURE;
-    }
-
-    update_header = true;
+    throw (int)MBError::VERSION_MISMATCH;
 }
 
 void DRMBase::PrintHeader(std::ostream& out_stream) const
@@ -170,6 +158,14 @@ void DRMBase::PrintHeader(std::ostream& out_stream) const
     out_stream << "max data offset before rc: " << header->rc_m_data_off_pre << std::endl;
     out_stream << "rc root offset: " << header->rc_root_offset << std::endl;
     out_stream << "rc count: " << header->rc_count << std::endl;
+    out_stream << "rebuild state: " << RebuildStateToString(header->rebuild_state)
+               << " (" << header->rebuild_state << ")" << std::endl;
+    out_stream << "rebuild root offset: " << header->rebuild_root_offset << std::endl;
+    out_stream << "rebuild index alloc start: " << header->rebuild_index_alloc_start << std::endl;
+    out_stream << "rebuild data alloc start: " << header->rebuild_data_alloc_start << std::endl;
+    out_stream << "rebuild cutover index: " << header->rebuild_cutover_index << std::endl;
+    out_stream << "rebuild index alloc end: " << header->rebuild_index_alloc_end << std::endl;
+    out_stream << "rebuild data alloc end: " << header->rebuild_data_alloc_end << std::endl;
     out_stream << "shared memory queue size: " << header->async_queue_size << std::endl;
     out_stream << "shared memory queue index: " << header->queue_index << std::endl;
     out_stream << "shared memory writer index: " << header->writer_index << std::endl;

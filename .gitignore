@@ -9,5 +9,6 @@ binaries/*
 data/*
 src/test/key_list*
 src/test/mb_test*
+src/test/jemalloc_restart_rebuild_test_local
 src/test/run_test*
 tmp/*

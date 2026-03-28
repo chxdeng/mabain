@@ -50,7 +50,14 @@
 #define EXCEP_STATUS_RC_EDGE_STR 7
 #define EXCEP_STATUS_RC_DATA 8
 #define EXCEP_STATUS_RC_TREE 9
+#define EXCEP_STATUS_REBUILD_ROOT_EDGE 10
 #define MB_EXCEPTION_BUFF_SIZE 16
+
+#define REBUILD_STATE_NORMAL 0
+#define REBUILD_STATE_PREP 1
+#define REBUILD_STATE_COPY 2
+#define REBUILD_STATE_CUTOVER 3
+#define REBUILD_STATE_POST 4
 
 #define MAX_BUFFER_RESERVE_SIZE 8192
 #define NUM_BUFFER_RESERVE MAX_BUFFER_RESERVE_SIZE / BUFFER_ALIGNMENT
@@ -150,6 +157,15 @@ typedef struct _IndexHeader {
     std::atomic<size_t> rc_root_offset;
     int64_t rc_count;
 
+    // startup rebuild metadata (jemalloc keep-db path)
+    int rebuild_state;
+    size_t rebuild_root_offset;
+    size_t rebuild_index_alloc_start;
+    size_t rebuild_data_alloc_start;
+    int rebuild_cutover_index;
+    size_t rebuild_index_alloc_end;
+    size_t rebuild_data_alloc_end;
+
     // multi-process async queue
     int async_queue_size;
     std::atomic<uint32_t> queue_index;
@@ -163,6 +179,27 @@ typedef struct _IndexHeader {
     uint32_t pfx_cap2;      // number of slots in 2-byte table
     uint32_t pfx_cap3;      // number of slots in 3-byte table
     uint32_t pfx_cap4;      // number of slots in 4-byte table
+
+    void ResetRebuildMetadata(int state)
+    {
+        rebuild_state = state;
+        rebuild_root_offset = 0;
+        rebuild_index_alloc_start = 0;
+        rebuild_data_alloc_start = 0;
+        rebuild_cutover_index = 0;
+        rebuild_index_alloc_end = 0;
+        rebuild_data_alloc_end = 0;
+    }
+
+    void ClearRebuildMetadata()
+    {
+        ResetRebuildMetadata(REBUILD_STATE_NORMAL);
+    }
+
+    bool RebuildInProgress() const
+    {
+        return rebuild_state != REBUILD_STATE_NORMAL;
+    }
 } IndexHeader;
 
 // An abstract interface class for Dict and DictMem
