@@ -30,6 +30,7 @@
 #include "../drm_base.h"
 #include "../resource_pool.h"
 #include "../test/jemalloc_rebuild_test_modes.h"
+#include "../version.h"
 
 using namespace mabain;
 using namespace mabain_test;
@@ -42,7 +43,13 @@ void RemoveJemallocRebuildTestFiles()
 {
     if (system("mkdir -p /var/tmp/mabain_test") != 0) {
     }
-    if (system("rm -rf /var/tmp/mabain_test/jemalloc_rebuild_*") != 0) {
+    if (system("rm -rf /var/tmp/mabain_test/jemalloc_rebuild") != 0) {
+    }
+}
+
+void CreateJemallocRebuildTestDir()
+{
+    if (system("mkdir -p /var/tmp/mabain_test/jemalloc_rebuild") != 0) {
     }
 }
 
@@ -61,6 +68,7 @@ public:
 
     void CreateHeaderWithVersion(uint16_t major, uint16_t minor, uint16_t patch) const
     {
+        CreateJemallocRebuildTestDir();
         char hdr[RollableFile::page_size];
         memset(hdr, 0, sizeof(hdr));
         IndexHeader* ptr = reinterpret_cast<IndexHeader*>(hdr);
@@ -68,7 +76,7 @@ public:
         ptr->version[1] = minor;
         ptr->version[2] = patch;
         ptr->version[3] = 0;
-        std::ofstream out(std::string(kJemallocRebuildTestPath) + "_mabain_h",
+        std::ofstream out(std::string(kJemallocRebuildTestPath) + "/_mabain_h",
             std::ios::out | std::ios::binary);
         out.write(hdr, sizeof(hdr));
     }
@@ -137,7 +145,8 @@ TEST(JemallocRebuildHeaderHelperTest, ClearRebuildMetadataRestoresNormalState)
 
 TEST_F(JemallocRebuildMetadataTest, NewDbInitializesRebuildMetadataToZero)
 {
-    int options = CONSTS::ACCESS_MODE_WRITER;
+    CreateJemallocRebuildTestDir();
+    int options = CONSTS::WriterOptions();
     DB db(kJemallocRebuildTestPath, options);
     ASSERT_TRUE(db.is_open());
     IndexHeader* header = db.GetDictPtr()->GetHeaderPtr();
@@ -154,7 +163,8 @@ TEST_F(JemallocRebuildMetadataTest, NewDbInitializesRebuildMetadataToZero)
 
 TEST_F(JemallocRebuildMetadataTest, PrintHeaderIncludesRebuildMetadata)
 {
-    int options = CONSTS::ACCESS_MODE_WRITER;
+    CreateJemallocRebuildTestDir();
+    int options = CONSTS::WriterOptions();
     DB db(kJemallocRebuildTestPath, options);
     ASSERT_TRUE(db.is_open());
     IndexHeader* header = db.GetDictPtr()->GetHeaderPtr();
@@ -184,8 +194,68 @@ TEST_F(JemallocRebuildMetadataTest, PrintHeaderIncludesRebuildMetadata)
 TEST_F(JemallocRebuildMetadataTest, RejectsOlderHeaderVersion)
 {
     CreateHeaderWithVersion(1, 6, 2);
-    int options = CONSTS::ACCESS_MODE_WRITER;
+    int options = CONSTS::ReaderOptions();
     DB db(kJemallocRebuildTestPath, options);
     EXPECT_FALSE(db.is_open());
     EXPECT_EQ(db.Status(), MBError::VERSION_MISMATCH);
+}
+
+TEST_F(JemallocRebuildMetadataTest, PersistedHeaderKeepsRebuildMetadata)
+{
+    CreateJemallocRebuildTestDir();
+    {
+        DB writer_db(kJemallocRebuildTestPath, CONSTS::WriterOptions());
+        ASSERT_TRUE(writer_db.is_open());
+        IndexHeader* header = writer_db.GetDictPtr()->GetHeaderPtr();
+        ASSERT_NE(header, nullptr);
+
+        header->rebuild_state = REBUILD_STATE_COPY;
+        header->rebuild_root_offset = 4321;
+        header->rebuild_index_alloc_start = 1001;
+        header->rebuild_data_alloc_start = 1002;
+        header->rebuild_cutover_index = 12;
+        header->rebuild_index_alloc_end = 2001;
+        header->rebuild_data_alloc_end = 2002;
+        writer_db.Close();
+    }
+
+    char hdr_page[RollableFile::page_size];
+    std::ifstream in(std::string(kJemallocRebuildTestPath) + "/_mabain_h",
+        std::ios::in | std::ios::binary);
+    ASSERT_TRUE(in.is_open());
+    in.read(hdr_page, sizeof(hdr_page));
+    ASSERT_EQ(in.gcount(), static_cast<std::streamsize>(sizeof(hdr_page)));
+
+    const IndexHeader* persisted = reinterpret_cast<const IndexHeader*>(hdr_page);
+    EXPECT_EQ(persisted->rebuild_state, REBUILD_STATE_COPY);
+    EXPECT_EQ(persisted->rebuild_root_offset, 4321u);
+    EXPECT_EQ(persisted->rebuild_index_alloc_start, 1001u);
+    EXPECT_EQ(persisted->rebuild_data_alloc_start, 1002u);
+    EXPECT_EQ(persisted->rebuild_cutover_index, 12);
+    EXPECT_EQ(persisted->rebuild_index_alloc_end, 2001u);
+    EXPECT_EQ(persisted->rebuild_data_alloc_end, 2002u);
+    EXPECT_TRUE(persisted->RebuildInProgress());
+}
+
+TEST_F(JemallocRebuildMetadataTest, WriterRecreatesDbAfterOlderHeaderVersionMismatch)
+{
+    CreateHeaderWithVersion(1, 6, 2);
+    DB writer_db(kJemallocRebuildTestPath, CONSTS::WriterOptions());
+    ASSERT_TRUE(writer_db.is_open());
+    EXPECT_EQ(writer_db.Status(), MBError::SUCCESS);
+
+    IndexHeader* header = writer_db.GetDictPtr()->GetHeaderPtr();
+    ASSERT_NE(header, nullptr);
+    EXPECT_EQ(header->version[0], version[0]);
+    EXPECT_EQ(header->version[1], version[1]);
+    EXPECT_EQ(header->version[2], version[2]);
+    EXPECT_EQ(header->rebuild_state, REBUILD_STATE_NORMAL);
+    EXPECT_EQ(header->rebuild_root_offset, 0u);
+    EXPECT_EQ(header->rebuild_index_alloc_start, 0u);
+    EXPECT_EQ(header->rebuild_data_alloc_start, 0u);
+    EXPECT_EQ(header->rebuild_cutover_index, 0);
+    EXPECT_EQ(header->rebuild_index_alloc_end, 0u);
+    EXPECT_EQ(header->rebuild_data_alloc_end, 0u);
+    EXPECT_FALSE(header->RebuildInProgress());
+    writer_db.Close();
 }

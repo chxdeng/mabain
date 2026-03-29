@@ -42,7 +42,7 @@ public:
         if (system(cmd.c_str()) != 0) {
         }
 
-        db = new DB(MB_DIR, CONSTS::WriterOptions());
+        db = new DB(MB_DIR, CONSTS::WriterOptions() | CONSTS::OPTION_PREFIX_CACHE);
         ASSERT_NE(db, nullptr);
         // Prefix cache configuration is done at DB creation time.
     }
@@ -116,33 +116,36 @@ TEST_F(PrefixCacheTest, NoPutOnFind)
 
 TEST_F(PrefixCacheTest, SeedFromCache_GetDepth)
 {
-    // Add keys with common prefixes, seeding cache entries for 2/3-byte prefixes
-    const char* keys[] = { "xy0-aaa", "xy1-bbb", "xyz-ccc", "xyzz-ddd" };
-    for (const char* k : keys) {
-        ASSERT_EQ(db->Add(k, (int)strlen(k), k, (int)strlen(k), false), MBError::SUCCESS);
-    }
-
     Dict* dict = db->GetDictPtr();
     ASSERT_NE(dict, nullptr);
     PrefixCache* pc = dict->ActivePrefixCache();
     ASSERT_NE(pc, nullptr);
 
+    PrefixCacheEntry seed4 {};
+    seed4.edge_offset = 111;
+    pc->PutAtDepth(reinterpret_cast<const uint8_t*>("xy0-aaa"), 4, seed4);
+
     PrefixCacheEntry e {};
-    int n = pc->GetDepth(reinterpret_cast<const uint8_t*>("xyQ"), 3, e);
-    // Should have at least a 2-byte seed hit
-    EXPECT_GE(n, 2);
-    EXPECT_LE(n, 3);
-    EXPECT_GT(e.edge_offset, (size_t)0);
+    int n = pc->GetDepth(reinterpret_cast<const uint8_t*>("xy0-aaa"), 7, e);
+    EXPECT_EQ(n, 4);
+    EXPECT_EQ(e.edge_offset, seed4.edge_offset);
 
-    // Unrelated prefix should miss
+    PrefixCacheEntry seed2 {};
+    seed2.edge_offset = 222;
+    pc->PutAtDepth(reinterpret_cast<const uint8_t*>("xy0-aaa"), 2, seed2);
+
     PrefixCacheEntry e2 {};
-    int n2 = pc->GetDepth(reinterpret_cast<const uint8_t*>("zz"), 2, e2);
-    EXPECT_EQ(n2, 0);
+    int n2 = pc->GetDepth(reinterpret_cast<const uint8_t*>("xyQ"), 3, e2);
+    EXPECT_EQ(n2, 2);
+    EXPECT_EQ(e2.edge_offset, seed2.edge_offset);
 
-    // Very short keys (<2) should not hit
     PrefixCacheEntry e3 {};
-    int n3 = pc->GetDepth(reinterpret_cast<const uint8_t*>("x"), 1, e3);
+    int n3 = pc->GetDepth(reinterpret_cast<const uint8_t*>("zz"), 2, e3);
     EXPECT_EQ(n3, 0);
+
+    PrefixCacheEntry e4 {};
+    int n4 = pc->GetDepth(reinterpret_cast<const uint8_t*>("x"), 1, e4);
+    EXPECT_EQ(n4, 0);
 }
 
 } // namespace
