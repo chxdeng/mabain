@@ -364,8 +364,8 @@ int RunShrinkOnlyMode()
     }
 
     mabain::ResourceCollection rc(rebuild_db);
-    if (rc.PrepareStartupShrink() != mabain::MBError::SUCCESS) {
-        std::cerr << "PrepareStartupShrink failed\n";
+    if (rc.StartupShrink() != mabain::MBError::SUCCESS) {
+        std::cerr << "StartupShrink failed\n";
         return 1;
     }
     if (VerifyFindValue(rebuild_db, key, value, "shrink_only writer") != 0) {

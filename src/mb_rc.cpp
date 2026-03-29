@@ -162,7 +162,7 @@ void ResourceCollection::ReclaimResource(int64_t min_index_size,
     }
 }
 
-int ResourceCollection::PrepareStartupShrink()
+int ResourceCollection::StartupShrink()
 {
     if (!db_ref.is_open())
         return db_ref.Status();
@@ -180,16 +180,21 @@ int ResourceCollection::PrepareStartupShrink()
         return MBError::NOT_ALLOWED;
     }
 
-    const size_t index_tail = dmm->GetJemallocAllocSize();
-    const size_t data_tail = dict->GetJemallocAllocSize();
-    if (index_tail < header->m_index_offset || data_tail < header->m_data_offset) {
-        Logger::Log(LOG_LEVEL_ERROR,
-            "startup shrink tail smaller than live offsets: index tail=%llu live=%llu data tail=%llu live=%llu",
-            static_cast<unsigned long long>(index_tail),
+    size_t index_tail = dmm->GetJemallocAllocSize();
+    size_t data_tail = dict->GetJemallocAllocSize();
+    if (index_tail < header->m_index_offset) {
+        Logger::Log(LOG_LEVEL_WARN,
+            "startup shrink index tail not reseeded on reopen, using live offset %llu instead of %llu",
             static_cast<unsigned long long>(header->m_index_offset),
-            static_cast<unsigned long long>(data_tail),
-            static_cast<unsigned long long>(header->m_data_offset));
-        return MBError::INVALID_SIZE;
+            static_cast<unsigned long long>(index_tail));
+        index_tail = header->m_index_offset;
+    }
+    if (data_tail < header->m_data_offset) {
+        Logger::Log(LOG_LEVEL_WARN,
+            "startup shrink data tail not reseeded on reopen, using live offset %llu instead of %llu",
+            static_cast<unsigned long long>(header->m_data_offset),
+            static_cast<unsigned long long>(data_tail));
+        data_tail = header->m_data_offset;
     }
 
     header->ResetRebuildMetadata(REBUILD_STATE_COPY);
@@ -199,19 +204,32 @@ int ResourceCollection::PrepareStartupShrink()
     header->rebuild_data_alloc_end = data_tail;
 
     rc_type = RESOURCE_COLLECTION_TYPE_INDEX | RESOURCE_COLLECTION_TYPE_DATA;
-    Prepare(1, 1);
+    if (index_free_lists != NULL)
+        index_free_lists->Empty();
+    if (data_free_lists != NULL)
+        data_free_lists->Empty();
+    rc_loop_counter = 0;
+    index_reorder_cnt = 0;
+    data_reorder_cnt = 0;
+    index_rc_status = MBError::NOT_INITIALIZED;
+    data_rc_status = MBError::NOT_INITIALIZED;
+    index_reorder_status = MBError::NOT_INITIALIZED;
+    data_reorder_status = MBError::NOT_INITIALIZED;
+    header->rc_m_index_off_pre = header->m_index_offset;
+    header->rc_m_data_off_pre = header->m_data_offset;
     header->rc_root_offset.store(0, MEMORY_ORDER_WRITER);
     ReorderBuffers();
+    CollectBuffers();
     Finish();
 
+    header->rebuild_index_alloc_start = header->m_index_offset;
+    header->rebuild_data_alloc_start = header->m_data_offset;
     header->rebuild_index_alloc_end = header->m_index_offset;
     header->rebuild_data_alloc_end = header->m_data_offset;
     Logger::Log(LOG_LEVEL_INFO,
-        "startup shrink completed index end=%llu data end=%llu source tails index=%llu data=%llu",
+        "startup shrink completed compacted index/data boundaries: index=%llu data=%llu",
         static_cast<unsigned long long>(header->rebuild_index_alloc_end),
-        static_cast<unsigned long long>(header->rebuild_data_alloc_end),
-        static_cast<unsigned long long>(index_tail),
-        static_cast<unsigned long long>(data_tail));
+        static_cast<unsigned long long>(header->rebuild_data_alloc_end));
     return MBError::SUCCESS;
 }
 

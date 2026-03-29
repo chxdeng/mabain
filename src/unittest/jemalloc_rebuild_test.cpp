@@ -322,7 +322,7 @@ TEST_F(JemallocRebuildMetadataTest, WarmRestartWithKeepDbEntersPrepStateAndPrese
     rebuild_db.Close();
 }
 
-TEST_F(JemallocRebuildMetadataTest, PrepareStartupShrinkCapturesCurrentJemallocTails)
+TEST_F(JemallocRebuildMetadataTest, StartupShrinkCapturesCurrentJemallocTails)
 {
     CreateJemallocRebuildTestDir();
     const std::string key("delta");
@@ -345,7 +345,7 @@ TEST_F(JemallocRebuildMetadataTest, PrepareStartupShrinkCapturesCurrentJemallocT
     ASSERT_EQ(header->rebuild_state, REBUILD_STATE_PREP);
 
     ResourceCollection rc(rebuild_db);
-    ASSERT_EQ(rc.PrepareStartupShrink(), MBError::SUCCESS);
+    ASSERT_EQ(rc.StartupShrink(), MBError::SUCCESS);
     EXPECT_EQ(header->rebuild_state, REBUILD_STATE_COPY);
     EXPECT_GE(header->rebuild_index_alloc_start, header->m_index_offset);
     EXPECT_GE(header->rebuild_data_alloc_start, header->m_data_offset);
@@ -354,7 +354,7 @@ TEST_F(JemallocRebuildMetadataTest, PrepareStartupShrinkCapturesCurrentJemallocT
     rebuild_db.Close();
 }
 
-TEST_F(JemallocRebuildMetadataTest, PrepareStartupShrinkRejectsNonJemallocWriterGracefully)
+TEST_F(JemallocRebuildMetadataTest, StartupShrinkRejectsNonJemallocWriterGracefully)
 {
     CreateJemallocRebuildTestDir();
     DB db(kJemallocRebuildTestPath, CONSTS::WriterOptions());
@@ -365,7 +365,7 @@ TEST_F(JemallocRebuildMetadataTest, PrepareStartupShrinkRejectsNonJemallocWriter
     header->ResetRebuildMetadata(REBUILD_STATE_PREP);
 
     ResourceCollection rc(db);
-    EXPECT_EQ(rc.PrepareStartupShrink(), MBError::NOT_ALLOWED);
+    EXPECT_EQ(rc.StartupShrink(), MBError::NOT_ALLOWED);
     EXPECT_EQ(header->rebuild_state, REBUILD_STATE_PREP);
     EXPECT_EQ(header->rebuild_index_alloc_start, 0u);
     EXPECT_EQ(header->rebuild_data_alloc_start, 0u);
