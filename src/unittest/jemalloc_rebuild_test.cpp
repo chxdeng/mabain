@@ -334,22 +334,33 @@ TEST_F(JemallocRebuildMetadataTest, WarmRestartWithAsyncWriterIsRejectedAndKeeps
     ASSERT_EQ(initial_db.Add(key, value), MBError::SUCCESS);
     initial_db.Close();
 
-    MBConfig reject_cfg = MakeJemallocRebuildConfig(
-        CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC | CONSTS::ASYNC_WRITER_MODE, true);
-    DB rejected_db(reject_cfg);
-    EXPECT_FALSE(rejected_db.is_open());
-    EXPECT_EQ(rejected_db.Status(), MBError::NOT_ALLOWED);
+    {
+        MBConfig reject_cfg = MakeJemallocRebuildConfig(
+            CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC | CONSTS::ASYNC_WRITER_MODE, true);
+        DB rejected_db(reject_cfg);
+        EXPECT_FALSE(rejected_db.is_open());
+        EXPECT_EQ(rejected_db.Status(), MBError::NOT_ALLOWED);
+    }
+
+    ResourcePool::getInstance().RemoveAll();
 
     MBConfig reader_cfg = MakeJemallocRebuildConfig(CONSTS::ACCESS_MODE_READER, false);
     DB reader_db(reader_cfg);
     ASSERT_TRUE(reader_db.is_open());
     ExpectFindValue(reader_db, key, value);
+    reader_db.Close();
 
-    IndexHeader* header = reader_db.GetDictPtr()->GetHeaderPtr();
+    char hdr_page[RollableFile::page_size];
+    std::ifstream in(std::string(kJemallocRebuildTestPath) + "/_mabain_h",
+        std::ios::in | std::ios::binary);
+    ASSERT_TRUE(in.is_open());
+    in.read(hdr_page, sizeof(hdr_page));
+    ASSERT_EQ(in.gcount(), static_cast<std::streamsize>(sizeof(hdr_page)));
+
+    const IndexHeader* header = reinterpret_cast<const IndexHeader*>(hdr_page);
     ASSERT_NE(header, nullptr);
     EXPECT_EQ(header->rebuild_state, REBUILD_STATE_NORMAL);
     EXPECT_FALSE(header->RebuildInProgress());
-    reader_db.Close();
 }
 
 TEST_F(JemallocRebuildMetadataTest, WarmRestartWithoutKeepDbResetsExistingJemallocData)

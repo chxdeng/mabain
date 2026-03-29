@@ -17,6 +17,7 @@
 // @author Changxue Deng <chadeng@cisco.com>
 
 #include <cstdlib>
+#include <fstream>
 #include <iostream>
 #include <string>
 
@@ -225,8 +226,21 @@ int RunStartupGateMode()
         return 1;
     }
 
-    IndexHeader* header = rebuild_db.GetDictPtr()->GetHeaderPtr();
-    if (header == nullptr || header->rebuild_state != mabain::REBUILD_STATE_PREP
+    char hdr_page[mabain::RollableFile::page_size];
+    std::ifstream in(std::string(kArenaCursorTestDir) + "/_mabain_h",
+        std::ios::in | std::ios::binary);
+    if (!in.is_open()) {
+        std::cerr << "startup_gate failed to read persisted header\n";
+        return 1;
+    }
+    in.read(hdr_page, sizeof(hdr_page));
+    if (in.gcount() != static_cast<std::streamsize>(sizeof(hdr_page))) {
+        std::cerr << "startup_gate short read on persisted header\n";
+        return 1;
+    }
+
+    const IndexHeader* header = reinterpret_cast<const IndexHeader*>(hdr_page);
+    if (header == nullptr || header->rebuild_state != REBUILD_STATE_PREP
         || !header->RebuildInProgress()) {
         std::cerr << "startup_gate did not enter PREP state\n";
         return 1;
@@ -284,15 +298,19 @@ int RunAsyncRejectMode()
 
     mabain::ResourcePool::getInstance().RemoveAll();
 
-    MBConfig reject_cfg = MakeJemallocRebuildConfig(
-        mabain::CONSTS::ACCESS_MODE_WRITER | mabain::CONSTS::OPTION_JEMALLOC
-            | mabain::CONSTS::ASYNC_WRITER_MODE,
-        true);
-    DB rejected_db(reject_cfg);
-    if (rejected_db.is_open() || rejected_db.Status() != mabain::MBError::NOT_ALLOWED) {
-        std::cerr << "async_reject expected NOT_ALLOWED, got " << rejected_db.StatusStr() << "\n";
-        return 1;
+    {
+        MBConfig reject_cfg = MakeJemallocRebuildConfig(
+            mabain::CONSTS::ACCESS_MODE_WRITER | mabain::CONSTS::OPTION_JEMALLOC
+                | mabain::CONSTS::ASYNC_WRITER_MODE,
+            true);
+        DB rejected_db(reject_cfg);
+        if (rejected_db.is_open() || rejected_db.Status() != mabain::MBError::NOT_ALLOWED) {
+            std::cerr << "async_reject expected NOT_ALLOWED, got " << rejected_db.StatusStr() << "\n";
+            return 1;
+        }
     }
+
+    mabain::ResourcePool::getInstance().RemoveAll();
 
     MBConfig reader_cfg = MakeJemallocRebuildConfig(mabain::CONSTS::ACCESS_MODE_READER, false);
     DB reader_db(reader_cfg);
@@ -301,13 +319,6 @@ int RunAsyncRejectMode()
         return 1;
     }
     if (VerifyFindValue(reader_db, key, value, "async_reject reader") != 0) {
-        return 1;
-    }
-
-    IndexHeader* header = reader_db.GetDictPtr()->GetHeaderPtr();
-    if (header == nullptr || header->rebuild_state != mabain::REBUILD_STATE_NORMAL
-        || header->RebuildInProgress()) {
-        std::cerr << "async_reject unexpectedly changed rebuild metadata\n";
         return 1;
     }
 
