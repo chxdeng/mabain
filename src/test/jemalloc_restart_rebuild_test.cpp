@@ -25,6 +25,7 @@
 #include "../drm_base.h"
 #include "../error.h"
 #include "../mabain_consts.h"
+#include "../mb_rc.h"
 #include "../resource_pool.h"
 #include "../rollable_file.h"
 #include "./jemalloc_rebuild_test_modes.h"
@@ -328,6 +329,63 @@ int RunAsyncRejectMode()
     return 0;
 }
 
+int RunShrinkOnlyMode()
+{
+    if (PrepareArenaCursorDir() != 0) {
+        std::cerr << "failed to prepare shrink_only test directory\n";
+        return 1;
+    }
+
+    mabain::ResourcePool::getInstance().RemoveAll();
+    const std::string key("delta");
+    const std::string value("value-delta");
+
+    {
+        MBConfig initial_cfg = MakeJemallocRebuildConfig(
+            mabain::CONSTS::ACCESS_MODE_WRITER | mabain::CONSTS::OPTION_JEMALLOC, false);
+        DB initial_db(initial_cfg);
+        if (!initial_db.is_open()) {
+            std::cerr << "initial shrink_only open failed: " << initial_db.StatusStr() << "\n";
+            return 1;
+        }
+        if (initial_db.Add(key, value) != mabain::MBError::SUCCESS) {
+            std::cerr << "initial shrink_only Add failed\n";
+            return 1;
+        }
+        initial_db.Close();
+    }
+
+    MBConfig rebuild_cfg = MakeJemallocRebuildConfig(
+        mabain::CONSTS::ACCESS_MODE_WRITER | mabain::CONSTS::OPTION_JEMALLOC, true);
+    DB rebuild_db(rebuild_cfg);
+    if (!rebuild_db.is_open()) {
+        std::cerr << "shrink_only reopen failed: " << rebuild_db.StatusStr() << "\n";
+        return 1;
+    }
+
+    mabain::ResourceCollection rc(rebuild_db);
+    if (rc.PrepareStartupShrink() != mabain::MBError::SUCCESS) {
+        std::cerr << "PrepareStartupShrink failed\n";
+        return 1;
+    }
+    if (VerifyFindValue(rebuild_db, key, value, "shrink_only writer") != 0) {
+        return 1;
+    }
+
+    IndexHeader* header = rebuild_db.GetDictPtr()->GetHeaderPtr();
+    if (header == nullptr || header->rebuild_state != REBUILD_STATE_COPY
+        || header->rebuild_index_alloc_end > header->rebuild_index_alloc_start
+        || header->rebuild_data_alloc_end > header->rebuild_data_alloc_start) {
+        std::cerr << "shrink_only metadata mismatch\n";
+        return 1;
+    }
+
+    rebuild_db.Close();
+    mabain::ResourcePool::getInstance().RemoveAll();
+    std::cout << "jemalloc_restart_rebuild_test: shrink_only passed\n";
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char* argv[])
@@ -349,6 +407,9 @@ int main(int argc, char* argv[])
     }
     if (mode == "async_reject") {
         return RunAsyncRejectMode();
+    }
+    if (mode == "shrink_only") {
+        return RunShrinkOnlyMode();
     }
 
     return RunScaffoldMode(mode);

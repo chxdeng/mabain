@@ -28,6 +28,7 @@
 #include "../db.h"
 #include "../dict.h"
 #include "../drm_base.h"
+#include "../mb_rc.h"
 #include "../resource_pool.h"
 #include "../test/jemalloc_rebuild_test_modes.h"
 #include "../version.h"
@@ -118,10 +119,10 @@ TEST(JemallocRebuildHarnessTest, ModeListContainsExpectedPhases)
     EXPECT_TRUE(IsJemallocRebuildTestModeSupported("arena_cursor"));
     EXPECT_TRUE(IsJemallocRebuildTestModeSupported("startup_gate"));
     EXPECT_TRUE(IsJemallocRebuildTestModeSupported("async_reject"));
-    EXPECT_TRUE(IsJemallocRebuildTestModeSupported("copy_only"));
-    EXPECT_TRUE(IsJemallocRebuildTestModeSupported("cutover_only"));
-    EXPECT_TRUE(IsJemallocRebuildTestModeSupported("recover_copy"));
-    EXPECT_TRUE(IsJemallocRebuildTestModeSupported("recover_cutover"));
+    EXPECT_TRUE(IsJemallocRebuildTestModeSupported("shrink_only"));
+    EXPECT_TRUE(IsJemallocRebuildTestModeSupported("evacuate_only"));
+    EXPECT_TRUE(IsJemallocRebuildTestModeSupported("recover_shrink"));
+    EXPECT_TRUE(IsJemallocRebuildTestModeSupported("recover_evacuate"));
     EXPECT_TRUE(IsJemallocRebuildTestModeSupported("full_cycle"));
     EXPECT_FALSE(IsJemallocRebuildTestModeSupported("unknown_mode"));
 }
@@ -319,6 +320,61 @@ TEST_F(JemallocRebuildMetadataTest, WarmRestartWithKeepDbEntersPrepStateAndPrese
     ExpectFindValue(reader_db, key, value);
     reader_db.Close();
     rebuild_db.Close();
+}
+
+TEST_F(JemallocRebuildMetadataTest, PrepareStartupShrinkCapturesCurrentJemallocTails)
+{
+    CreateJemallocRebuildTestDir();
+    const std::string key("delta");
+    const std::string value("value-delta");
+
+    MBConfig initial_cfg = MakeJemallocRebuildConfig(
+        CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, false);
+    DB initial_db(initial_cfg);
+    ASSERT_TRUE(initial_db.is_open());
+    ASSERT_EQ(initial_db.Add(key, value), MBError::SUCCESS);
+    initial_db.Close();
+
+    MBConfig rebuild_cfg = MakeJemallocRebuildConfig(
+        CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, true);
+    DB rebuild_db(rebuild_cfg);
+    ASSERT_TRUE(rebuild_db.is_open());
+
+    IndexHeader* header = rebuild_db.GetDictPtr()->GetHeaderPtr();
+    ASSERT_NE(header, nullptr);
+    ASSERT_EQ(header->rebuild_state, REBUILD_STATE_PREP);
+
+    ResourceCollection rc(rebuild_db);
+    ASSERT_EQ(rc.PrepareStartupShrink(), MBError::SUCCESS);
+    EXPECT_EQ(header->rebuild_state, REBUILD_STATE_COPY);
+    EXPECT_GE(header->rebuild_index_alloc_start, header->m_index_offset);
+    EXPECT_GE(header->rebuild_data_alloc_start, header->m_data_offset);
+    EXPECT_LE(header->rebuild_index_alloc_end, header->rebuild_index_alloc_start);
+    EXPECT_LE(header->rebuild_data_alloc_end, header->rebuild_data_alloc_start);
+    rebuild_db.Close();
+}
+
+TEST_F(JemallocRebuildMetadataTest, PrepareStartupShrinkRejectsNonJemallocWriterGracefully)
+{
+    CreateJemallocRebuildTestDir();
+    DB db(kJemallocRebuildTestPath, CONSTS::WriterOptions());
+    ASSERT_TRUE(db.is_open());
+
+    IndexHeader* header = db.GetDictPtr()->GetHeaderPtr();
+    ASSERT_NE(header, nullptr);
+    header->ResetRebuildMetadata(REBUILD_STATE_PREP);
+
+    ResourceCollection rc(db);
+    EXPECT_EQ(rc.PrepareStartupShrink(), MBError::NOT_ALLOWED);
+    EXPECT_EQ(header->rebuild_state, REBUILD_STATE_PREP);
+    EXPECT_EQ(header->rebuild_index_alloc_start, 0u);
+    EXPECT_EQ(header->rebuild_data_alloc_start, 0u);
+    EXPECT_EQ(header->rebuild_index_alloc_end, 0u);
+    EXPECT_EQ(header->rebuild_data_alloc_end, 0u);
+
+    MBData data;
+    EXPECT_EQ(db.Find("missing", data), MBError::NOT_EXIST);
+    db.Close();
 }
 
 TEST_F(JemallocRebuildMetadataTest, WarmRestartWithAsyncWriterIsRejectedAndKeepsExistingData)

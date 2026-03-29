@@ -43,6 +43,10 @@ public:
         int64_t max_dbsz, int64_t max_dbcnt,
         AsyncWriter* awr = NULL);
 
+    // Startup-only dense shrink preparation for jemalloc keep-db mode.
+    // Returns MBError and must leave the current root authoritative on failure.
+    int PrepareStartupShrink();
+
     // This function should be called when writer starts up.
     int ExceptionRecovery();
 

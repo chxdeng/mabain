@@ -162,6 +162,59 @@ void ResourceCollection::ReclaimResource(int64_t min_index_size,
     }
 }
 
+int ResourceCollection::PrepareStartupShrink()
+{
+    if (!db_ref.is_open())
+        return db_ref.Status();
+    if (!(db_ref.GetDBOptions() & CONSTS::ACCESS_MODE_WRITER))
+        return MBError::NOT_ALLOWED;
+    if (!(db_ref.GetDBOptions() & CONSTS::OPTION_JEMALLOC))
+        return MBError::NOT_ALLOWED;
+    if (header == NULL)
+        return MBError::NOT_INITIALIZED;
+    if (header->rebuild_state != REBUILD_STATE_PREP
+        && header->rebuild_state != REBUILD_STATE_COPY) {
+        Logger::Log(LOG_LEVEL_WARN,
+            "startup shrink requires PREP/COPY state, current state=%d",
+            header->rebuild_state);
+        return MBError::NOT_ALLOWED;
+    }
+
+    const size_t index_tail = dmm->GetJemallocAllocSize();
+    const size_t data_tail = dict->GetJemallocAllocSize();
+    if (index_tail < header->m_index_offset || data_tail < header->m_data_offset) {
+        Logger::Log(LOG_LEVEL_ERROR,
+            "startup shrink tail smaller than live offsets: index tail=%llu live=%llu data tail=%llu live=%llu",
+            static_cast<unsigned long long>(index_tail),
+            static_cast<unsigned long long>(header->m_index_offset),
+            static_cast<unsigned long long>(data_tail),
+            static_cast<unsigned long long>(header->m_data_offset));
+        return MBError::INVALID_SIZE;
+    }
+
+    header->ResetRebuildMetadata(REBUILD_STATE_COPY);
+    header->rebuild_index_alloc_start = index_tail;
+    header->rebuild_data_alloc_start = data_tail;
+    header->rebuild_index_alloc_end = index_tail;
+    header->rebuild_data_alloc_end = data_tail;
+
+    rc_type = RESOURCE_COLLECTION_TYPE_INDEX | RESOURCE_COLLECTION_TYPE_DATA;
+    Prepare(1, 1);
+    header->rc_root_offset.store(0, MEMORY_ORDER_WRITER);
+    ReorderBuffers();
+    Finish();
+
+    header->rebuild_index_alloc_end = header->m_index_offset;
+    header->rebuild_data_alloc_end = header->m_data_offset;
+    Logger::Log(LOG_LEVEL_INFO,
+        "startup shrink completed index end=%llu data end=%llu source tails index=%llu data=%llu",
+        static_cast<unsigned long long>(header->rebuild_index_alloc_end),
+        static_cast<unsigned long long>(header->rebuild_data_alloc_end),
+        static_cast<unsigned long long>(index_tail),
+        static_cast<unsigned long long>(data_tail));
+    return MBError::SUCCESS;
+}
+
 /////////////////////////////////////////////////////////
 ////////////////// Private Methods //////////////////////
 /////////////////////////////////////////////////////////
@@ -191,8 +244,10 @@ void ResourceCollection::Prepare(int64_t min_index_size, int64_t min_data_size)
         throw (int)MBError::RC_SKIPPED;
     }
 
-    index_free_lists->Empty();
-    data_free_lists->Empty();
+    if (index_free_lists != NULL)
+        index_free_lists->Empty();
+    if (data_free_lists != NULL)
+        data_free_lists->Empty();
 
     rc_loop_counter = 0;
     index_reorder_cnt = 0;
@@ -271,8 +326,10 @@ void ResourceCollection::Finish()
     }
 
     if (async_writer_ptr != NULL) {
-        index_free_lists->Empty();
-        data_free_lists->Empty();
+        if (index_free_lists != NULL)
+            index_free_lists->Empty();
+        if (data_free_lists != NULL)
+            data_free_lists->Empty();
         ProcessRCTree();
     }
 

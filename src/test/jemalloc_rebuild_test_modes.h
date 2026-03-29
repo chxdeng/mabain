@@ -30,10 +30,10 @@ constexpr std::array<const char*, 9> kJemallocRebuildTestModes = {
     "arena_cursor",
     "startup_gate",
     "async_reject",
-    "copy_only",
-    "cutover_only",
-    "recover_copy",
-    "recover_cutover",
+    "shrink_only",
+    "evacuate_only",
+    "recover_shrink",
+    "recover_evacuate",
     "full_cycle",
 };
 

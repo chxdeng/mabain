@@ -20,7 +20,7 @@
 
 namespace mabain {
 
-// This class should obly be used in the non-jemalloc mode with free lists.
+// Traverse base supports both free-list and jemalloc-backed layouts.
 DBTraverseBase::DBTraverseBase(const DB& db)
     : db_ref(db)
     , rw_buffer(NULL)
@@ -41,12 +41,13 @@ DBTraverseBase::DBTraverseBase(const DB& db)
         throw (int)MBError::NOT_INITIALIZED;
 
     index_free_lists = dmm->GetFreeList();
-    if (index_free_lists == NULL)
-        throw (int)MBError::NOT_INITIALIZED;
-
     data_free_lists = dict->GetFreeList();
-    if (data_free_lists == NULL)
-        throw (int)MBError::NOT_INITIALIZED;
+    if (!(db.GetDBOptions() & CONSTS::OPTION_JEMALLOC)) {
+        if (index_free_lists == NULL)
+            throw (int)MBError::NOT_INITIALIZED;
+        if (data_free_lists == NULL)
+            throw (int)MBError::NOT_INITIALIZED;
+    }
 
     lfree = dict->GetLockFreePtr();
     if (lfree == NULL)
@@ -86,18 +87,38 @@ void DBTraverseBase::TraverseDB(int arg)
 
 void DBTraverseBase::GetAlignmentSize(DBTraverseNode& dbt_node) const
 {
-    if (dbt_node.buffer_type & BUFFER_TYPE_EDGE_STR)
-        dbt_node.edgestr_size = index_free_lists->GetAlignmentSize(dbt_node.edgestr_size);
+    if (db_ref.GetDBOptions() & CONSTS::OPTION_JEMALLOC) {
+        if (dbt_node.buffer_type & BUFFER_TYPE_EDGE_STR) {
+            dbt_node.edgestr_size = static_cast<int>(
+                (static_cast<size_t>(dbt_node.edgestr_size) + JEMALLOC_ALIGNMENT - 1)
+                & ~(static_cast<size_t>(JEMALLOC_ALIGNMENT) - 1));
+        }
 
-    if (dbt_node.buffer_type & BUFFER_TYPE_NODE)
-        dbt_node.node_size = index_free_lists->GetAlignmentSize(dbt_node.node_size);
+        if (dbt_node.buffer_type & BUFFER_TYPE_NODE) {
+            dbt_node.node_size = static_cast<int>(
+                (static_cast<size_t>(dbt_node.node_size) + JEMALLOC_ALIGNMENT - 1)
+                & ~(static_cast<size_t>(JEMALLOC_ALIGNMENT) - 1));
+        }
+    } else {
+        if (dbt_node.buffer_type & BUFFER_TYPE_EDGE_STR)
+            dbt_node.edgestr_size = index_free_lists->GetAlignmentSize(dbt_node.edgestr_size);
+
+        if (dbt_node.buffer_type & BUFFER_TYPE_NODE)
+            dbt_node.node_size = index_free_lists->GetAlignmentSize(dbt_node.node_size);
+    }
 
     if (dbt_node.buffer_type & BUFFER_TYPE_DATA) {
         uint16_t data_size[2];
         if (dict->ReadData((uint8_t*)&data_size[0], DATA_HDR_BYTE, dbt_node.data_offset)
             != DATA_HDR_BYTE)
             throw (int)MBError::READ_ERROR;
-        dbt_node.data_size = data_free_lists->GetAlignmentSize(data_size[0] + DATA_HDR_BYTE);
+        if (db_ref.GetDBOptions() & CONSTS::OPTION_JEMALLOC) {
+            dbt_node.data_size = static_cast<int>(
+                (static_cast<size_t>(data_size[0] + DATA_HDR_BYTE) + JEMALLOC_ALIGNMENT - 1)
+                & ~(static_cast<size_t>(JEMALLOC_ALIGNMENT) - 1));
+        } else {
+            dbt_node.data_size = data_free_lists->GetAlignmentSize(data_size[0] + DATA_HDR_BYTE);
+        }
     }
 }
 

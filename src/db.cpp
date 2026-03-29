@@ -17,6 +17,7 @@
 // @author Changxue Deng <chadeng@cisco.com>
 
 #include <iostream>
+#include <new>
 #include <sys/syscall.h>
 #include <unistd.h>
 
@@ -359,13 +360,49 @@ int DB::PrepareStartupRebuild(const MBConfig& config, bool init_header)
     if (header == NULL)
         return MBError::NOT_INITIALIZED;
 
-    if (!header->RebuildInProgress()) {
-        header->ResetRebuildMetadata(REBUILD_STATE_PREP);
-        Logger::Log(LOG_LEVEL_INFO, "jemalloc startup rebuild entering PREP for %s",
-            mb_dir.c_str());
-    } else {
-        Logger::Log(LOG_LEVEL_INFO, "jemalloc startup rebuild resuming state %u for %s",
-            header->rebuild_state, mb_dir.c_str());
+    const int old_state = header->rebuild_state;
+    const size_t old_root = header->rebuild_root_offset;
+    const size_t old_index_start = header->rebuild_index_alloc_start;
+    const size_t old_data_start = header->rebuild_data_alloc_start;
+    const int old_cutover_index = header->rebuild_cutover_index;
+    const size_t old_index_end = header->rebuild_index_alloc_end;
+    const size_t old_data_end = header->rebuild_data_alloc_end;
+
+    auto restore_rebuild_state = [&]() {
+        header->rebuild_state = old_state;
+        header->rebuild_root_offset = old_root;
+        header->rebuild_index_alloc_start = old_index_start;
+        header->rebuild_data_alloc_start = old_data_start;
+        header->rebuild_cutover_index = old_cutover_index;
+        header->rebuild_index_alloc_end = old_index_end;
+        header->rebuild_data_alloc_end = old_data_end;
+    };
+
+    try {
+        if (!header->RebuildInProgress()) {
+            header->ResetRebuildMetadata(REBUILD_STATE_PREP);
+            Logger::Log(LOG_LEVEL_INFO, "jemalloc startup rebuild entering PREP for %s",
+                mb_dir.c_str());
+        } else {
+            Logger::Log(LOG_LEVEL_INFO, "jemalloc startup rebuild resuming state %u for %s",
+                header->rebuild_state, mb_dir.c_str());
+        }
+
+        ResourceCollection rc(*this);
+        int rval = rc.PrepareStartupShrink();
+        if (rval != MBError::SUCCESS) {
+            restore_rebuild_state();
+            return rval;
+        }
+    } catch (int err) {
+        restore_rebuild_state();
+        return err;
+    } catch (const std::bad_alloc&) {
+        restore_rebuild_state();
+        return MBError::NO_MEMORY;
+    } catch (...) {
+        restore_rebuild_state();
+        return MBError::UNKNOWN_ERROR;
     }
 
     return MBError::SUCCESS;
