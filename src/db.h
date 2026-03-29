@@ -224,6 +224,8 @@ private:
     void ReInit(MBConfig& config);
     void PreCheckDB(const MBConfig& config, bool& init_header, bool& update_header);
     void PostDBUpdate(const MBConfig& config, bool init_header, bool update_header);
+    bool StartupRebuildRequested(const MBConfig& config, bool init_header) const;
+    int PrepareStartupRebuild(const MBConfig& config, bool init_header);
     static int ValidateConfig(MBConfig& config);
 
     // DB directory

@@ -273,6 +273,14 @@ void DB::PostDBUpdate(const MBConfig& config, bool init_header, bool update_head
         return;
     }
 
+    if (config.options & CONSTS::ACCESS_MODE_WRITER) {
+        int rval = PrepareStartupRebuild(config, init_header);
+        if (rval != MBError::SUCCESS) {
+            status = rval;
+            return;
+        }
+    }
+
     lock.Init(dict->GetShmLockPtr());
     UpdateNumHandlers(config.options, 1);
 
@@ -299,8 +307,7 @@ void DB::PostDBUpdate(const MBConfig& config, bool init_header, bool update_head
         if (config.options & CONSTS::OPTION_JEMALLOC) {
             if (!init_header) {
                 if (config.jemalloc_keep_db) {
-                    // Keep existing DB for warm restart when explicitly configured
-                    Logger::Log(LOG_LEVEL_DEBUG, "jemalloc mode: keeping existing db for warm restart");
+                    Logger::Log(LOG_LEVEL_DEBUG, "jemalloc mode: preserving existing db for startup rebuild");
                 } else {
                     // Default behavior: reset db in jemalloc mode if header already exists
                     Logger::Log(LOG_LEVEL_DEBUG, "reset db in jemalloc mode");
@@ -329,6 +336,41 @@ void DB::PostDBUpdate(const MBConfig& config, bool init_header, bool update_head
     }
 }
 
+bool DB::StartupRebuildRequested(const MBConfig& config, bool init_header) const
+{
+    return (config.options & CONSTS::ACCESS_MODE_WRITER)
+        && (config.options & CONSTS::OPTION_JEMALLOC)
+        && !init_header
+        && config.jemalloc_keep_db;
+}
+
+int DB::PrepareStartupRebuild(const MBConfig& config, bool init_header)
+{
+    if (!StartupRebuildRequested(config, init_header))
+        return MBError::SUCCESS;
+
+    if (config.options & CONSTS::ASYNC_WRITER_MODE) {
+        Logger::Log(LOG_LEVEL_ERROR,
+            "jemalloc startup rebuild does not support async writer mode");
+        return MBError::NOT_ALLOWED;
+    }
+
+    IndexHeader* header = dict->GetHeaderPtr();
+    if (header == NULL)
+        return MBError::NOT_INITIALIZED;
+
+    if (!header->RebuildInProgress()) {
+        header->ResetRebuildMetadata(REBUILD_STATE_PREP);
+        Logger::Log(LOG_LEVEL_INFO, "jemalloc startup rebuild entering PREP for %s",
+            mb_dir.c_str());
+    } else {
+        Logger::Log(LOG_LEVEL_INFO, "jemalloc startup rebuild resuming state %u for %s",
+            header->rebuild_state, mb_dir.c_str());
+    }
+
+    return MBError::SUCCESS;
+}
+
 void DB::ReInit(MBConfig& config)
 {
     std::cout << "failed to open db with error: " << MBError::get_error_str(status) << "\n";
@@ -352,7 +394,8 @@ void DB::InitDB(MBConfig& config)
 
     int fd = acquire_file_lock_wait_n(lock_file, 5000);
     InitDBEx(config);
-    if ((config.options & CONSTS::ACCESS_MODE_WRITER) && !is_open() && status != MBError::WRITER_EXIST) {
+    if ((config.options & CONSTS::ACCESS_MODE_WRITER) && !is_open()
+        && status != MBError::WRITER_EXIST && status != MBError::NOT_ALLOWED) {
         ReInit(config);
     }
     release_file_lock(fd);
