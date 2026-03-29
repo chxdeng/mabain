@@ -109,6 +109,9 @@ void RollableFile::InitShmSlidingAddr(std::atomic<size_t>* shm_sliding_addr)
 
 void RollableFile::Close()
 {
+    if (mode & CONSTS::OPTION_JEMALLOC) {
+        DestroyJemallocArena(false);
+    }
     if (sliding_addr != NULL) {
         munmap(sliding_addr, sliding_size);
         sliding_addr = NULL;
@@ -163,6 +166,12 @@ int RollableFile::OpenAndMapBlockFile(size_t block_order, bool create_file)
     if (map_file) {
         mem_used += block_size;
         if (init_jem) {
+            if (files[0]->mm_meta == nullptr) {
+                rval = files[0]->InitMemoryManager();
+                if (rval != MBError::SUCCESS) {
+                    return rval;
+                }
+            }
             rval = ConfigureJemalloc(files[0]->mm_meta);
         }
     } else if ((mode & CONSTS::MEMORY_ONLY_MODE) || (mode & CONSTS::OPTION_JEMALLOC)) {
@@ -502,6 +511,45 @@ void* RollableFile::Malloc(size_t size, size_t& offset)
     return ptr;
 }
 
+size_t RollableFile::GetJemallocAllocSize() const
+{
+    if (!(mode & CONSTS::OPTION_JEMALLOC) || files.empty() ||
+        files[0] == nullptr || files[0]->mm_meta == nullptr) {
+        return 0;
+    }
+    return files[0]->mm_meta->alloc_size;
+}
+
+// Reseed the current jemalloc arena to continue allocating from a specific
+// shared-memory tail offset. This helper is intended for a freshly configured
+// or reset arena before new allocations are issued.
+int RollableFile::ReseedJemalloc(size_t alloc_size)
+{
+    if (!(mode & CONSTS::OPTION_JEMALLOC)) {
+        return MBError::INVALID_ARG;
+    }
+
+    int rval = CheckAndOpenFile(0, true);
+    if (rval != MBError::SUCCESS) {
+        return rval;
+    }
+    if (!files[0]->IsMapped() || files[0]->mm_meta == nullptr) {
+        return MBError::MMAP_FAILED;
+    }
+
+    size_t block_order = alloc_size / block_size;
+    rval = CheckAndOpenFile(block_order, true);
+    if (rval != MBError::SUCCESS) {
+        return rval;
+    }
+    if (files[block_order] == nullptr || !files[block_order]->IsMapped()) {
+        return MBError::MMAP_FAILED;
+    }
+
+    files[0]->mm_meta->alloc_size = alloc_size;
+    return MBError::SUCCESS;
+}
+
 // offset is the total offset. It is used to find the block order and relative offset within the block.
 size_t RollableFile::MemWrite(const void* src, size_t size, size_t offset)
 {
@@ -581,28 +629,41 @@ void RollableFile::Purge() const
 // Reset jemalloc
 int RollableFile::ResetJemalloc()
 {
+    return DestroyJemallocArena(true);
+}
+
+int RollableFile::DestroyJemallocArena(bool reinitialize)
+{
     if (!(mode & CONSTS::OPTION_JEMALLOC)) {
         return MBError::INVALID_ARG;
     }
-    if (files[0] == nullptr) {
-        Logger::Log(LOG_LEVEL_DEBUG, "jemalloc not initialized, no need to reset");
+    if (files.empty() || files[0] == nullptr || files[0]->mm_meta == nullptr) {
+        Logger::Log(LOG_LEVEL_DEBUG, "jemalloc not initialized, no need to %s",
+            reinitialize ? "reset" : "close");
         return MBError::SUCCESS;
     }
+
     unsigned arena_index = files[0]->mm_meta->arena_index;
-    // Remove from global arena manager map before destruction
-    arena_manager_map.erase(arena_index);
-    // Destroy the arena
-    std::string arena_destroy = "arena." + std::to_string(arena_index) + ".destroy";
-    int rc = mallctl(arena_destroy.c_str(), nullptr, nullptr, nullptr, 0);
-    if (rc != 0) {
-        Logger::Log(LOG_LEVEL_ERROR, "failed to destroy jemalloc arena %u, error code %d",
-            arena_index, rc);
+    if (arena_index != 0) {
+        arena_manager_map.erase(arena_index);
+        std::string arena_destroy = "arena." + std::to_string(arena_index) + ".destroy";
+        int rc = mallctl(arena_destroy.c_str(), nullptr, nullptr, nullptr, 0);
+        if (rc != 0) {
+            Logger::Log(LOG_LEVEL_ERROR, "failed to destroy jemalloc arena %u, error code %d",
+                arena_index, rc);
+            if (!reinitialize) {
+                return MBError::JEMALLOC_ERROR;
+            }
+        }
+        files[0]->mm_meta->arena_index = 0;
     }
-    // Reset the memory manager metadata
-    if (files[0]->mm_meta != nullptr) {
-        delete files[0]->mm_meta;
-        files[0]->mm_meta = nullptr;
+
+    if (!reinitialize) {
+        return MBError::SUCCESS;
     }
+
+    delete files[0]->mm_meta;
+    files[0]->mm_meta = nullptr;
     files[0]->InitMemoryManager();
     return ConfigureJemalloc(files[0]->mm_meta);
 }

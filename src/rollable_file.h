@@ -44,6 +44,8 @@ public:
     int ConfigureJemalloc(MemoryManagerMetadata* mm_meta);
     void* PreAlloc(size_t init_offset);
     void* Malloc(size_t size, size_t& offset);
+    size_t GetJemallocAllocSize() const;
+    int ReseedJemalloc(size_t alloc_size);
     size_t MemWrite(const void* src, size_t size, size_t offset);
     size_t MemRead(void* dst, size_t size, size_t offset);
     void Free(void* ptr) const;
@@ -97,6 +99,7 @@ private:
         size_t size_a, size_t size_b, bool committed, unsigned arena_ind);
     static bool custom_extent_merge(extent_hooks_t* extent_hooks, void* addr_a, size_t size_a,
         void* addr_b, size_t size_b, bool committed, unsigned arena_ind);
+    int DestroyJemallocArena(bool reinitialize);
 
     std::string path;
     size_t block_size;

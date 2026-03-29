@@ -32,6 +32,8 @@ namespace {
 #define ROLLABLE_FILE_TEST_DIR "/var/tmp/mabain_test"
 #define FAKE_DATA "dsklckk sldk&&sdijds8990s9090230290399&&^^%%sdhsjdhsjdhsjxnmzn  lkvlsdlq;';'a;b; ;;slv; ;;;sdfl; lls;lf;sld;sld;sld;sll;skl;klk;gk;akl;s"
 #define ONE_MEGA 1024 * 1024ul
+constexpr size_t JEMALLOC_TEST_BLOCK_SIZE = 4 * ONE_MEGA;
+constexpr size_t JEMALLOC_TEST_MEMCAP = 4 * JEMALLOC_TEST_BLOCK_SIZE;
 
 class RollableFileTest : public ::testing::Test {
 public:
@@ -232,6 +234,68 @@ TEST_F(RollableFileTest, Flush_test)
     nbytes = rfile->RandomWrite((const void*)FAKE_DATA, nbytes, offset);
     EXPECT_EQ(nbytes, 101);
     rfile->Flush();
+}
+
+TEST_F(RollableFileTest, JemallocPreAllocSetsCursor_test)
+{
+    rfile = new RollableFile(std::string(ROLLABLE_FILE_TEST_DIR) + "/_mabain_jem_i",
+        JEMALLOC_TEST_BLOCK_SIZE, JEMALLOC_TEST_MEMCAP,
+        CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, 4);
+    ASSERT_NE(rfile, nullptr);
+
+    void* base_ptr = rfile->PreAlloc(4096);
+    ASSERT_NE(base_ptr, nullptr);
+    EXPECT_EQ(rfile->GetJemallocAllocSize(), 4096u);
+}
+
+TEST_F(RollableFileTest, JemallocReseedSetsNextAllocationFloor_test)
+{
+    rfile = new RollableFile(std::string(ROLLABLE_FILE_TEST_DIR) + "/_mabain_jem_i",
+        JEMALLOC_TEST_BLOCK_SIZE, JEMALLOC_TEST_MEMCAP,
+        CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, 4);
+    ASSERT_NE(rfile, nullptr);
+    ASSERT_NE(rfile->PreAlloc(128), nullptr);
+
+    ASSERT_EQ(rfile->ResetJemalloc(), MBError::SUCCESS);
+
+    const size_t reseed_offset = JEMALLOC_TEST_BLOCK_SIZE + 123;
+    ASSERT_EQ(rfile->ReseedJemalloc(reseed_offset), MBError::SUCCESS);
+    EXPECT_EQ(rfile->GetJemallocAllocSize(), reseed_offset);
+
+    size_t alloc_offset = 0;
+    void* ptr = rfile->Malloc(128, alloc_offset);
+    ASSERT_NE(ptr, nullptr);
+    EXPECT_GE(alloc_offset, reseed_offset);
+    EXPECT_GT(rfile->GetJemallocAllocSize(), reseed_offset);
+}
+
+TEST_F(RollableFileTest, JemallocResetAndReseedAreDeterministic_test)
+{
+    rfile = new RollableFile(std::string(ROLLABLE_FILE_TEST_DIR) + "/_mabain_jem_i",
+        JEMALLOC_TEST_BLOCK_SIZE, JEMALLOC_TEST_MEMCAP,
+        CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, 4);
+    ASSERT_NE(rfile, nullptr);
+    ASSERT_NE(rfile->PreAlloc(64), nullptr);
+
+    const size_t reseed_offset = JEMALLOC_TEST_BLOCK_SIZE + 257;
+    ASSERT_EQ(rfile->ResetJemalloc(), MBError::SUCCESS);
+    ASSERT_EQ(rfile->ReseedJemalloc(reseed_offset), MBError::SUCCESS);
+
+    size_t offset1 = 0;
+    void* ptr1 = rfile->Malloc(256, offset1);
+    ASSERT_NE(ptr1, nullptr);
+    size_t alloc_size1 = rfile->GetJemallocAllocSize();
+
+    ASSERT_EQ(rfile->ResetJemalloc(), MBError::SUCCESS);
+    ASSERT_EQ(rfile->ReseedJemalloc(reseed_offset), MBError::SUCCESS);
+
+    size_t offset2 = 0;
+    void* ptr2 = rfile->Malloc(256, offset2);
+    ASSERT_NE(ptr2, nullptr);
+    size_t alloc_size2 = rfile->GetJemallocAllocSize();
+
+    EXPECT_EQ(offset1, offset2);
+    EXPECT_EQ(alloc_size1, alloc_size2);
 }
 
 }
