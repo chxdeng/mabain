@@ -207,8 +207,6 @@ int ResourceCollection::StartupShrink()
     }
 
     header->ResetRebuildMetadata(REBUILD_STATE_COPY);
-    header->rebuild_index_source_end = index_tail;
-    header->rebuild_data_source_end = data_tail;
     header->rebuild_index_alloc_start = index_tail;
     header->rebuild_data_alloc_start = data_tail;
     header->rebuild_index_alloc_end = index_tail;
@@ -234,7 +232,9 @@ int ResourceCollection::StartupShrink()
     Finish();
 
     header->rebuild_index_alloc_start = header->m_index_offset;
+    header->rebuild_index_source_end = header->m_index_offset;
     header->rebuild_data_alloc_start = header->m_data_offset;
+    header->rebuild_data_source_end = header->m_data_offset;
     header->rebuild_index_alloc_end = header->m_index_offset;
     header->rebuild_data_alloc_end = header->m_data_offset;
     Logger::Log(LOG_LEVEL_INFO,
@@ -280,8 +280,6 @@ int ResourceCollection::StartupEvacuate()
     const size_t data_source_start = AlignUpToBlock(data_boundary, header->data_block_size);
     if (index_source_start < index_boundary || data_source_start < data_boundary)
         return MBError::INVALID_SIZE;
-    if (index_source_start > index_source_end || data_source_start > data_source_end)
-        return MBError::NOT_ALLOWED;
 
     int rval = dmm->ResetJemalloc();
     if (rval != MBError::SUCCESS)

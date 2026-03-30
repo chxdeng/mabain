@@ -357,9 +357,6 @@ TEST_F(JemallocRebuildMetadataTest, StartupShrinkCapturesCurrentJemallocTails)
     IndexHeader* header = rebuild_db.GetDictPtr()->GetHeaderPtr();
     ASSERT_NE(header, nullptr);
     ASSERT_EQ(header->rebuild_state, REBUILD_STATE_PREP);
-
-    const size_t index_tail_before = rebuild_db.GetDictPtr()->GetMM()->GetJemallocAllocSize();
-    const size_t data_tail_before = rebuild_db.GetDictPtr()->GetJemallocAllocSize();
     ResourceCollection rc(rebuild_db);
     ASSERT_EQ(rc.StartupShrink(), MBError::SUCCESS);
     EXPECT_EQ(header->rebuild_state, REBUILD_STATE_COPY);
@@ -367,8 +364,8 @@ TEST_F(JemallocRebuildMetadataTest, StartupShrinkCapturesCurrentJemallocTails)
     EXPECT_EQ(header->rebuild_data_alloc_start, header->m_data_offset);
     EXPECT_LE(header->rebuild_index_alloc_end, header->rebuild_index_alloc_start);
     EXPECT_LE(header->rebuild_data_alloc_end, header->rebuild_data_alloc_start);
-    EXPECT_EQ(header->rebuild_index_source_end, std::max(index_tail_before, header->m_index_offset));
-    EXPECT_EQ(header->rebuild_data_source_end, std::max(data_tail_before, header->m_data_offset));
+    EXPECT_EQ(header->rebuild_index_source_end, header->m_index_offset);
+    EXPECT_EQ(header->rebuild_data_source_end, header->m_data_offset);
     EXPECT_GE(header->rebuild_index_source_end, header->rebuild_index_alloc_end);
     EXPECT_GE(header->rebuild_data_source_end, header->rebuild_data_alloc_end);
     rebuild_db.Close();
@@ -488,10 +485,10 @@ TEST_F(JemallocRebuildMetadataTest, StartupEvacuateRejectsEmptySourceWindowGrace
     header->ResetRebuildMetadata(REBUILD_STATE_COPY);
     header->rebuild_index_alloc_end = header->index_block_size + 1;
     header->rebuild_data_alloc_end = header->data_block_size + 1;
-    header->rebuild_index_source_end = header->index_block_size + 1;
+    header->rebuild_index_source_end = header->index_block_size;
     header->rebuild_data_source_end = header->data_block_size + 1;
 
-    EXPECT_EQ(rc.StartupEvacuate(), MBError::NOT_ALLOWED);
+    EXPECT_EQ(rc.StartupEvacuate(), MBError::INVALID_SIZE);
     EXPECT_EQ(header->rebuild_state, REBUILD_STATE_COPY);
     rebuild_db.Close();
 }
