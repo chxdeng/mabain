@@ -363,6 +363,8 @@ int RunShrinkOnlyMode()
         return 1;
     }
 
+    const size_t index_tail_before = rebuild_db.GetDictPtr()->GetMM()->GetJemallocAllocSize();
+    const size_t data_tail_before = rebuild_db.GetDictPtr()->GetJemallocAllocSize();
     mabain::ResourceCollection rc(rebuild_db);
     if (rc.StartupShrink() != mabain::MBError::SUCCESS) {
         std::cerr << "StartupShrink failed\n";
@@ -375,7 +377,9 @@ int RunShrinkOnlyMode()
     IndexHeader* header = rebuild_db.GetDictPtr()->GetHeaderPtr();
     if (header == nullptr || header->rebuild_state != REBUILD_STATE_COPY
         || header->rebuild_index_alloc_end > header->rebuild_index_alloc_start
-        || header->rebuild_data_alloc_end > header->rebuild_data_alloc_start) {
+        || header->rebuild_data_alloc_end > header->rebuild_data_alloc_start
+        || header->rebuild_index_source_end != std::max(index_tail_before, header->m_index_offset)
+        || header->rebuild_data_source_end != std::max(data_tail_before, header->m_data_offset)) {
         std::cerr << "shrink_only metadata mismatch\n";
         return 1;
     }
@@ -507,6 +511,8 @@ int RunRecoverEvacuateMode()
     const size_t data_source_start = header->rebuild_data_alloc_start;
     const size_t index_boundary = header->rebuild_index_alloc_end;
     const size_t data_boundary = header->rebuild_data_alloc_end;
+    const size_t index_source_end = header->rebuild_index_source_end;
+    const size_t data_source_end = header->rebuild_data_source_end;
 
     if (rc.StartupEvacuate() != mabain::MBError::SUCCESS) {
         std::cerr << "recover_evacuate second handoff failed\n";
@@ -517,6 +523,8 @@ int RunRecoverEvacuateMode()
         || header->rebuild_data_alloc_start != data_source_start
         || header->rebuild_index_alloc_end != index_boundary
         || header->rebuild_data_alloc_end != data_boundary
+        || header->rebuild_index_source_end != index_source_end
+        || header->rebuild_data_source_end != data_source_end
         || rebuild_db.GetDictPtr()->GetMM()->GetJemallocAllocSize() != index_boundary
         || rebuild_db.GetDictPtr()->GetJemallocAllocSize() != data_boundary) {
         std::cerr << "recover_evacuate metadata mismatch\n";

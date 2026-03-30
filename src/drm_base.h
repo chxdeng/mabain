@@ -165,6 +165,8 @@ typedef struct _IndexHeader {
     int rebuild_cutover_index;
     size_t rebuild_index_alloc_end;
     size_t rebuild_data_alloc_end;
+    size_t rebuild_index_source_end;
+    size_t rebuild_data_source_end;
 
     // multi-process async queue
     int async_queue_size;
@@ -189,6 +191,8 @@ typedef struct _IndexHeader {
         rebuild_cutover_index = 0;
         rebuild_index_alloc_end = 0;
         rebuild_data_alloc_end = 0;
+        rebuild_index_source_end = 0;
+        rebuild_data_source_end = 0;
     }
 
     void ClearRebuildMetadata()

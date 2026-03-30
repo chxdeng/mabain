@@ -143,6 +143,8 @@ TEST(JemallocRebuildHeaderHelperTest, ResetRebuildMetadataClearsOffsetsAndKeepsR
     header.rebuild_cutover_index = 11;
     header.rebuild_index_alloc_end = 404;
     header.rebuild_data_alloc_end = 505;
+    header.rebuild_index_source_end = 606;
+    header.rebuild_data_source_end = 707;
 
     header.ResetRebuildMetadata(REBUILD_STATE_CUTOVER);
 
@@ -153,6 +155,8 @@ TEST(JemallocRebuildHeaderHelperTest, ResetRebuildMetadataClearsOffsetsAndKeepsR
     EXPECT_EQ(header.rebuild_cutover_index, 0);
     EXPECT_EQ(header.rebuild_index_alloc_end, 0u);
     EXPECT_EQ(header.rebuild_data_alloc_end, 0u);
+    EXPECT_EQ(header.rebuild_index_source_end, 0u);
+    EXPECT_EQ(header.rebuild_data_source_end, 0u);
     EXPECT_TRUE(header.RebuildInProgress());
 }
 
@@ -186,6 +190,8 @@ TEST_F(JemallocRebuildMetadataTest, NewDbInitializesRebuildMetadataToZero)
     EXPECT_EQ(header->rebuild_cutover_index, 0);
     EXPECT_EQ(header->rebuild_index_alloc_end, 0u);
     EXPECT_EQ(header->rebuild_data_alloc_end, 0u);
+    EXPECT_EQ(header->rebuild_index_source_end, 0u);
+    EXPECT_EQ(header->rebuild_data_source_end, 0u);
     db.Close();
 }
 
@@ -205,6 +211,8 @@ TEST_F(JemallocRebuildMetadataTest, PrintHeaderIncludesRebuildMetadata)
     header->rebuild_cutover_index = 77;
     header->rebuild_index_alloc_end = 9876;
     header->rebuild_data_alloc_end = 8765;
+    header->rebuild_index_source_end = 11111;
+    header->rebuild_data_source_end = 22222;
 
     std::ostringstream out;
     db.PrintHeader(out);
@@ -216,6 +224,8 @@ TEST_F(JemallocRebuildMetadataTest, PrintHeaderIncludesRebuildMetadata)
     EXPECT_NE(header_text.find("rebuild cutover index: 77"), std::string::npos);
     EXPECT_NE(header_text.find("rebuild index alloc end: 9876"), std::string::npos);
     EXPECT_NE(header_text.find("rebuild data alloc end: 8765"), std::string::npos);
+    EXPECT_NE(header_text.find("rebuild index source end: 11111"), std::string::npos);
+    EXPECT_NE(header_text.find("rebuild data source end: 22222"), std::string::npos);
     db.Close();
 }
 
@@ -244,6 +254,8 @@ TEST_F(JemallocRebuildMetadataTest, PersistedHeaderKeepsRebuildMetadata)
         header->rebuild_cutover_index = 12;
         header->rebuild_index_alloc_end = 2001;
         header->rebuild_data_alloc_end = 2002;
+        header->rebuild_index_source_end = 3001;
+        header->rebuild_data_source_end = 3002;
         writer_db.Close();
     }
 
@@ -262,6 +274,8 @@ TEST_F(JemallocRebuildMetadataTest, PersistedHeaderKeepsRebuildMetadata)
     EXPECT_EQ(persisted->rebuild_cutover_index, 12);
     EXPECT_EQ(persisted->rebuild_index_alloc_end, 2001u);
     EXPECT_EQ(persisted->rebuild_data_alloc_end, 2002u);
+    EXPECT_EQ(persisted->rebuild_index_source_end, 3001u);
+    EXPECT_EQ(persisted->rebuild_data_source_end, 3002u);
     EXPECT_TRUE(persisted->RebuildInProgress());
 }
 
@@ -344,13 +358,19 @@ TEST_F(JemallocRebuildMetadataTest, StartupShrinkCapturesCurrentJemallocTails)
     ASSERT_NE(header, nullptr);
     ASSERT_EQ(header->rebuild_state, REBUILD_STATE_PREP);
 
+    const size_t index_tail_before = rebuild_db.GetDictPtr()->GetMM()->GetJemallocAllocSize();
+    const size_t data_tail_before = rebuild_db.GetDictPtr()->GetJemallocAllocSize();
     ResourceCollection rc(rebuild_db);
     ASSERT_EQ(rc.StartupShrink(), MBError::SUCCESS);
     EXPECT_EQ(header->rebuild_state, REBUILD_STATE_COPY);
-    EXPECT_GE(header->rebuild_index_alloc_start, header->m_index_offset);
-    EXPECT_GE(header->rebuild_data_alloc_start, header->m_data_offset);
+    EXPECT_EQ(header->rebuild_index_alloc_start, header->m_index_offset);
+    EXPECT_EQ(header->rebuild_data_alloc_start, header->m_data_offset);
     EXPECT_LE(header->rebuild_index_alloc_end, header->rebuild_index_alloc_start);
     EXPECT_LE(header->rebuild_data_alloc_end, header->rebuild_data_alloc_start);
+    EXPECT_EQ(header->rebuild_index_source_end, std::max(index_tail_before, header->m_index_offset));
+    EXPECT_EQ(header->rebuild_data_source_end, std::max(data_tail_before, header->m_data_offset));
+    EXPECT_GE(header->rebuild_index_source_end, header->rebuild_index_alloc_end);
+    EXPECT_GE(header->rebuild_data_source_end, header->rebuild_data_alloc_end);
     rebuild_db.Close();
 }
 
@@ -443,6 +463,36 @@ TEST_F(JemallocRebuildMetadataTest, StartupEvacuateIsIdempotentInCutoverState)
     EXPECT_EQ(rebuild_db.GetDictPtr()->GetMM()->GetJemallocAllocSize(), index_boundary);
     EXPECT_EQ(rebuild_db.GetDictPtr()->GetJemallocAllocSize(), data_boundary);
     ExpectFindValue(rebuild_db, key, value);
+    rebuild_db.Close();
+}
+
+TEST_F(JemallocRebuildMetadataTest, StartupEvacuateRejectsEmptySourceWindowGracefully)
+{
+    CreateJemallocRebuildTestDir();
+    MBConfig rebuild_cfg = MakeJemallocRebuildConfig(
+        CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, true);
+    DB rebuild_db(rebuild_cfg);
+    ASSERT_TRUE(rebuild_db.is_open());
+
+    IndexHeader* header = rebuild_db.GetDictPtr()->GetHeaderPtr();
+    ASSERT_NE(header, nullptr);
+    header->ResetRebuildMetadata(REBUILD_STATE_COPY);
+    header->rebuild_index_alloc_end = header->index_block_size;
+    header->rebuild_data_alloc_end = header->data_block_size;
+    header->rebuild_index_source_end = header->index_block_size;
+    header->rebuild_data_source_end = header->data_block_size;
+
+    ResourceCollection rc(rebuild_db);
+    EXPECT_EQ(rc.StartupEvacuate(), MBError::SUCCESS);
+
+    header->ResetRebuildMetadata(REBUILD_STATE_COPY);
+    header->rebuild_index_alloc_end = header->index_block_size + 1;
+    header->rebuild_data_alloc_end = header->data_block_size + 1;
+    header->rebuild_index_source_end = header->index_block_size + 1;
+    header->rebuild_data_source_end = header->data_block_size + 1;
+
+    EXPECT_EQ(rc.StartupEvacuate(), MBError::NOT_ALLOWED);
+    EXPECT_EQ(header->rebuild_state, REBUILD_STATE_COPY);
     rebuild_db.Close();
 }
 

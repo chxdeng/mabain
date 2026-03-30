@@ -207,6 +207,8 @@ int ResourceCollection::StartupShrink()
     }
 
     header->ResetRebuildMetadata(REBUILD_STATE_COPY);
+    header->rebuild_index_source_end = index_tail;
+    header->rebuild_data_source_end = data_tail;
     header->rebuild_index_alloc_start = index_tail;
     header->rebuild_data_alloc_start = data_tail;
     header->rebuild_index_alloc_end = index_tail;
@@ -236,9 +238,11 @@ int ResourceCollection::StartupShrink()
     header->rebuild_index_alloc_end = header->m_index_offset;
     header->rebuild_data_alloc_end = header->m_data_offset;
     Logger::Log(LOG_LEVEL_INFO,
-        "startup shrink completed compacted index/data boundaries: index=%llu data=%llu",
+        "startup shrink completed compacted boundaries index=%llu data=%llu with source tails index=%llu data=%llu",
         static_cast<unsigned long long>(header->rebuild_index_alloc_end),
-        static_cast<unsigned long long>(header->rebuild_data_alloc_end));
+        static_cast<unsigned long long>(header->rebuild_data_alloc_end),
+        static_cast<unsigned long long>(header->rebuild_index_source_end),
+        static_cast<unsigned long long>(header->rebuild_data_source_end));
     return MBError::SUCCESS;
 }
 
@@ -262,15 +266,22 @@ int ResourceCollection::StartupEvacuate()
 
     const size_t index_boundary = header->rebuild_index_alloc_end;
     const size_t data_boundary = header->rebuild_data_alloc_end;
-    if (index_boundary == 0 || data_boundary == 0)
+    const size_t index_source_end = header->rebuild_index_source_end;
+    const size_t data_source_end = header->rebuild_data_source_end;
+    if (index_boundary == 0 || data_boundary == 0
+        || index_source_end == 0 || data_source_end == 0)
         return MBError::NOT_INITIALIZED;
     if (index_boundary < header->m_index_offset || data_boundary < header->m_data_offset)
+        return MBError::INVALID_SIZE;
+    if (index_source_end < index_boundary || data_source_end < data_boundary)
         return MBError::INVALID_SIZE;
 
     const size_t index_source_start = AlignUpToBlock(index_boundary, header->index_block_size);
     const size_t data_source_start = AlignUpToBlock(data_boundary, header->data_block_size);
     if (index_source_start < index_boundary || data_source_start < data_boundary)
         return MBError::INVALID_SIZE;
+    if (index_source_start > index_source_end || data_source_start > data_source_end)
+        return MBError::NOT_ALLOWED;
 
     int rval = dmm->ResetJemalloc();
     if (rval != MBError::SUCCESS)
@@ -289,11 +300,13 @@ int ResourceCollection::StartupEvacuate()
     header->rebuild_data_alloc_start = data_source_start;
     header->rebuild_state = REBUILD_STATE_CUTOVER;
     Logger::Log(LOG_LEVEL_INFO,
-        "startup evacuate reseeded jemalloc at exact boundaries index=%llu data=%llu with source blocks starting at index=%llu data=%llu",
+        "startup evacuate reseeded jemalloc at exact boundaries index=%llu data=%llu with source window index=[%llu,%llu] data=[%llu,%llu]",
         static_cast<unsigned long long>(index_boundary),
         static_cast<unsigned long long>(data_boundary),
         static_cast<unsigned long long>(index_source_start),
-        static_cast<unsigned long long>(data_source_start));
+        static_cast<unsigned long long>(index_source_end),
+        static_cast<unsigned long long>(data_source_start),
+        static_cast<unsigned long long>(data_source_end));
     return MBError::SUCCESS;
 }
 
