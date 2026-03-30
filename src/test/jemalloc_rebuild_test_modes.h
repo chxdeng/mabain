@@ -25,7 +25,7 @@
 
 namespace mabain_test {
 
-constexpr std::array<const char*, 9> kJemallocRebuildTestModes = {
+constexpr std::array<const char*, 11> kJemallocRebuildTestModes = {
     "header_metadata",
     "arena_cursor",
     "startup_gate",
@@ -34,6 +34,8 @@ constexpr std::array<const char*, 9> kJemallocRebuildTestModes = {
     "evacuate_only",
     "recover_shrink",
     "recover_evacuate",
+    "full_cycle_prepare",
+    "reader_loop",
     "full_cycle",
 };
 

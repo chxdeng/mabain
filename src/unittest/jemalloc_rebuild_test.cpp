@@ -584,10 +584,11 @@ TEST_F(JemallocRebuildMetadataTest, WriterRecreatesDbAfterOlderHeaderVersionMism
     writer_db.Close();
 }
 
-TEST_F(JemallocRebuildMetadataTest, WarmRestartWithKeepDbEntersPrepStateAndPreservesReads)
+TEST_F(JemallocRebuildMetadataTest, WarmRestartWithKeepDbCompletesStartupRebuildAndPreservesReads)
 {
     CreateJemallocRebuildTestDir();
     const std::string key("alpha");
+    const std::string key2("alpha-2");
     const std::string value("value-alpha");
 
     MBConfig initial_cfg = MakeJemallocRebuildConfig(
@@ -605,17 +606,25 @@ TEST_F(JemallocRebuildMetadataTest, WarmRestartWithKeepDbEntersPrepStateAndPrese
 
     IndexHeader* header = rebuild_db.GetDictPtr()->GetHeaderPtr();
     ASSERT_NE(header, nullptr);
-    EXPECT_EQ(header->rebuild_state, REBUILD_STATE_PREP);
-    EXPECT_TRUE(header->RebuildInProgress());
+    EXPECT_EQ(header->rebuild_state, REBUILD_STATE_NORMAL);
+    EXPECT_FALSE(header->RebuildInProgress());
+    EXPECT_EQ(header->reader_epoch_tracking_active.load(MEMORY_ORDER_READER), 0u);
     EXPECT_EQ(rebuild_db.Count(), 1);
     ExpectFindValue(rebuild_db, key, value);
+    ASSERT_EQ(rebuild_db.Add(key2, value), MBError::SUCCESS);
+    EXPECT_EQ(rebuild_db.Count(), 2);
+    ExpectFindValue(rebuild_db, key2, value);
+    EXPECT_EQ(header->reusable_index_block_count, 0u);
+    EXPECT_EQ(header->reusable_data_block_count, 0u);
 
     MBConfig reader_cfg = MakeJemallocRebuildConfig(CONSTS::ACCESS_MODE_READER, false);
     DB reader_db(reader_cfg);
     ASSERT_TRUE(reader_db.is_open());
     ExpectFindValue(reader_db, key, value);
+    ExpectFindValue(reader_db, key2, value);
     reader_db.Close();
     rebuild_db.Close();
+    ResourcePool::getInstance().RemoveAll();
 }
 
 TEST_F(JemallocRebuildMetadataTest, StartupShrinkCapturesCurrentJemallocTails)

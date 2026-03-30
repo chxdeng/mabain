@@ -16,10 +16,13 @@
 
 // @author Changxue Deng <chadeng@cisco.com>
 
+#include <cerrno>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <unistd.h>
+#include <vector>
 
 #include "../db.h"
 #include "../drm_base.h"
@@ -36,26 +39,37 @@ constexpr char kArenaCursorTestDir[] = "/var/tmp/mabain_test/jemalloc_rebuild";
 constexpr size_t kArenaCursorBlockSize = 4 * 1024 * 1024;
 constexpr size_t kArenaCursorMemCap = 4 * kArenaCursorBlockSize;
 constexpr int kArenaCursorMaxBlocks = 4;
+constexpr char kFullCycleKeysFile[] = "/var/tmp/mabain_test/jemalloc_rebuild/full_cycle_keys.txt";
+constexpr char kFullCycleStopFile[] = "/var/tmp/mabain_test/jemalloc_rebuild/full_cycle.stop";
+constexpr uint32_t kFullCycleBlockSize = 4 * 1024 * 1024;
+constexpr int kFullCycleMaxBlocks = 32;
 
 using mabain::DB;
 using mabain::IndexHeader;
 using mabain::MBConfig;
 using mabain::MBData;
 
-MBConfig MakeJemallocRebuildConfig(int options, bool keep_db)
+MBConfig MakeSizedJemallocRebuildConfig(int options, bool keep_db,
+    uint32_t block_size, int max_blocks)
 {
     MBConfig config = {};
     config.mbdir = kArenaCursorTestDir;
     config.options = options;
-    config.block_size_index = kArenaCursorBlockSize;
-    config.block_size_data = kArenaCursorBlockSize;
-    config.max_num_index_block = kArenaCursorMaxBlocks;
-    config.max_num_data_block = kArenaCursorMaxBlocks;
-    config.memcap_index = kArenaCursorMemCap;
-    config.memcap_data = kArenaCursorMemCap;
+    config.block_size_index = block_size;
+    config.block_size_data = block_size;
+    config.max_num_index_block = max_blocks;
+    config.max_num_data_block = max_blocks;
+    config.memcap_index = static_cast<size_t>(block_size) * max_blocks;
+    config.memcap_data = static_cast<size_t>(block_size) * max_blocks;
     config.num_entry_per_bucket = 500;
     config.jemalloc_keep_db = keep_db;
     return config;
+}
+
+MBConfig MakeJemallocRebuildConfig(int options, bool keep_db)
+{
+    return MakeSizedJemallocRebuildConfig(
+        options, keep_db, kArenaCursorBlockSize, kArenaCursorMaxBlocks);
 }
 
 int PrintUsage(const char* prog)
@@ -187,6 +201,113 @@ int VerifyFindValue(DB& db, const std::string& key, const std::string& value,
     return 0;
 }
 
+int WriteKeysToFile(const std::vector<std::string>& keys, const std::string& path)
+{
+    std::ofstream out(path, std::ios::out | std::ios::trunc);
+    if (!out.is_open()) {
+        std::cerr << "failed to open key file for write: " << path << "\n";
+        return 1;
+    }
+    for (const std::string& key : keys)
+        out << key << "\n";
+    return out.good() ? 0 : 1;
+}
+
+int LoadKeysFromFile(const std::string& path, std::vector<std::string>& keys)
+{
+    std::ifstream in(path, std::ios::in);
+    if (!in.is_open()) {
+        std::cerr << "failed to open key file for read: " << path << "\n";
+        return 1;
+    }
+
+    std::string key;
+    while (std::getline(in, key)) {
+        if (!key.empty())
+            keys.push_back(key);
+    }
+    if (!in.eof()) {
+        std::cerr << "failed while reading key file: " << path << "\n";
+        return 1;
+    }
+    if (keys.empty()) {
+        std::cerr << "key file is empty: " << path << "\n";
+        return 1;
+    }
+    return 0;
+}
+
+int ParseReaderConnectId(uint32_t& connect_id)
+{
+    const char* env = std::getenv("MABAIN_READER_CONNECT_ID");
+    if (env == nullptr || *env == '\0') {
+        std::cerr << "MABAIN_READER_CONNECT_ID is required for reader_loop\n";
+        return 1;
+    }
+
+    char* end = nullptr;
+    errno = 0;
+    unsigned long parsed = std::strtoul(env, &end, 0);
+    if (errno != 0 || end == env || *end != '\0' || parsed > 0xffffffffUL) {
+        std::cerr << "invalid MABAIN_READER_CONNECT_ID: " << env << "\n";
+        return 1;
+    }
+
+    connect_id = static_cast<uint32_t>(parsed);
+    return 0;
+}
+
+int RunReaderLookupLoop(const std::vector<std::string>& keys, const std::string& value,
+    const std::string& stop_file, uint32_t connect_id, uint32_t block_size, int max_blocks)
+{
+    if (keys.empty()) {
+        std::cerr << "reader_loop key set is empty\n";
+        return 1;
+    }
+
+    mabain::ResourcePool::getInstance().RemoveAll();
+    MBConfig reader_cfg = MakeSizedJemallocRebuildConfig(
+        mabain::CONSTS::ACCESS_MODE_READER, false, block_size, max_blocks);
+    reader_cfg.connect_id = connect_id;
+    DB reader_db(reader_cfg);
+    if (!reader_db.is_open()) {
+        std::cerr << "reader_loop open failed: " << reader_db.StatusStr() << "\n";
+        return 1;
+    }
+
+    size_t iter = 0;
+    while (true) {
+        errno = 0;
+        if (access(stop_file.c_str(), F_OK) == 0)
+            break;
+        if (errno != 0 && errno != ENOENT) {
+            std::cerr << "reader_loop stop-file check failed\n";
+            reader_db.Close();
+            return 1;
+        }
+
+        const std::string& key = keys[iter % keys.size()];
+        if (VerifyFindValue(reader_db, key, value, "reader_loop") != 0) {
+            reader_db.Close();
+            return 1;
+        }
+
+        iter++;
+        if ((iter % 50000) == 0) {
+            std::cout << "reader_loop connect_id=" << connect_id
+                      << " lookups=" << iter << "\n";
+        }
+        if ((iter % 1024) == 0)
+            usleep(1000);
+    }
+
+    reader_db.Close();
+    mabain::ResourcePool::getInstance().RemoveAll();
+    std::cout << "reader_loop connect_id=" << connect_id
+              << " stopped after " << iter << " lookups\n";
+    return 0;
+}
+
 int RunStartupGateMode()
 {
     if (PrepareArenaCursorDir() != 0) {
@@ -196,6 +317,7 @@ int RunStartupGateMode()
 
     mabain::ResourcePool::getInstance().RemoveAll();
     const std::string key("alpha");
+    const std::string key2("alpha-2");
     const std::string value("value-alpha");
 
     {
@@ -241,9 +363,15 @@ int RunStartupGateMode()
     }
 
     const IndexHeader* header = reinterpret_cast<const IndexHeader*>(hdr_page);
-    if (header == nullptr || header->rebuild_state != REBUILD_STATE_PREP
-        || !header->RebuildInProgress()) {
-        std::cerr << "startup_gate did not enter PREP state\n";
+    if (header == nullptr || header->rebuild_state != REBUILD_STATE_NORMAL
+        || header->RebuildInProgress()) {
+        std::cerr << "startup_gate persisted header did not clear rebuild state\n";
+        return 1;
+    }
+    const IndexHeader* live_header = rebuild_db.GetDictPtr()->GetHeaderPtr();
+    if (live_header == nullptr || live_header->rebuild_state != REBUILD_STATE_NORMAL
+        || live_header->RebuildInProgress()) {
+        std::cerr << "startup_gate live header did not clear rebuild state\n";
         return 1;
     }
     if (rebuild_db.Count() != 1) {
@@ -251,6 +379,13 @@ int RunStartupGateMode()
         return 1;
     }
     if (VerifyFindValue(rebuild_db, key, value, "startup_gate writer") != 0) {
+        return 1;
+    }
+    if (rebuild_db.Add(key2, value) != mabain::MBError::SUCCESS) {
+        std::cerr << "startup_gate writer post-rebuild Add failed\n";
+        return 1;
+    }
+    if (VerifyFindValue(rebuild_db, key2, value, "startup_gate writer post-rebuild add") != 0) {
         return 1;
     }
 
@@ -261,6 +396,9 @@ int RunStartupGateMode()
         return 1;
     }
     if (VerifyFindValue(reader_db, key, value, "startup_gate reader") != 0) {
+        return 1;
+    }
+    if (VerifyFindValue(reader_db, key2, value, "startup_gate reader post-rebuild add") != 0) {
         return 1;
     }
 
@@ -558,6 +696,116 @@ int RunRecoverEvacuateMode()
     return 0;
 }
 
+int RunFullCyclePrepareMode()
+{
+    if (PrepareArenaCursorDir() != 0) {
+        std::cerr << "failed to prepare full_cycle test directory\n";
+        return 1;
+    }
+
+    const std::string value(256, 'v');
+    std::vector<std::string> keys;
+    std::vector<std::string> survivor_keys;
+
+    (void)unlink(kFullCycleStopFile);
+    mabain::ResourcePool::getInstance().RemoveAll();
+    {
+        MBConfig initial_cfg = MakeSizedJemallocRebuildConfig(
+            mabain::CONSTS::ACCESS_MODE_WRITER | mabain::CONSTS::OPTION_JEMALLOC,
+            false, kFullCycleBlockSize, kFullCycleMaxBlocks);
+        DB initial_db(initial_cfg);
+        if (!initial_db.is_open()) {
+            std::cerr << "initial full_cycle_prepare open failed: " << initial_db.StatusStr() << "\n";
+            return 1;
+        }
+        for (int i = 0;
+             i < 300000
+                 && initial_db.GetDictPtr()->GetMM()->GetExistingBlockEnd() < 4 * kFullCycleBlockSize;
+             i++) {
+            keys.push_back("full-cycle-" + std::to_string(i) + std::string(24, 'k'));
+            if (initial_db.Add(keys.back(), value) != mabain::MBError::SUCCESS) {
+                std::cerr << "initial full_cycle_prepare Add failed\n";
+                return 1;
+            }
+        }
+        if (initial_db.GetDictPtr()->GetMM()->GetExistingBlockEnd() < 4 * kFullCycleBlockSize
+            || keys.size() < 1024) {
+            std::cerr << "initial full_cycle_prepare dataset too small for pressure rebuild\n";
+            return 1;
+        }
+        for (size_t i = 0; i + 512 < keys.size(); i++) {
+            if (initial_db.Remove(keys[i]) != mabain::MBError::SUCCESS) {
+                std::cerr << "initial full_cycle_prepare Remove failed\n";
+                return 1;
+            }
+        }
+        survivor_keys.assign(keys.end() - 256, keys.end());
+        initial_db.Close();
+    }
+
+    if (WriteKeysToFile(survivor_keys, kFullCycleKeysFile) != 0)
+        return 1;
+
+    mabain::ResourcePool::getInstance().RemoveAll();
+    std::cout << "jemalloc_restart_rebuild_test: full_cycle_prepare passed\n";
+    return 0;
+}
+
+int RunReaderLoopMode()
+{
+    uint32_t connect_id = 0;
+    if (ParseReaderConnectId(connect_id) != 0)
+        return 1;
+
+    std::vector<std::string> survivor_keys;
+    if (LoadKeysFromFile(kFullCycleKeysFile, survivor_keys) != 0)
+        return 1;
+
+    const std::string value(256, 'v');
+    return RunReaderLookupLoop(
+        survivor_keys, value, kFullCycleStopFile, connect_id, kFullCycleBlockSize, kFullCycleMaxBlocks);
+}
+
+int RunFullCycleMode()
+{
+    std::vector<std::string> survivor_keys;
+    if (LoadKeysFromFile(kFullCycleKeysFile, survivor_keys) != 0)
+        return 1;
+
+    const std::string value(256, 'v');
+    mabain::ResourcePool::getInstance().RemoveAll();
+
+    MBConfig rebuild_cfg = MakeSizedJemallocRebuildConfig(
+        mabain::CONSTS::ACCESS_MODE_WRITER | mabain::CONSTS::OPTION_JEMALLOC,
+        true, kFullCycleBlockSize, kFullCycleMaxBlocks);
+    DB rebuild_db(rebuild_cfg);
+    if (!rebuild_db.is_open()) {
+        std::cerr << "full_cycle reopen failed: " << rebuild_db.StatusStr() << "\n";
+        return 1;
+    }
+
+    const IndexHeader* header = rebuild_db.GetDictPtr()->GetHeaderPtr();
+    if (header == nullptr || header->RebuildInProgress()) {
+        std::cerr << "full_cycle writer still in rebuild state after open\n";
+        rebuild_db.Close();
+        return 1;
+    }
+    if (VerifyFindValue(rebuild_db, survivor_keys.back(), value, "full_cycle writer") != 0) {
+        rebuild_db.Close();
+        return 1;
+    }
+    if (rebuild_db.Add("full-cycle-post", value) != mabain::MBError::SUCCESS) {
+        rebuild_db.Close();
+        std::cerr << "full_cycle writer post-rebuild Add failed\n";
+        return 1;
+    }
+
+    rebuild_db.Close();
+    mabain::ResourcePool::getInstance().RemoveAll();
+    std::cout << "jemalloc_restart_rebuild_test: full_cycle passed\n";
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char* argv[])
@@ -588,6 +836,15 @@ int main(int argc, char* argv[])
     }
     if (mode == "recover_evacuate") {
         return RunRecoverEvacuateMode();
+    }
+    if (mode == "full_cycle_prepare") {
+        return RunFullCyclePrepareMode();
+    }
+    if (mode == "reader_loop") {
+        return RunReaderLoopMode();
+    }
+    if (mode == "full_cycle") {
+        return RunFullCycleMode();
     }
 
     return RunScaffoldMode(mode);

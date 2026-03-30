@@ -378,7 +378,15 @@ void DB::PostDBUpdate(const MBConfig& config, bool init_header, bool update_head
         if (config.options & CONSTS::OPTION_JEMALLOC) {
             if (!init_header) {
                 if (config.jemalloc_keep_db) {
-                    Logger::Log(LOG_LEVEL_DEBUG, "jemalloc mode: preserving existing db for startup rebuild");
+                    Logger::Log(LOG_LEVEL_DEBUG,
+                        "jemalloc mode: preserving existing db for startup rebuild");
+                    int rval = RunStartupRebuild();
+                    if (rval != MBError::SUCCESS) {
+                        Logger::Log(LOG_LEVEL_ERROR, "startup rebuild failed: %s",
+                            MBError::get_error_str(rval));
+                        status = rval;
+                        return;
+                    }
                 } else {
                     // Default behavior: reset db in jemalloc mode if header already exists
                     Logger::Log(LOG_LEVEL_DEBUG, "reset db in jemalloc mode");
@@ -439,6 +447,65 @@ int DB::PrepareStartupRebuild(const MBConfig& config, bool init_header)
             header->rebuild_state, mb_dir.c_str());
     }
 
+    return MBError::SUCCESS;
+}
+
+bool DB::StartupRebuildComplete() const
+{
+    IndexHeader* header = dict == NULL ? NULL : dict->GetHeaderPtr();
+    if (header == NULL)
+        return false;
+
+    return header->rebuild_index_block_cursor >= header->rebuild_index_source_end
+        && header->rebuild_data_block_cursor >= header->rebuild_data_source_end
+        && header->reusable_index_block_count == 0
+        && header->reusable_data_block_count == 0;
+}
+
+int DB::RunStartupRebuild()
+{
+    IndexHeader* header = dict->GetHeaderPtr();
+    if (header == NULL)
+        return MBError::NOT_INITIALIZED;
+    if (!header->RebuildInProgress())
+        return MBError::SUCCESS;
+
+    if (header->excep_updating_status != EXCEP_STATUS_NONE) {
+        int rval = dict->ExceptionRecovery();
+        if (rval != MBError::SUCCESS)
+            return rval;
+        header->excep_lf_offset = 0;
+        header->excep_offset = 0;
+    }
+
+    ResourceCollection rc(*this);
+    if (header->rebuild_state == REBUILD_STATE_PREP) {
+        int rval = rc.StartupShrink();
+        if (rval != MBError::SUCCESS)
+            return rval;
+    }
+
+    while (!StartupRebuildComplete()) {
+        const size_t index_cursor = header->rebuild_index_block_cursor;
+        const size_t data_cursor = header->rebuild_data_block_cursor;
+        const uint32_t index_reusable = header->reusable_index_block_count;
+        const uint32_t data_reusable = header->reusable_data_block_count;
+
+        int rval = rc.StartupEvacuate();
+        if (rval != MBError::SUCCESS)
+            return rval;
+        if (!StartupRebuildComplete()
+            && index_cursor == header->rebuild_index_block_cursor
+            && data_cursor == header->rebuild_data_block_cursor
+            && index_reusable == header->reusable_index_block_count
+            && data_reusable == header->reusable_data_block_count) {
+            usleep(1000);
+        }
+    }
+
+    header->reader_epoch_tracking_active.store(0, MEMORY_ORDER_WRITER);
+    header->ClearRebuildMetadata();
+    Logger::Log(LOG_LEVEL_INFO, "jemalloc startup rebuild completed for %s", mb_dir.c_str());
     return MBError::SUCCESS;
 }
 
