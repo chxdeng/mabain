@@ -207,6 +207,8 @@ DictMem::DictMem(const std::string& mbdir, bool init_header, size_t memsize,
         // Step 2: make rebuild metadata initialization explicit for new-format DBs.
         header->ClearRebuildMetadata();
         header->ResetReaderEpochState();
+        header->jemalloc_index_free_start = 0;
+        header->jemalloc_data_free_start = 0;
         // Set up inode number and create queue
         header->shm_queue_id = get_file_inode(mbdir + "_mabain_h");
         // Cannot set is_valid to true.
@@ -909,9 +911,17 @@ void DictMem::ReleaseNode(size_t offset, int nt)
     remove_tracking_buffer(offset);
 #endif
     if (options & CONSTS::OPTION_JEMALLOC) {
-        kv_file->Free(offset);
+        if (offset >= header->jemalloc_index_free_start) {
+            kv_file->Free(offset);
+        } else {
+            Logger::Log(LOG_LEVEL_DEBUG,
+                "skip jemalloc node free below compacted boundary: off=%zu start=%zu",
+                offset, header->jemalloc_index_free_start);
+        }
         size_t rel_size = ((size_t)node_size[nt] + JEMALLOC_ALIGNMENT - 1) & ~(JEMALLOC_ALIGNMENT - 1);
         header->pending_index_buff_size -= (int64_t)rel_size;
+        if (header->pending_index_buff_size < 0)
+            header->pending_index_buff_size = 0;
     } else {
         releaseNodeFL(offset, nt);
     }
@@ -938,9 +948,17 @@ void DictMem::ReleaseBuffer(size_t offset, int size)
     remove_tracking_buffer(offset, size);
 #endif
     if (options & CONSTS::OPTION_JEMALLOC) {
-        kv_file->Free(offset);
+        if (offset >= header->jemalloc_index_free_start) {
+            kv_file->Free(offset);
+        } else {
+            Logger::Log(LOG_LEVEL_DEBUG,
+                "skip jemalloc edge-string free below compacted boundary: off=%zu start=%zu",
+                offset, header->jemalloc_index_free_start);
+        }
         size_t rel_size = ((size_t)size + JEMALLOC_ALIGNMENT - 1) & ~(JEMALLOC_ALIGNMENT - 1);
         header->pending_index_buff_size -= (int64_t)rel_size;
+        if (header->pending_index_buff_size < 0)
+            header->pending_index_buff_size = 0;
     } else {
         releaseBufferFL(offset, size);
     }

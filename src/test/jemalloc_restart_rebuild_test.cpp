@@ -41,8 +41,12 @@ constexpr size_t kArenaCursorMemCap = 4 * kArenaCursorBlockSize;
 constexpr int kArenaCursorMaxBlocks = 4;
 constexpr char kFullCycleKeysFile[] = "/var/tmp/mabain_test/jemalloc_rebuild/full_cycle_keys.txt";
 constexpr char kFullCycleStopFile[] = "/var/tmp/mabain_test/jemalloc_rebuild/full_cycle.stop";
-constexpr uint32_t kFullCycleBlockSize = 4 * 1024 * 1024;
-constexpr int kFullCycleMaxBlocks = 32;
+constexpr uint32_t kFullCycleBlockSize = 256 * 1024 * 1024;
+constexpr int kFullCycleMaxBlocks = 12;
+constexpr int kFullCycleBurstInsertCount = 9000;
+constexpr size_t kFullCycleBurstValueSize = 32000;
+constexpr char kFullCycleBurstKeyPrefix[] = "full-cycle-burst-";
+constexpr char kFullCyclePostInsertKey[] = "full-cycle-burst-8999";
 
 using mabain::DB;
 using mabain::IndexHeader;
@@ -478,28 +482,23 @@ int RunShrinkOnlyMode()
     const std::string key("delta");
     const std::string value("value-delta");
 
-    {
-        MBConfig initial_cfg = MakeJemallocRebuildConfig(
-            mabain::CONSTS::ACCESS_MODE_WRITER | mabain::CONSTS::OPTION_JEMALLOC, false);
-        DB initial_db(initial_cfg);
-        if (!initial_db.is_open()) {
-            std::cerr << "initial shrink_only open failed: " << initial_db.StatusStr() << "\n";
-            return 1;
-        }
-        if (initial_db.Add(key, value) != mabain::MBError::SUCCESS) {
-            std::cerr << "initial shrink_only Add failed\n";
-            return 1;
-        }
-        initial_db.Close();
-    }
-
-    MBConfig rebuild_cfg = MakeJemallocRebuildConfig(
-        mabain::CONSTS::ACCESS_MODE_WRITER | mabain::CONSTS::OPTION_JEMALLOC, true);
-    DB rebuild_db(rebuild_cfg);
+    MBConfig initial_cfg = MakeJemallocRebuildConfig(
+        mabain::CONSTS::ACCESS_MODE_WRITER | mabain::CONSTS::OPTION_JEMALLOC, false);
+    DB rebuild_db(initial_cfg);
     if (!rebuild_db.is_open()) {
-        std::cerr << "shrink_only reopen failed: " << rebuild_db.StatusStr() << "\n";
+        std::cerr << "initial shrink_only open failed: " << rebuild_db.StatusStr() << "\n";
         return 1;
     }
+    if (rebuild_db.Add(key, value) != mabain::MBError::SUCCESS) {
+        std::cerr << "initial shrink_only Add failed\n";
+        return 1;
+    }
+    IndexHeader* header = rebuild_db.GetDictPtr()->GetHeaderPtr();
+    if (header == nullptr) {
+        std::cerr << "shrink_only missing header\n";
+        return 1;
+    }
+    header->ResetRebuildMetadata(REBUILD_STATE_PREP);
 
     mabain::ResourceCollection rc(rebuild_db);
     if (rc.StartupShrink() != mabain::MBError::SUCCESS) {
@@ -510,7 +509,6 @@ int RunShrinkOnlyMode()
         return 1;
     }
 
-    IndexHeader* header = rebuild_db.GetDictPtr()->GetHeaderPtr();
     if (header == nullptr || header->rebuild_state != REBUILD_STATE_COPY
         || header->rebuild_index_alloc_end > header->rebuild_index_alloc_start
         || header->rebuild_data_alloc_end > header->rebuild_data_alloc_start
@@ -539,35 +537,29 @@ int RunEvacuateOnlyMode()
     const std::string key("epsilon");
     const std::string value("value-epsilon");
 
-    {
-        MBConfig initial_cfg = MakeJemallocRebuildConfig(
-            mabain::CONSTS::ACCESS_MODE_WRITER | mabain::CONSTS::OPTION_JEMALLOC, false);
-        DB initial_db(initial_cfg);
-        if (!initial_db.is_open()) {
-            std::cerr << "initial evacuate_only open failed: " << initial_db.StatusStr() << "\n";
-            return 1;
-        }
-        if (initial_db.Add(key, value) != mabain::MBError::SUCCESS) {
-            std::cerr << "initial evacuate_only Add failed\n";
-            return 1;
-        }
-        initial_db.Close();
-    }
-
-    MBConfig rebuild_cfg = MakeJemallocRebuildConfig(
-        mabain::CONSTS::ACCESS_MODE_WRITER | mabain::CONSTS::OPTION_JEMALLOC, true);
-    DB rebuild_db(rebuild_cfg);
+    MBConfig initial_cfg = MakeJemallocRebuildConfig(
+        mabain::CONSTS::ACCESS_MODE_WRITER | mabain::CONSTS::OPTION_JEMALLOC, false);
+    DB rebuild_db(initial_cfg);
     if (!rebuild_db.is_open()) {
-        std::cerr << "evacuate_only reopen failed: " << rebuild_db.StatusStr() << "\n";
+        std::cerr << "initial evacuate_only open failed: " << rebuild_db.StatusStr() << "\n";
         return 1;
     }
+    if (rebuild_db.Add(key, value) != mabain::MBError::SUCCESS) {
+        std::cerr << "initial evacuate_only Add failed\n";
+        return 1;
+    }
+    IndexHeader* header = rebuild_db.GetDictPtr()->GetHeaderPtr();
+    if (header == nullptr) {
+        std::cerr << "evacuate_only missing header\n";
+        return 1;
+    }
+    header->ResetRebuildMetadata(REBUILD_STATE_PREP);
 
     mabain::ResourceCollection rc(rebuild_db);
     if (rc.StartupShrink() != mabain::MBError::SUCCESS) {
         std::cerr << "StartupShrink failed\n";
         return 1;
     }
-    const IndexHeader* header = rebuild_db.GetDictPtr()->GetHeaderPtr();
     if (header == nullptr) {
         std::cerr << "evacuate_only missing header\n";
         return 1;
@@ -624,28 +616,23 @@ int RunRecoverEvacuateMode()
     const std::string key("zeta");
     const std::string value("value-zeta");
 
-    {
-        MBConfig initial_cfg = MakeJemallocRebuildConfig(
-            mabain::CONSTS::ACCESS_MODE_WRITER | mabain::CONSTS::OPTION_JEMALLOC, false);
-        DB initial_db(initial_cfg);
-        if (!initial_db.is_open()) {
-            std::cerr << "initial recover_evacuate open failed: " << initial_db.StatusStr() << "\n";
-            return 1;
-        }
-        if (initial_db.Add(key, value) != mabain::MBError::SUCCESS) {
-            std::cerr << "initial recover_evacuate Add failed\n";
-            return 1;
-        }
-        initial_db.Close();
-    }
-
-    MBConfig rebuild_cfg = MakeJemallocRebuildConfig(
-        mabain::CONSTS::ACCESS_MODE_WRITER | mabain::CONSTS::OPTION_JEMALLOC, true);
-    DB rebuild_db(rebuild_cfg);
+    MBConfig initial_cfg = MakeJemallocRebuildConfig(
+        mabain::CONSTS::ACCESS_MODE_WRITER | mabain::CONSTS::OPTION_JEMALLOC, false);
+    DB rebuild_db(initial_cfg);
     if (!rebuild_db.is_open()) {
-        std::cerr << "recover_evacuate reopen failed: " << rebuild_db.StatusStr() << "\n";
+        std::cerr << "initial recover_evacuate open failed: " << rebuild_db.StatusStr() << "\n";
         return 1;
     }
+    if (rebuild_db.Add(key, value) != mabain::MBError::SUCCESS) {
+        std::cerr << "initial recover_evacuate Add failed\n";
+        return 1;
+    }
+    IndexHeader* header = rebuild_db.GetDictPtr()->GetHeaderPtr();
+    if (header == nullptr) {
+        std::cerr << "recover_evacuate missing header\n";
+        return 1;
+    }
+    header->ResetRebuildMetadata(REBUILD_STATE_PREP);
 
     mabain::ResourceCollection rc(rebuild_db);
     if (rc.StartupShrink() != mabain::MBError::SUCCESS || rc.StartupEvacuate() != mabain::MBError::SUCCESS) {
@@ -653,7 +640,6 @@ int RunRecoverEvacuateMode()
         return 1;
     }
 
-    const IndexHeader* header = rebuild_db.GetDictPtr()->GetHeaderPtr();
     if (header == nullptr) {
         std::cerr << "recover_evacuate missing header\n";
         return 1;
@@ -718,9 +704,12 @@ int RunFullCyclePrepareMode()
             std::cerr << "initial full_cycle_prepare open failed: " << initial_db.StatusStr() << "\n";
             return 1;
         }
+        const size_t min_index_existing = 2 * kFullCycleBlockSize;
+        const size_t min_data_existing = 4 * kFullCycleBlockSize;
         for (int i = 0;
-             i < 300000
-                 && initial_db.GetDictPtr()->GetMM()->GetExistingBlockEnd() < 4 * kFullCycleBlockSize;
+             i < 6000000
+                 && (initial_db.GetDictPtr()->GetMM()->GetExistingBlockEnd() < min_index_existing
+                     || initial_db.GetDictPtr()->GetExistingBlockEnd() < min_data_existing);
              i++) {
             keys.push_back("full-cycle-" + std::to_string(i) + std::string(24, 'k'));
             if (initial_db.Add(keys.back(), value) != mabain::MBError::SUCCESS) {
@@ -728,7 +717,12 @@ int RunFullCyclePrepareMode()
                 return 1;
             }
         }
-        if (initial_db.GetDictPtr()->GetMM()->GetExistingBlockEnd() < 4 * kFullCycleBlockSize
+        const size_t index_existing = initial_db.GetDictPtr()->GetMM()->GetExistingBlockEnd();
+        const size_t data_existing = initial_db.GetDictPtr()->GetExistingBlockEnd();
+        std::cout << "full_cycle_prepare existing_block_end index=" << index_existing
+                  << " data=" << data_existing << "\n";
+        if (index_existing < min_index_existing
+            || data_existing < min_data_existing
             || keys.size() < 1024) {
             std::cerr << "initial full_cycle_prepare dataset too small for pressure rebuild\n";
             return 1;
@@ -766,6 +760,53 @@ int RunReaderLoopMode()
         survivor_keys, value, kFullCycleStopFile, connect_id, kFullCycleBlockSize, kFullCycleMaxBlocks);
 }
 
+std::string MakeFullCycleBurstKey(int i)
+{
+    return std::string(kFullCycleBurstKeyPrefix) + std::to_string(i);
+}
+
+void LogWriterBurstState(const char* phase, int i, DB& db, const IndexHeader* header)
+{
+    std::cout << "full_cycle writer burst " << phase;
+    if (i >= 0)
+        std::cout << " i=" << i;
+    std::cout << " ready_index=" << db.GetDictPtr()->GetMM()->GetReusableBlockCount()
+              << " ready_data=" << db.GetDictPtr()->GetReusableBlockCount()
+              << " index_alloc=" << db.GetDictPtr()->GetMM()->GetJemallocAllocSize()
+              << " data_alloc=" << db.GetDictPtr()->GetJemallocAllocSize();
+    if (header != nullptr) {
+        std::cout << " m_index_offset=" << header->m_index_offset
+                  << " m_data_offset=" << header->m_data_offset;
+    }
+    std::cout << "\n";
+}
+
+int ValidateReuseState(DB& db, const char* context, size_t min_pending,
+    size_t min_total, uint32_t expected_tracking)
+{
+    const IndexHeader* header = db.GetDictPtr()->GetHeaderPtr();
+    if (header == nullptr) {
+        std::cerr << context << " missing header\n";
+        return 1;
+    }
+
+    const size_t pending_index = header->reusable_index_block_count;
+    const size_t pending_data = header->reusable_data_block_count;
+    const size_t ready_index = db.GetDictPtr()->GetMM()->GetReusableBlockCount();
+    const size_t ready_data = db.GetDictPtr()->GetReusableBlockCount();
+    const uint32_t tracking = header->reader_epoch_tracking_active.load(MEMORY_ORDER_READER);
+
+    std::cout << context << " pending_index=" << pending_index
+              << " pending_data=" << pending_data
+              << " ready_index=" << ready_index
+              << " ready_data=" << ready_data
+              << " tracking=" << tracking << "\n";
+
+    return (tracking == expected_tracking
+        && pending_index + pending_data >= min_pending
+        && pending_index + pending_data + ready_index + ready_data >= min_total) ? 0 : 1;
+}
+
 int RunFullCycleMode()
 {
     std::vector<std::string> survivor_keys;
@@ -794,9 +835,42 @@ int RunFullCycleMode()
         rebuild_db.Close();
         return 1;
     }
-    if (rebuild_db.Add("full-cycle-post", value) != mabain::MBError::SUCCESS) {
+    if (ValidateReuseState(rebuild_db, "full_cycle writer reuse_state", 0, 2, 0) != 0) {
         rebuild_db.Close();
-        std::cerr << "full_cycle writer post-rebuild Add failed\n";
+        std::cerr << "full_cycle writer reuse_state did not show reusable stale blocks\n";
+        return 1;
+    }
+
+    const size_t ready_data_before = rebuild_db.GetDictPtr()->GetReusableBlockCount();
+    LogWriterBurstState("start", -1, rebuild_db, header);
+    const std::string burst_value(kFullCycleBurstValueSize, 'w');
+    for (int i = 0; i < kFullCycleBurstInsertCount; i++) {
+        const std::string key = MakeFullCycleBurstKey(i);
+        if (i < 4 || ((i + 1) % 500) == 0)
+            LogWriterBurstState("before_add", i, rebuild_db, header);
+        int rval = rebuild_db.Add(key, burst_value);
+        if (rval != mabain::MBError::SUCCESS) {
+            std::cerr << "full_cycle writer burst Add failed at i=" << i
+                      << " rc=" << rval
+                      << " err=" << mabain::MBError::get_error_str(rval) << "\n";
+            LogWriterBurstState("after_add_failure", i, rebuild_db, header);
+            rebuild_db.Close();
+            return 1;
+        }
+        if (i < 4 || ((i + 1) % 500) == 0)
+            LogWriterBurstState("after_add", i, rebuild_db, header);
+    }
+    if (VerifyFindValue(rebuild_db, kFullCyclePostInsertKey, burst_value, "full_cycle writer burst") != 0) {
+
+        rebuild_db.Close();
+        return 1;
+    }
+    const size_t ready_data_after = rebuild_db.GetDictPtr()->GetReusableBlockCount();
+    std::cout << "full_cycle writer burst reuse ready_data_before=" << ready_data_before
+              << " ready_data_after=" << ready_data_after << "\n";
+    if (!(ready_data_after < ready_data_before)) {
+        rebuild_db.Close();
+        std::cerr << "full_cycle writer burst did not consume reusable stale data blocks\n";
         return 1;
     }
 
@@ -806,10 +880,72 @@ int RunFullCycleMode()
     return 0;
 }
 
+int RunFullCycleInsertVerifyMode()
+{
+    const std::string value(256, 'v');
+    mabain::ResourcePool::getInstance().RemoveAll();
+
+    MBConfig cfg = MakeSizedJemallocRebuildConfig(
+        mabain::CONSTS::ACCESS_MODE_WRITER | mabain::CONSTS::OPTION_JEMALLOC,
+        true, kFullCycleBlockSize, kFullCycleMaxBlocks);
+    DB db(cfg);
+    if (!db.is_open()) {
+        std::cerr << "full_cycle_insert_verify reopen failed: " << db.StatusStr() << "\n";
+        return 1;
+    }
+    const IndexHeader* header = db.GetDictPtr()->GetHeaderPtr();
+    if (header == nullptr || header->RebuildInProgress()) {
+        std::cerr << "full_cycle_insert_verify writer still in rebuild state\n";
+        db.Close();
+        return 1;
+    }
+    if (db.Add(kFullCyclePostInsertKey, value) != mabain::MBError::SUCCESS
+        || VerifyFindValue(db, kFullCyclePostInsertKey, value, "full_cycle_insert_verify writer") != 0) {
+        db.Close();
+        return 1;
+    }
+    db.Close();
+    std::cout << "jemalloc_restart_rebuild_test: full_cycle_insert_verify passed\n";
+    return 0;
+}
+
+int RunFullCycleVerifyReuseMode()
+{
+    std::vector<std::string> survivor_keys;
+    if (LoadKeysFromFile(kFullCycleKeysFile, survivor_keys) != 0)
+        return 1;
+
+    const std::string value(256, 'v');
+    mabain::ResourcePool::getInstance().RemoveAll();
+
+    MBConfig verify_cfg = MakeSizedJemallocRebuildConfig(
+        mabain::CONSTS::ACCESS_MODE_WRITER | mabain::CONSTS::OPTION_JEMALLOC,
+        true, kFullCycleBlockSize, kFullCycleMaxBlocks);
+    DB verify_db(verify_cfg);
+    if (!verify_db.is_open()) {
+        std::cerr << "full_cycle_verify_reuse reopen failed: " << verify_db.StatusStr() << "\n";
+        return 1;
+    }
+    const std::string burst_value(kFullCycleBurstValueSize, 'w');
+    if (VerifyFindValue(verify_db, survivor_keys.back(), value, "full_cycle_verify_reuse writer") != 0
+        || VerifyFindValue(verify_db, kFullCyclePostInsertKey, burst_value, "full_cycle_verify_reuse burst") != 0
+        || ValidateReuseState(verify_db, "full_cycle_verify_reuse reuse_state", 0, 2, 0) != 0) {
+        verify_db.Close();
+        return 1;
+    }
+    verify_db.Close();
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char* argv[])
 {
+    std::cout << std::unitbuf;
+    std::cerr << std::unitbuf;
+    mabain::DB::SetLogFile("/var/tmp/mabain_test/mabain.log");
+    mabain::DB::LogDebug();
+
     if (argc != 2) {
         return PrintUsage(argv[0]);
     }
@@ -846,6 +982,16 @@ int main(int argc, char* argv[])
     if (mode == "full_cycle") {
         return RunFullCycleMode();
     }
+    if (mode == "full_cycle_insert_verify") {
+        return RunFullCycleInsertVerifyMode();
+    }
+    if (mode == "full_cycle_verify_reuse") {
+        int rval = RunFullCycleVerifyReuseMode();
+        mabain::DB::CloseLogFile();
+        return rval;
+    }
 
-    return RunScaffoldMode(mode);
+    int rval = RunScaffoldMode(mode);
+    mabain::DB::CloseLogFile();
+    return rval;
 }

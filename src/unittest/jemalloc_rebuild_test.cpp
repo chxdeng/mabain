@@ -151,7 +151,7 @@ public:
 
 TEST(JemallocRebuildHarnessTest, ModeListContainsExpectedPhases)
 {
-    EXPECT_EQ(kJemallocRebuildTestModes.size(), 9u);
+    EXPECT_EQ(kJemallocRebuildTestModes.size(), 11u);
     EXPECT_TRUE(IsJemallocRebuildTestModeSupported("header_metadata"));
     EXPECT_TRUE(IsJemallocRebuildTestModeSupported("arena_cursor"));
     EXPECT_TRUE(IsJemallocRebuildTestModeSupported("startup_gate"));
@@ -160,6 +160,8 @@ TEST(JemallocRebuildHarnessTest, ModeListContainsExpectedPhases)
     EXPECT_TRUE(IsJemallocRebuildTestModeSupported("evacuate_only"));
     EXPECT_TRUE(IsJemallocRebuildTestModeSupported("recover_shrink"));
     EXPECT_TRUE(IsJemallocRebuildTestModeSupported("recover_evacuate"));
+    EXPECT_TRUE(IsJemallocRebuildTestModeSupported("full_cycle_prepare"));
+    EXPECT_TRUE(IsJemallocRebuildTestModeSupported("reader_loop"));
     EXPECT_TRUE(IsJemallocRebuildTestModeSupported("full_cycle"));
     EXPECT_FALSE(IsJemallocRebuildTestModeSupported("unknown_mode"));
 }
@@ -638,17 +640,12 @@ TEST_F(JemallocRebuildMetadataTest, StartupShrinkCapturesCurrentJemallocTails)
     DB initial_db(initial_cfg);
     ASSERT_TRUE(initial_db.is_open());
     ASSERT_EQ(initial_db.Add(key, value), MBError::SUCCESS);
-    initial_db.Close();
 
-    MBConfig rebuild_cfg = MakeJemallocRebuildConfig(
-        CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, true);
-    DB rebuild_db(rebuild_cfg);
-    ASSERT_TRUE(rebuild_db.is_open());
-
-    IndexHeader* header = rebuild_db.GetDictPtr()->GetHeaderPtr();
+    IndexHeader* header = initial_db.GetDictPtr()->GetHeaderPtr();
     ASSERT_NE(header, nullptr);
+    header->ResetRebuildMetadata(REBUILD_STATE_PREP);
     ASSERT_EQ(header->rebuild_state, REBUILD_STATE_PREP);
-    ResourceCollection rc(rebuild_db);
+    ResourceCollection rc(initial_db);
     ASSERT_EQ(rc.StartupShrink(), MBError::SUCCESS);
     EXPECT_EQ(header->rebuild_state, REBUILD_STATE_COPY);
     EXPECT_EQ(header->rebuild_index_alloc_start, header->m_index_offset);
@@ -659,7 +656,7 @@ TEST_F(JemallocRebuildMetadataTest, StartupShrinkCapturesCurrentJemallocTails)
     EXPECT_GE(header->rebuild_data_source_end, header->m_data_offset);
     EXPECT_GE(header->rebuild_index_source_end, header->rebuild_index_alloc_end);
     EXPECT_GE(header->rebuild_data_source_end, header->rebuild_data_alloc_end);
-    rebuild_db.Close();
+    initial_db.Close();
 }
 
 TEST_F(JemallocRebuildMetadataTest, StartupEvacuateSeparatesExactBoundaryFromSourceBlockStart)
@@ -673,17 +670,13 @@ TEST_F(JemallocRebuildMetadataTest, StartupEvacuateSeparatesExactBoundaryFromSou
     DB initial_db(initial_cfg);
     ASSERT_TRUE(initial_db.is_open());
     ASSERT_EQ(initial_db.Add(key, value), MBError::SUCCESS);
-    initial_db.Close();
 
-    MBConfig rebuild_cfg = MakeJemallocRebuildConfig(
-        CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, true);
-    DB rebuild_db(rebuild_cfg);
-    ASSERT_TRUE(rebuild_db.is_open());
-
-    ResourceCollection rc(rebuild_db);
+    IndexHeader* header = initial_db.GetDictPtr()->GetHeaderPtr();
+    ASSERT_NE(header, nullptr);
+    header->ResetRebuildMetadata(REBUILD_STATE_PREP);
+    ResourceCollection rc(initial_db);
     ASSERT_EQ(rc.StartupShrink(), MBError::SUCCESS);
 
-    IndexHeader* header = rebuild_db.GetDictPtr()->GetHeaderPtr();
     ASSERT_NE(header, nullptr);
     const size_t index_boundary = header->rebuild_index_alloc_end;
     const size_t data_boundary = header->rebuild_data_alloc_end;
@@ -694,8 +687,8 @@ TEST_F(JemallocRebuildMetadataTest, StartupEvacuateSeparatesExactBoundaryFromSou
     EXPECT_EQ(header->rebuild_state, REBUILD_STATE_CUTOVER);
     EXPECT_EQ(header->rebuild_index_alloc_end, index_boundary);
     EXPECT_EQ(header->rebuild_data_alloc_end, data_boundary);
-    EXPECT_GE(rebuild_db.GetDictPtr()->GetMM()->GetJemallocAllocSize(), index_boundary);
-    EXPECT_GE(rebuild_db.GetDictPtr()->GetJemallocAllocSize(), data_boundary);
+    EXPECT_GE(initial_db.GetDictPtr()->GetMM()->GetJemallocAllocSize(), index_boundary);
+    EXPECT_GE(initial_db.GetDictPtr()->GetJemallocAllocSize(), data_boundary);
     EXPECT_EQ(header->rebuild_index_alloc_start % header->index_block_size, 0u);
     EXPECT_EQ(header->rebuild_data_alloc_start % header->data_block_size, 0u);
     EXPECT_GE(header->rebuild_index_alloc_start, header->rebuild_index_alloc_end);
@@ -725,7 +718,7 @@ TEST_F(JemallocRebuildMetadataTest, StartupEvacuateSeparatesExactBoundaryFromSou
         EXPECT_EQ(header->rebuild_data_alloc_start, data_boundary);
     else
         EXPECT_GT(header->rebuild_data_alloc_start, data_boundary);
-    rebuild_db.Close();
+    initial_db.Close();
 }
 
 TEST_F(JemallocRebuildMetadataTest, StartupEvacuateResumesFromCutoverState)
@@ -739,18 +732,14 @@ TEST_F(JemallocRebuildMetadataTest, StartupEvacuateResumesFromCutoverState)
     DB initial_db(initial_cfg);
     ASSERT_TRUE(initial_db.is_open());
     ASSERT_EQ(initial_db.Add(key, value), MBError::SUCCESS);
-    initial_db.Close();
 
-    MBConfig rebuild_cfg = MakeJemallocRebuildConfig(
-        CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, true);
-    DB rebuild_db(rebuild_cfg);
-    ASSERT_TRUE(rebuild_db.is_open());
-
-    ResourceCollection rc(rebuild_db);
+    IndexHeader* header = initial_db.GetDictPtr()->GetHeaderPtr();
+    ASSERT_NE(header, nullptr);
+    header->ResetRebuildMetadata(REBUILD_STATE_PREP);
+    ResourceCollection rc(initial_db);
     ASSERT_EQ(rc.StartupShrink(), MBError::SUCCESS);
     ASSERT_EQ(rc.StartupEvacuate(), MBError::SUCCESS);
 
-    IndexHeader* header = rebuild_db.GetDictPtr()->GetHeaderPtr();
     ASSERT_NE(header, nullptr);
     const size_t index_source_start = header->rebuild_index_alloc_start;
     const size_t data_source_start = header->rebuild_data_alloc_start;
@@ -773,17 +762,17 @@ TEST_F(JemallocRebuildMetadataTest, StartupEvacuateResumesFromCutoverState)
     EXPECT_GE(header->rebuild_data_block_cursor, data_cursor_1);
     EXPECT_LE(header->rebuild_data_block_cursor, header->rebuild_data_source_end);
     EXPECT_LE(header->rebuild_index_block_cursor, header->rebuild_index_source_end);
-    EXPECT_GE(rebuild_db.GetDictPtr()->GetMM()->GetJemallocAllocSize(), index_boundary);
-    EXPECT_GE(rebuild_db.GetDictPtr()->GetJemallocAllocSize(), data_boundary);
-    ExpectFindValue(rebuild_db, key, value);
-    rebuild_db.Close();
+    EXPECT_GE(initial_db.GetDictPtr()->GetMM()->GetJemallocAllocSize(), index_boundary);
+    EXPECT_GE(initial_db.GetDictPtr()->GetJemallocAllocSize(), data_boundary);
+    ExpectFindValue(initial_db, key, value);
+    initial_db.Close();
 }
 
 TEST_F(JemallocRebuildMetadataTest, StartupEvacuateReleasesOneFullIndexSourceBlockWhenReadersAreIdle)
 {
     CreateJemallocRebuildTestDir();
     const uint32_t small_block_size = 4 * 1024 * 1024;
-    const int small_max_blocks = 32;
+    const int small_max_blocks = 64;
     const std::string value(256, 'v');
     std::vector<std::string> keys;
 
@@ -803,18 +792,13 @@ TEST_F(JemallocRebuildMetadataTest, StartupEvacuateReleasesOneFullIndexSourceBlo
 
     for (size_t i = 0; i + 300 < keys.size(); i++)
         ASSERT_EQ(initial_db.Remove(keys[i]), MBError::SUCCESS);
-    initial_db.Close();
 
-    MBConfig rebuild_cfg = MakeSizedJemallocRebuildConfig(
-        CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, true,
-        small_block_size, small_max_blocks);
-    DB rebuild_db(rebuild_cfg);
-    ASSERT_TRUE(rebuild_db.is_open());
-
-    ResourceCollection rc(rebuild_db);
+    IndexHeader* header = initial_db.GetDictPtr()->GetHeaderPtr();
+    ASSERT_NE(header, nullptr);
+    header->ResetRebuildMetadata(REBUILD_STATE_PREP);
+    ResourceCollection rc(initial_db);
     ASSERT_EQ(rc.StartupShrink(), MBError::SUCCESS);
 
-    IndexHeader* header = rebuild_db.GetDictPtr()->GetHeaderPtr();
     ASSERT_NE(header, nullptr);
     const size_t first_source_block =
         ((header->rebuild_index_alloc_end + header->index_block_size - 1) / header->index_block_size)
@@ -827,12 +811,12 @@ TEST_F(JemallocRebuildMetadataTest, StartupEvacuateReleasesOneFullIndexSourceBlo
     EXPECT_EQ(header->rebuild_index_block_cursor, first_source_block + header->index_block_size);
     EXPECT_EQ(header->reusable_index_block_count, 1u);
     EXPECT_EQ(header->reusable_index_block[0].in_use, REUSABLE_BLOCK_STATE_READY);
-    EXPECT_EQ(rebuild_db.GetDictPtr()->GetMM()->GetReusableBlockCount(), 0u);
+    EXPECT_EQ(initial_db.GetDictPtr()->GetMM()->GetReusableBlockCount(), 0u);
 
     ASSERT_EQ(rc.StartupEvacuate(), MBError::SUCCESS);
-    EXPECT_GE(rebuild_db.GetDictPtr()->GetMM()->GetReusableBlockCount(), 1u);
-    ExpectFindValue(rebuild_db, keys.back(), value);
-    rebuild_db.Close();
+    EXPECT_GE(initial_db.GetDictPtr()->GetMM()->GetReusableBlockCount(), 1u);
+    ExpectFindValue(initial_db, keys.back(), value);
+    initial_db.Close();
 }
 
 TEST_F(JemallocRebuildMetadataTest, StartupEvacuateRejectsEmptySourceWindowGracefully)

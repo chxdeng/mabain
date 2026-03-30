@@ -310,6 +310,8 @@ void DB::PostDBUpdate(const MBConfig& config, bool init_header, bool update_head
         if (header != NULL) {
             header->async_queue_size = config.queue_size;
             header->ResetReaderEpochState();
+            header->jemalloc_index_free_start = 0;
+            header->jemalloc_data_free_start = 0;
         }
         dict->Init(identifier);
     }
@@ -504,6 +506,8 @@ int DB::RunStartupRebuild()
     }
 
     header->reader_epoch_tracking_active.store(0, MEMORY_ORDER_WRITER);
+    header->jemalloc_index_free_start = header->rebuild_index_alloc_end;
+    header->jemalloc_data_free_start = header->rebuild_data_alloc_end;
     header->ClearRebuildMetadata();
     Logger::Log(LOG_LEVEL_INFO, "jemalloc startup rebuild completed for %s", mb_dir.c_str());
     return MBError::SUCCESS;

@@ -25,7 +25,7 @@
 
 namespace mabain_test {
 
-constexpr std::array<const char*, 11> kJemallocRebuildTestModes = {
+constexpr std::array<const char*, 13> kJemallocRebuildTestModes = {
     "header_metadata",
     "arena_cursor",
     "startup_gate",
@@ -37,6 +37,8 @@ constexpr std::array<const char*, 11> kJemallocRebuildTestModes = {
     "full_cycle_prepare",
     "reader_loop",
     "full_cycle",
+    "full_cycle_insert_verify",
+    "full_cycle_verify_reuse",
 };
 
 inline bool IsJemallocRebuildTestModeSupported(const std::string& mode)

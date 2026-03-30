@@ -1105,7 +1105,13 @@ int Dict::ReleaseBuffer(size_t offset, int size)
     remove_tracking_buffer(offset, size);
 #endif
     if (options & CONSTS::OPTION_JEMALLOC) {
-        kv_file->Free(offset);
+        if (offset >= header->jemalloc_data_free_start) {
+            kv_file->Free(offset);
+        } else {
+            Logger::Log(LOG_LEVEL_DEBUG,
+                "skip jemalloc data free below compacted boundary: off=%zu start=%zu",
+                offset, header->jemalloc_data_free_start);
+        }
         size_t rel_size = ((size_t)size + JEMALLOC_ALIGNMENT - 1) & ~(JEMALLOC_ALIGNMENT - 1);
         header->pending_data_buff_size -= (int64_t)rel_size;
         if (header->pending_data_buff_size < 0) {
@@ -1139,14 +1145,25 @@ int Dict::ReleaseBuffer(size_t offset)
     uint16_t data_size;
     if (ReadData(reinterpret_cast<uint8_t*>(&data_size), DATA_SIZE_BYTE, offset) != DATA_SIZE_BYTE) {
         if (options & CONSTS::OPTION_JEMALLOC) {
-            // For jemalloc mode, we can just free the buffer and return
-            kv_file->Free(offset);
+            if (offset >= header->jemalloc_data_free_start) {
+                kv_file->Free(offset);
+            } else {
+                Logger::Log(LOG_LEVEL_DEBUG,
+                    "skip jemalloc unreadable data free below compacted boundary: off=%zu start=%zu",
+                    offset, header->jemalloc_data_free_start);
+            }
         }
         return MBError::READ_ERROR;
     }
     data_size += DATA_HDR_BYTE;
     if (options & CONSTS::OPTION_JEMALLOC) {
-        kv_file->Free(offset);
+        if (offset >= header->jemalloc_data_free_start) {
+            kv_file->Free(offset);
+        } else {
+            Logger::Log(LOG_LEVEL_DEBUG,
+                "skip jemalloc data free below compacted boundary: off=%zu start=%zu",
+                offset, header->jemalloc_data_free_start);
+        }
 
         size_t rel_size = ((size_t)data_size + JEMALLOC_ALIGNMENT - 1) & ~(JEMALLOC_ALIGNMENT - 1);
         header->pending_data_buff_size -= (int64_t)rel_size;

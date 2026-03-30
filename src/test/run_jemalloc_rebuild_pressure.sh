@@ -1,4 +1,4 @@
-#!/bin/zsh
+#!/bin/bash
 set -u
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
@@ -46,6 +46,11 @@ for pid in "${reader_pids[@]}"; do
     fi
 done
 reader_pids=()
+
+echo "== full_cycle verify reuse =="
+if ! "$BIN" full_cycle_verify_reuse; then
+    overall_rc=1
+fi
 
 if [[ $overall_rc -eq 0 ]]; then
     echo "run_jemalloc_rebuild_pressure.sh: passed"

@@ -200,6 +200,11 @@ typedef struct _IndexHeader {
     size_t rebuild_index_block_cursor;
     size_t rebuild_data_block_cursor;
 
+    // Offsets below these boundaries were compacted into place by startup rebuild
+    // and must not be returned to the current jemalloc arena via dallocx().
+    size_t jemalloc_index_free_start;
+    size_t jemalloc_data_free_start;
+
     // Reader epoch tracking for safe quarantined-block reuse.
     std::atomic<uint32_t> reader_epoch_tracking_active;
     uint32_t reader_epoch_slot_count;

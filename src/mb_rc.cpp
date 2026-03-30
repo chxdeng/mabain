@@ -196,21 +196,32 @@ int ResourceCollection::StartupShrink()
 
     const size_t index_block_end = dmm->GetExistingBlockEnd();
     const size_t data_block_end = dict->GetExistingBlockEnd();
-    size_t index_tail = dmm->GetJemallocAllocSize();
-    size_t data_tail = dict->GetJemallocAllocSize();
-    if (index_tail < header->m_index_offset) {
+    size_t index_tail = std::max(dmm->GetJemallocAllocSize(), index_block_end);
+    size_t data_tail = std::max(dict->GetJemallocAllocSize(), data_block_end);
+    if (index_tail < index_block_end) {
         Logger::Log(LOG_LEVEL_WARN,
-            "startup shrink index tail not reseeded on reopen, using live offset %llu instead of %llu",
-            static_cast<unsigned long long>(header->m_index_offset),
+            "startup shrink index tail invalid on reopen, using existing block end %llu instead of %llu",
+            static_cast<unsigned long long>(index_block_end),
             static_cast<unsigned long long>(index_tail));
-        index_tail = header->m_index_offset;
+        index_tail = index_block_end;
     }
-    if (data_tail < header->m_data_offset) {
+    if (data_tail < data_block_end) {
         Logger::Log(LOG_LEVEL_WARN,
-            "startup shrink data tail not reseeded on reopen, using live offset %llu instead of %llu",
+            "startup shrink data tail invalid on reopen, using existing block end %llu instead of %llu",
+            static_cast<unsigned long long>(data_block_end),
+            static_cast<unsigned long long>(data_tail));
+        data_tail = data_block_end;
+    }
+    if (index_tail == 0 || data_tail == 0)
+        return MBError::NOT_INITIALIZED;
+    if (index_tail < header->m_index_offset || data_tail < header->m_data_offset) {
+        Logger::Log(LOG_LEVEL_WARN,
+            "startup shrink live offsets exceed reopen tails index=%llu/%llu data=%llu/%llu",
+            static_cast<unsigned long long>(header->m_index_offset),
+            static_cast<unsigned long long>(index_tail),
             static_cast<unsigned long long>(header->m_data_offset),
             static_cast<unsigned long long>(data_tail));
-        data_tail = header->m_data_offset;
+        return MBError::INVALID_SIZE;
     }
 
     header->ResetRebuildMetadata(REBUILD_STATE_COPY);
@@ -218,6 +229,13 @@ int ResourceCollection::StartupShrink()
     header->rebuild_data_alloc_start = data_tail;
     header->rebuild_index_alloc_end = index_tail;
     header->rebuild_data_alloc_end = data_tail;
+
+    // In jemalloc mode, normal live offsets are not reliable reopen tails.
+    // Reorder must use a non-overlapping workspace beyond the existing block end.
+    header->m_index_offset = index_tail;
+    header->m_data_offset = data_tail;
+    header->rc_m_index_off_pre = index_tail;
+    header->rc_m_data_off_pre = data_tail;
 
     rc_type = RESOURCE_COLLECTION_TYPE_INDEX | RESOURCE_COLLECTION_TYPE_DATA;
     if (index_free_lists != NULL)
@@ -231,8 +249,6 @@ int ResourceCollection::StartupShrink()
     data_rc_status = MBError::NOT_INITIALIZED;
     index_reorder_status = MBError::NOT_INITIALIZED;
     data_reorder_status = MBError::NOT_INITIALIZED;
-    header->rc_m_index_off_pre = header->m_index_offset;
-    header->rc_m_data_off_pre = header->m_data_offset;
     header->rc_root_offset.store(0, MEMORY_ORDER_WRITER);
     ReorderBuffers();
     CollectBuffers();
