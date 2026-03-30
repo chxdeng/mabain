@@ -17,6 +17,7 @@
 // @author Changxue Deng <chadeng@cisco.com>
 
 #include <cerrno>
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
@@ -41,6 +42,7 @@ constexpr size_t kArenaCursorMemCap = 4 * kArenaCursorBlockSize;
 constexpr int kArenaCursorMaxBlocks = 4;
 constexpr char kFullCycleKeysFile[] = "/var/tmp/mabain_test/jemalloc_rebuild/full_cycle_keys.txt";
 constexpr char kFullCycleStopFile[] = "/var/tmp/mabain_test/jemalloc_rebuild/full_cycle.stop";
+constexpr char kFullCycleBurstKeysFile[] = "/var/tmp/mabain_test/jemalloc_rebuild/full_cycle_burst_keys.txt";
 constexpr uint32_t kFullCycleBlockSize = 256 * 1024 * 1024;
 constexpr int kFullCycleMaxBlocks = 12;
 constexpr int kFullCycleBurstInsertCount = 9000;
@@ -207,14 +209,26 @@ int VerifyFindValue(DB& db, const std::string& key, const std::string& value,
 
 int WriteKeysToFile(const std::vector<std::string>& keys, const std::string& path)
 {
-    std::ofstream out(path, std::ios::out | std::ios::trunc);
+    const std::string tmp_path = path + ".tmp";
+    std::ofstream out(tmp_path, std::ios::out | std::ios::trunc);
     if (!out.is_open()) {
-        std::cerr << "failed to open key file for write: " << path << "\n";
+        std::cerr << "failed to open key file for write: " << tmp_path << "\n";
         return 1;
     }
     for (const std::string& key : keys)
         out << key << "\n";
-    return out.good() ? 0 : 1;
+    out.close();
+    if (!out) {
+        std::cerr << "failed while writing key file: " << tmp_path << "\n";
+        (void)unlink(tmp_path.c_str());
+        return 1;
+    }
+    if (std::rename(tmp_path.c_str(), path.c_str()) != 0) {
+        std::cerr << "failed to rename key file: " << tmp_path << " -> " << path << "\n";
+        (void)unlink(tmp_path.c_str());
+        return 1;
+    }
+    return 0;
 }
 
 int LoadKeysFromFile(const std::string& path, std::vector<std::string>& keys)
@@ -262,7 +276,8 @@ int ParseReaderConnectId(uint32_t& connect_id)
 }
 
 int RunReaderLookupLoop(const std::vector<std::string>& keys, const std::string& value,
-    const std::string& stop_file, uint32_t connect_id, uint32_t block_size, int max_blocks)
+    const std::string& stop_file, const std::string& burst_keys_file,
+    uint32_t connect_id, uint32_t block_size, int max_blocks)
 {
     if (keys.empty()) {
         std::cerr << "reader_loop key set is empty\n";
@@ -280,6 +295,10 @@ int RunReaderLookupLoop(const std::vector<std::string>& keys, const std::string&
     }
 
     size_t iter = 0;
+    size_t burst_checks = 0;
+    bool burst_loaded = false;
+    std::vector<std::string> burst_keys;
+    const std::string burst_value(kFullCycleBurstValueSize, 'w');
     while (true) {
         errno = 0;
         if (access(stop_file.c_str(), F_OK) == 0)
@@ -296,10 +315,36 @@ int RunReaderLookupLoop(const std::vector<std::string>& keys, const std::string&
             return 1;
         }
 
+        if (!burst_loaded) {
+            errno = 0;
+            if (access(burst_keys_file.c_str(), F_OK) == 0) {
+                if (LoadKeysFromFile(burst_keys_file, burst_keys) != 0) {
+                    reader_db.Close();
+                    return 1;
+                }
+                burst_loaded = true;
+                std::cout << "reader_loop connect_id=" << connect_id
+                          << " loaded_burst_keys=" << burst_keys.size() << "\n";
+            } else if (errno != 0 && errno != ENOENT) {
+                std::cerr << "reader_loop burst-file check failed\n";
+                reader_db.Close();
+                return 1;
+            }
+        }
+
+        if (burst_loaded) {
+            const std::string& burst_key = burst_keys[burst_checks % burst_keys.size()];
+            if (VerifyFindValue(reader_db, burst_key, burst_value, "reader_loop burst") != 0) {
+                reader_db.Close();
+                return 1;
+            }
+            burst_checks++;
+        }
+
         iter++;
         if ((iter % 50000) == 0) {
             std::cout << "reader_loop connect_id=" << connect_id
-                      << " lookups=" << iter << "\n";
+                      << " lookups=" << iter << " burst_checks=" << burst_checks << "\n";
         }
         if ((iter % 1024) == 0)
             usleep(1000);
@@ -308,7 +353,8 @@ int RunReaderLookupLoop(const std::vector<std::string>& keys, const std::string&
     reader_db.Close();
     mabain::ResourcePool::getInstance().RemoveAll();
     std::cout << "reader_loop connect_id=" << connect_id
-              << " stopped after " << iter << " lookups\n";
+              << " stopped after " << iter << " lookups and " << burst_checks
+              << " burst checks\n";
     return 0;
 }
 
@@ -694,6 +740,7 @@ int RunFullCyclePrepareMode()
     std::vector<std::string> survivor_keys;
 
     (void)unlink(kFullCycleStopFile);
+    (void)unlink(kFullCycleBurstKeysFile);
     mabain::ResourcePool::getInstance().RemoveAll();
     {
         MBConfig initial_cfg = MakeSizedJemallocRebuildConfig(
@@ -757,7 +804,8 @@ int RunReaderLoopMode()
 
     const std::string value(256, 'v');
     return RunReaderLookupLoop(
-        survivor_keys, value, kFullCycleStopFile, connect_id, kFullCycleBlockSize, kFullCycleMaxBlocks);
+        survivor_keys, value, kFullCycleStopFile, kFullCycleBurstKeysFile,
+        connect_id, kFullCycleBlockSize, kFullCycleMaxBlocks);
 }
 
 std::string MakeFullCycleBurstKey(int i)
@@ -844,8 +892,11 @@ int RunFullCycleMode()
     const size_t ready_data_before = rebuild_db.GetDictPtr()->GetReusableBlockCount();
     LogWriterBurstState("start", -1, rebuild_db, header);
     const std::string burst_value(kFullCycleBurstValueSize, 'w');
+    std::vector<std::string> burst_keys;
+    burst_keys.reserve(kFullCycleBurstInsertCount);
     for (int i = 0; i < kFullCycleBurstInsertCount; i++) {
         const std::string key = MakeFullCycleBurstKey(i);
+        burst_keys.push_back(key);
         if (i < 4 || ((i + 1) % 500) == 0)
             LogWriterBurstState("before_add", i, rebuild_db, header);
         int rval = rebuild_db.Add(key, burst_value);
@@ -860,6 +911,11 @@ int RunFullCycleMode()
         if (i < 4 || ((i + 1) % 500) == 0)
             LogWriterBurstState("after_add", i, rebuild_db, header);
     }
+    if (WriteKeysToFile(burst_keys, kFullCycleBurstKeysFile) != 0) {
+        rebuild_db.Close();
+        return 1;
+    }
+    std::cout << "full_cycle writer published burst_keys=" << burst_keys.size() << "\n";
     if (VerifyFindValue(rebuild_db, kFullCyclePostInsertKey, burst_value, "full_cycle writer burst") != 0) {
 
         rebuild_db.Close();

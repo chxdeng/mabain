@@ -151,7 +151,7 @@ public:
 
 TEST(JemallocRebuildHarnessTest, ModeListContainsExpectedPhases)
 {
-    EXPECT_EQ(kJemallocRebuildTestModes.size(), 11u);
+    EXPECT_EQ(kJemallocRebuildTestModes.size(), 13u);
     EXPECT_TRUE(IsJemallocRebuildTestModeSupported("header_metadata"));
     EXPECT_TRUE(IsJemallocRebuildTestModeSupported("arena_cursor"));
     EXPECT_TRUE(IsJemallocRebuildTestModeSupported("startup_gate"));
@@ -163,6 +163,8 @@ TEST(JemallocRebuildHarnessTest, ModeListContainsExpectedPhases)
     EXPECT_TRUE(IsJemallocRebuildTestModeSupported("full_cycle_prepare"));
     EXPECT_TRUE(IsJemallocRebuildTestModeSupported("reader_loop"));
     EXPECT_TRUE(IsJemallocRebuildTestModeSupported("full_cycle"));
+    EXPECT_TRUE(IsJemallocRebuildTestModeSupported("full_cycle_insert_verify"));
+    EXPECT_TRUE(IsJemallocRebuildTestModeSupported("full_cycle_verify_reuse"));
     EXPECT_FALSE(IsJemallocRebuildTestModeSupported("unknown_mode"));
 }
 

@@ -39,6 +39,9 @@ if ! "$BIN" full_cycle; then
     overall_rc=1
 fi
 
+echo "== reader post-rebuild validation window =="
+sleep 2
+
 : > "$STOP_FILE"
 for pid in "${reader_pids[@]}"; do
     if ! wait "$pid"; then

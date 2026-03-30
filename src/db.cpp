@@ -148,8 +148,8 @@ DB::DB(const char* db_path,
     uint32_t id,
     uint32_t queue_size)
     : status(MBError::NOT_INITIALIZED)
-    , writer_lock_fd(-1)
     , reader_epoch_slot_id(-1)
+    , writer_lock_fd(-1)
 {
     MBConfig config;
     memset(&config, 0, sizeof(config));
@@ -165,8 +165,8 @@ DB::DB(const char* db_path,
 
 DB::DB(MBConfig& config)
     : status(MBError::NOT_INITIALIZED)
-    , writer_lock_fd(-1)
     , reader_epoch_slot_id(-1)
+    , writer_lock_fd(-1)
 {
     InitDB(config);
 }
