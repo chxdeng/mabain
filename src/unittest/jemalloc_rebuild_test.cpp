@@ -405,6 +405,47 @@ TEST_F(JemallocRebuildMetadataTest, StartupEvacuateSeparatesExactBoundaryFromSou
     rebuild_db.Close();
 }
 
+TEST_F(JemallocRebuildMetadataTest, StartupEvacuateIsIdempotentInCutoverState)
+{
+    CreateJemallocRebuildTestDir();
+    const std::string key("zeta");
+    const std::string value("value-zeta");
+
+    MBConfig initial_cfg = MakeJemallocRebuildConfig(
+        CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, false);
+    DB initial_db(initial_cfg);
+    ASSERT_TRUE(initial_db.is_open());
+    ASSERT_EQ(initial_db.Add(key, value), MBError::SUCCESS);
+    initial_db.Close();
+
+    MBConfig rebuild_cfg = MakeJemallocRebuildConfig(
+        CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, true);
+    DB rebuild_db(rebuild_cfg);
+    ASSERT_TRUE(rebuild_db.is_open());
+
+    ResourceCollection rc(rebuild_db);
+    ASSERT_EQ(rc.StartupShrink(), MBError::SUCCESS);
+    ASSERT_EQ(rc.StartupEvacuate(), MBError::SUCCESS);
+
+    IndexHeader* header = rebuild_db.GetDictPtr()->GetHeaderPtr();
+    ASSERT_NE(header, nullptr);
+    const size_t index_source_start = header->rebuild_index_alloc_start;
+    const size_t data_source_start = header->rebuild_data_alloc_start;
+    const size_t index_boundary = header->rebuild_index_alloc_end;
+    const size_t data_boundary = header->rebuild_data_alloc_end;
+
+    ASSERT_EQ(rc.StartupEvacuate(), MBError::SUCCESS);
+    EXPECT_EQ(header->rebuild_state, REBUILD_STATE_CUTOVER);
+    EXPECT_EQ(header->rebuild_index_alloc_start, index_source_start);
+    EXPECT_EQ(header->rebuild_data_alloc_start, data_source_start);
+    EXPECT_EQ(header->rebuild_index_alloc_end, index_boundary);
+    EXPECT_EQ(header->rebuild_data_alloc_end, data_boundary);
+    EXPECT_EQ(rebuild_db.GetDictPtr()->GetMM()->GetJemallocAllocSize(), index_boundary);
+    EXPECT_EQ(rebuild_db.GetDictPtr()->GetJemallocAllocSize(), data_boundary);
+    ExpectFindValue(rebuild_db, key, value);
+    rebuild_db.Close();
+}
+
 TEST_F(JemallocRebuildMetadataTest, StartupShrinkRejectsNonJemallocWriterGracefully)
 {
     CreateJemallocRebuildTestDir();

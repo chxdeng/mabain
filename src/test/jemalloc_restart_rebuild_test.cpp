@@ -458,6 +458,80 @@ int RunEvacuateOnlyMode()
     return 0;
 }
 
+int RunRecoverEvacuateMode()
+{
+    if (PrepareArenaCursorDir() != 0) {
+        std::cerr << "failed to prepare recover_evacuate test directory\n";
+        return 1;
+    }
+
+    mabain::ResourcePool::getInstance().RemoveAll();
+    const std::string key("zeta");
+    const std::string value("value-zeta");
+
+    {
+        MBConfig initial_cfg = MakeJemallocRebuildConfig(
+            mabain::CONSTS::ACCESS_MODE_WRITER | mabain::CONSTS::OPTION_JEMALLOC, false);
+        DB initial_db(initial_cfg);
+        if (!initial_db.is_open()) {
+            std::cerr << "initial recover_evacuate open failed: " << initial_db.StatusStr() << "\n";
+            return 1;
+        }
+        if (initial_db.Add(key, value) != mabain::MBError::SUCCESS) {
+            std::cerr << "initial recover_evacuate Add failed\n";
+            return 1;
+        }
+        initial_db.Close();
+    }
+
+    MBConfig rebuild_cfg = MakeJemallocRebuildConfig(
+        mabain::CONSTS::ACCESS_MODE_WRITER | mabain::CONSTS::OPTION_JEMALLOC, true);
+    DB rebuild_db(rebuild_cfg);
+    if (!rebuild_db.is_open()) {
+        std::cerr << "recover_evacuate reopen failed: " << rebuild_db.StatusStr() << "\n";
+        return 1;
+    }
+
+    mabain::ResourceCollection rc(rebuild_db);
+    if (rc.StartupShrink() != mabain::MBError::SUCCESS || rc.StartupEvacuate() != mabain::MBError::SUCCESS) {
+        std::cerr << "recover_evacuate initial handoff failed\n";
+        return 1;
+    }
+
+    const IndexHeader* header = rebuild_db.GetDictPtr()->GetHeaderPtr();
+    if (header == nullptr) {
+        std::cerr << "recover_evacuate missing header\n";
+        return 1;
+    }
+    const size_t index_source_start = header->rebuild_index_alloc_start;
+    const size_t data_source_start = header->rebuild_data_alloc_start;
+    const size_t index_boundary = header->rebuild_index_alloc_end;
+    const size_t data_boundary = header->rebuild_data_alloc_end;
+
+    if (rc.StartupEvacuate() != mabain::MBError::SUCCESS) {
+        std::cerr << "recover_evacuate second handoff failed\n";
+        return 1;
+    }
+    if (header->rebuild_state != REBUILD_STATE_CUTOVER
+        || header->rebuild_index_alloc_start != index_source_start
+        || header->rebuild_data_alloc_start != data_source_start
+        || header->rebuild_index_alloc_end != index_boundary
+        || header->rebuild_data_alloc_end != data_boundary
+        || rebuild_db.GetDictPtr()->GetMM()->GetJemallocAllocSize() != index_boundary
+        || rebuild_db.GetDictPtr()->GetJemallocAllocSize() != data_boundary) {
+        std::cerr << "recover_evacuate metadata mismatch\n";
+        return 1;
+    }
+    if (VerifyFindValue(rebuild_db, key, value, "recover_evacuate writer") != 0) {
+        return 1;
+    }
+
+    rebuild_db.Close();
+    mabain::ResourcePool::getInstance().RemoveAll();
+    std::cout << "jemalloc_restart_rebuild_test: recover_evacuate passed\n";
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char* argv[])
@@ -485,6 +559,9 @@ int main(int argc, char* argv[])
     }
     if (mode == "evacuate_only") {
         return RunEvacuateOnlyMode();
+    }
+    if (mode == "recover_evacuate") {
+        return RunRecoverEvacuateMode();
     }
 
     return RunScaffoldMode(mode);
