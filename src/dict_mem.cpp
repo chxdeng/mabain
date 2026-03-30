@@ -206,6 +206,7 @@ DictMem::DictMem(const std::string& mbdir, bool init_header, size_t memsize,
         header->version[3] = 0;
         // Step 2: make rebuild metadata initialization explicit for new-format DBs.
         header->ClearRebuildMetadata();
+        header->ResetReaderEpochState();
         // Set up inode number and create queue
         header->shm_queue_id = get_file_inode(mbdir + "_mabain_h");
         // Cannot set is_valid to true.

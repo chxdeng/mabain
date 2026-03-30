@@ -550,6 +550,52 @@ int RollableFile::ReseedJemalloc(size_t alloc_size)
     return MBError::SUCCESS;
 }
 
+int RollableFile::AddReusableBlock(size_t block_order)
+{
+    if (!(mode & CONSTS::OPTION_JEMALLOC)) {
+        return MBError::INVALID_ARG;
+    }
+    if (block_order >= max_num_block) {
+        return MBError::OUT_OF_BOUND;
+    }
+    int rval = CheckAndOpenFile(0, true);
+    if (rval != MBError::SUCCESS || files[0] == nullptr || files[0]->mm_meta == nullptr) {
+        return rval != MBError::SUCCESS ? rval : MBError::NOT_INITIALIZED;
+    }
+
+    MemoryManagerMetadata* mm_meta = files[0]->mm_meta;
+    if (mm_meta->active_reusable_block_order == static_cast<int>(block_order))
+        return MBError::SUCCESS;
+    for (size_t i = 0; i < mm_meta->reusable_block_order.size(); i++) {
+        if (mm_meta->reusable_block_order[i] == block_order)
+            return MBError::SUCCESS;
+    }
+    mm_meta->reusable_block_order.push_back(static_cast<uint32_t>(block_order));
+    return MBError::SUCCESS;
+}
+
+size_t RollableFile::GetReusableBlockCount() const
+{
+    return (files.empty() || files[0] == nullptr || files[0]->mm_meta == nullptr)
+        ? 0 : files[0]->mm_meta->reusable_block_order.size();
+}
+
+size_t RollableFile::GetExistingBlockEnd() const
+{
+    size_t end_offset = 0;
+    struct stat st;
+    for (size_t block_order = 0; block_order < max_num_block; block_order++) {
+        std::stringstream ss;
+        ss << block_order;
+        std::string file_path = path + ss.str();
+        if (stat(file_path.c_str(), &st) != 0) {
+            break;
+        }
+        end_offset = (block_order + 1) * block_size;
+    }
+    return end_offset;
+}
+
 // offset is the total offset. It is used to find the block order and relative offset within the block.
 size_t RollableFile::MemWrite(const void* src, size_t size, size_t offset)
 {
@@ -686,37 +732,81 @@ void* RollableFile::custom_extent_alloc(void* new_addr, size_t size, size_t alig
                 arena_ind, aligned_offset, size, mgr->block_size);
             return nullptr;
         }
-    } else {
+    } else if (mm_meta->active_reusable_block_order >= 0) {
+        int block_order = mm_meta->active_reusable_block_order;
+        aligned_offset = (mm_meta->active_reusable_block_offset + alignment - 1) & ~(alignment - 1);
+        if (aligned_offset + size <= mgr->block_size) {
+            int rval = mgr->CheckAndOpenFile(block_order, true);
+            if (rval != MBError::SUCCESS) {
+                Logger::Log(LOG_LEVEL_ERROR, "custom_extent_alloc: arena %u failed to reopen"
+                                             " reusable block file (order: %d, size: %zu)",
+                    arena_ind, block_order, size);
+                throw (int)MBError::MMAP_FAILED;
+            }
+            mm_meta->active_reusable_block_offset = aligned_offset + size;
+            ptr = mgr->files[block_order]->GetMapAddr() + aligned_offset;
+        } else {
+            mm_meta->active_reusable_block_order = -1;
+            mm_meta->active_reusable_block_offset = 0;
+        }
+    }
+
+    if (ptr == nullptr) {
         // Note alloc_size is the current total allocation size used by all blocks
         int block_order = mm_meta->alloc_size / mgr->block_size;
         size_t relative_offset = mm_meta->alloc_size % mgr->block_size;
         aligned_offset = (relative_offset + alignment - 1) & ~(alignment - 1);
         if (aligned_offset + size > mgr->block_size) {
-            // Try next block
-            block_order++;
-            if ((size_t)block_order >= mgr->max_num_block) {
-                Logger::Log(LOG_LEVEL_ERROR, "custom_extent_alloc: arena %u max block number exceeded",
-                    " new memory (aligned offset: %zu, used: %zu, size: %zu)",
-                    arena_ind, aligned_offset, mm_meta->alloc_size, size);
-                throw (int)MBError::NO_MEMORY;
+            if (!mm_meta->reusable_block_order.empty()) {
+                block_order = static_cast<int>(mm_meta->reusable_block_order.back());
+                mm_meta->reusable_block_order.pop_back();
+                int rval = mgr->CheckAndOpenFile(block_order, true);
+                if (rval != MBError::SUCCESS) {
+                    Logger::Log(LOG_LEVEL_ERROR, "custom_extent_alloc: arena %u failed to open"
+                                                 " reusable block file (order: %d, size: %zu)",
+                        arena_ind, block_order, size);
+                    throw (int)MBError::MMAP_FAILED;
+                }
+                aligned_offset = 0;
+                if (size > mgr->block_size) {
+                    Logger::Log(LOG_LEVEL_ERROR, "custom_extent_alloc: arena %u reusable block too"
+                                                 " small (order: %d, size: %zu, block size: %zu)",
+                        arena_ind, block_order, size, mgr->block_size);
+                    throw (int)MBError::NO_MEMORY;
+                }
+                mm_meta->active_reusable_block_order = block_order;
+                mm_meta->active_reusable_block_offset = size;
+                ptr = mgr->files[block_order]->GetMapAddr();
+            } else {
+                // Try next tail block
+                block_order++;
+                if ((size_t)block_order >= mgr->max_num_block) {
+                    Logger::Log(LOG_LEVEL_ERROR, "custom_extent_alloc: arena %u max block number exceeded",
+                        " new memory (aligned offset: %zu, used: %zu, size: %zu)",
+                        arena_ind, aligned_offset, mm_meta->alloc_size, size);
+                    throw (int)MBError::NO_MEMORY;
+                }
+                int rval = mgr->CheckAndOpenFile(block_order, true);
+                if (rval != MBError::SUCCESS) {
+                    Logger::Log(LOG_LEVEL_ERROR, "custom_extent_alloc: arena %u failed to open"
+                                                 " new block file (order: %d, used: %zu, size: %zu)",
+                        arena_ind, block_order, mm_meta->alloc_size, size);
+                    throw (int)MBError::MMAP_FAILED;
+                }
+                aligned_offset = 0; // reset aligned offset for new block
+                if (aligned_offset + size > mgr->block_size) {
+                    Logger::Log(LOG_LEVEL_ERROR, "custom_extent_alloc: arena %u failed to extend"
+                                                 " new memory (offset: %zu, size: %zu, used: %zu, size: %zu)",
+                        arena_ind, aligned_offset, size, mgr->block_size);
+                    throw (int)MBError::NO_MEMORY;
+                }
+                mm_meta->alloc_size = block_order * mgr->block_size + aligned_offset + size;
+                ptr = mgr->files[block_order]->GetMapAddr() + aligned_offset;
             }
-            int rval = mgr->CheckAndOpenFile(block_order, true);
-            if (rval != MBError::SUCCESS) {
-                Logger::Log(LOG_LEVEL_ERROR, "custom_extent_alloc: arena %u failed to open"
-                                             " new block file (order: %d, used: %zu, size: %zu)",
-                    arena_ind, block_order, mm_meta->alloc_size, size);
-                throw (int)MBError::MMAP_FAILED;
-            }
-            aligned_offset = 0; // reset aligned offset for new block
-            if (aligned_offset + size > mgr->block_size) {
-                Logger::Log(LOG_LEVEL_ERROR, "custom_extent_alloc: arena %u failed to extend"
-                                             " new memory (offset: %zu, size: %zu, used: %zu, size: %zu)",
-                    arena_ind, aligned_offset, size, mgr->block_size);
-                throw (int)MBError::NO_MEMORY;
-            }
+        } else {
+            mm_meta->alloc_size = block_order * mgr->block_size + aligned_offset + size;
+            ptr = mgr->files[block_order]->GetMapAddr() + aligned_offset;
         }
-        mm_meta->alloc_size = block_order * mgr->block_size + aligned_offset + size;
-        ptr = mgr->files[block_order]->GetMapAddr() + aligned_offset;
     }
 
     // Set zero and commit flags

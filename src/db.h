@@ -219,6 +219,8 @@ public:
     static bool PrefixCacheConfigured(int options) { return (options & CONSTS::OPTION_PREFIX_CACHE) != 0; }
 
 private:
+    uint64_t BeginReaderEpochGuard() const;
+    void EndReaderEpochGuard(uint64_t epoch) const;
     void InitDB(MBConfig& config);
     void InitDBEx(MBConfig& config);
     void ReInit(MBConfig& config);
@@ -236,6 +238,7 @@ private:
 
     // DB connector ID
     uint32_t identifier;
+    int reader_epoch_slot_id;
 
     // db lock
     MBLock lock;

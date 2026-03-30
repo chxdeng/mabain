@@ -53,6 +53,15 @@ int DB::Close()
 {
     int rval = MBError::SUCCESS;
 
+    if (dict != NULL && reader_epoch_slot_id >= 0) {
+        IndexHeader* header = dict->GetHeaderPtr();
+        if (header != NULL
+            && static_cast<uint32_t>(reader_epoch_slot_id) < header->reader_epoch_slot_count) {
+            header->reader_epoch_slot[reader_epoch_slot_id].Clear();
+        }
+        reader_epoch_slot_id = -1;
+    }
+
     if ((options & CONSTS::ACCESS_MODE_WRITER) && async_writer != NULL) {
         rval = async_writer->StopAsyncThread();
         if (rval != MBError::SUCCESS) {
@@ -96,6 +105,41 @@ int DB::UpdateNumHandlers(int mode, int delta)
     return rval;
 }
 
+uint64_t DB::BeginReaderEpochGuard() const
+{
+    if (dict == NULL || reader_epoch_slot_id < 0)
+        return 0;
+
+    IndexHeader* header = dict->GetHeaderPtr();
+    if (header == NULL
+        || !header->reader_epoch_tracking_active.load(MEMORY_ORDER_READER)
+        || static_cast<uint32_t>(reader_epoch_slot_id) >= header->reader_epoch_slot_count) {
+        return 0;
+    }
+
+    ReaderEpochSlot& slot = header->reader_epoch_slot[reader_epoch_slot_id];
+    for (;;) {
+        uint64_t epoch = header->reader_epoch.load(MEMORY_ORDER_READER);
+        slot.epoch.store(epoch, MEMORY_ORDER_WRITER);
+        if (epoch == header->reader_epoch.load(MEMORY_ORDER_READER))
+            return epoch;
+    }
+}
+
+void DB::EndReaderEpochGuard(uint64_t epoch) const
+{
+    if (epoch == 0 || dict == NULL || reader_epoch_slot_id < 0)
+        return;
+
+    IndexHeader* header = dict->GetHeaderPtr();
+    if (header == NULL
+        || static_cast<uint32_t>(reader_epoch_slot_id) >= header->reader_epoch_slot_count) {
+        return;
+    }
+
+    header->reader_epoch_slot[reader_epoch_slot_id].epoch.store(0, MEMORY_ORDER_WRITER);
+}
+
 // Constructor for initializing DB handle
 DB::DB(const char* db_path,
     int db_options,
@@ -105,6 +149,7 @@ DB::DB(const char* db_path,
     uint32_t queue_size)
     : status(MBError::NOT_INITIALIZED)
     , writer_lock_fd(-1)
+    , reader_epoch_slot_id(-1)
 {
     MBConfig config;
     memset(&config, 0, sizeof(config));
@@ -121,6 +166,7 @@ DB::DB(const char* db_path,
 DB::DB(MBConfig& config)
     : status(MBError::NOT_INITIALIZED)
     , writer_lock_fd(-1)
+    , reader_epoch_slot_id(-1)
 {
     InitDB(config);
 }
@@ -261,8 +307,10 @@ void DB::PostDBUpdate(const MBConfig& config, bool init_header, bool update_head
                 version[0], version[1], version[2]);
         }
         IndexHeader* header = dict->GetHeaderPtr();
-        if (header != NULL)
+        if (header != NULL) {
             header->async_queue_size = config.queue_size;
+            header->ResetReaderEpochState();
+        }
         dict->Init(identifier);
     }
 
@@ -271,6 +319,29 @@ void DB::PostDBUpdate(const MBConfig& config, bool init_header, bool update_head
             MBError::get_error_str(dict->Status()));
         status = dict->Status();
         return;
+    }
+
+    if (!(config.options & CONSTS::ACCESS_MODE_WRITER)) {
+        IndexHeader* header = dict->GetHeaderPtr();
+        if (header != NULL) {
+            for (uint32_t i = 0; i < header->reader_epoch_slot_count; i++) {
+                uint32_t expected = 0;
+                if (header->reader_epoch_slot[i].connect_id.compare_exchange_strong(
+                        expected, identifier, MEMORY_ORDER_WRITER, MEMORY_ORDER_READER)) {
+                    header->reader_epoch_slot[i].pid.store(
+                        static_cast<uint32_t>(getpid()), MEMORY_ORDER_WRITER);
+                    header->reader_epoch_slot[i].epoch.store(0, MEMORY_ORDER_WRITER);
+                    reader_epoch_slot_id = static_cast<int>(i);
+                    break;
+                }
+            }
+            if (reader_epoch_slot_id < 0) {
+                Logger::Log(LOG_LEVEL_ERROR,
+                    "failed to claim reader epoch slot for connector %u", identifier);
+                status = MBError::NO_MEMORY;
+                return;
+            }
+        }
     }
 
     if (config.options & CONSTS::ACCESS_MODE_WRITER) {
@@ -536,8 +607,11 @@ int DB::Find(const char* key, int len, MBData& mdata) const
     if (options & CONSTS::ASYNC_WRITER_MODE)
         return MBError::NOT_ALLOWED;
 
+    uint64_t reader_epoch = BeginReaderEpochGuard();
     detail::SearchEngine engine(*dict);
-    return engine.find(reinterpret_cast<const uint8_t*>(key), len, mdata);
+    int rval = engine.find(reinterpret_cast<const uint8_t*>(key), len, mdata);
+    EndReaderEpochGuard(reader_epoch);
+    return rval;
 }
 
 int DB::Find(const std::string& key, MBData& mdata) const
@@ -577,8 +651,11 @@ int DB::FindLongestPrefix(const char* key, int len, MBData& data) const
         return MBError::NOT_ALLOWED;
 
     data.match_len = 0;
+    uint64_t reader_epoch = BeginReaderEpochGuard();
     detail::SearchEngine engine(*dict);
-    return engine.findPrefix(reinterpret_cast<const uint8_t*>(key), len, data);
+    int rval = engine.findPrefix(reinterpret_cast<const uint8_t*>(key), len, data);
+    EndReaderEpochGuard(reader_epoch);
+    return rval;
 }
 
 int DB::FindLongestPrefix(const std::string& key, MBData& data) const

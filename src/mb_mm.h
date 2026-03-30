@@ -19,6 +19,9 @@
 #ifndef __MB_MM_H__
 #define __MB_MM_H__
 
+#include <stdint.h>
+#include <vector>
+
 #include <jemalloc/jemalloc.h>
 
 namespace mabain {
@@ -29,6 +32,8 @@ public:
         : alloc_size(0)
         , extent_hooks(nullptr)
         , arena_index(0)
+        , active_reusable_block_order(-1)
+        , active_reusable_block_offset(0)
     {
         extent_hooks = new extent_hooks_t();
     }
@@ -42,6 +47,10 @@ public:
     size_t alloc_size;
     extent_hooks_t* extent_hooks;
     unsigned arena_index;
+
+    std::vector<uint32_t> reusable_block_order;
+    int active_reusable_block_order;
+    size_t active_reusable_block_offset;
 };
 
 }

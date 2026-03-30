@@ -298,4 +298,32 @@ TEST_F(RollableFileTest, JemallocResetAndReseedAreDeterministic_test)
     EXPECT_EQ(alloc_size1, alloc_size2);
 }
 
+TEST_F(RollableFileTest, JemallocReusableBlockIsConsumedBeforeTailExtension_test)
+{
+    rfile = new RollableFile(std::string(ROLLABLE_FILE_TEST_DIR) + "/_mabain_jem_i",
+        JEMALLOC_TEST_BLOCK_SIZE, JEMALLOC_TEST_MEMCAP,
+        CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, 4);
+    ASSERT_NE(rfile, nullptr);
+    ASSERT_NE(rfile->PreAlloc(64), nullptr);
+
+    const size_t boundary = JEMALLOC_TEST_BLOCK_SIZE + 128;
+    ASSERT_EQ(rfile->ResetJemalloc(), MBError::SUCCESS);
+    ASSERT_EQ(rfile->ReseedJemalloc(boundary), MBError::SUCCESS);
+    ASSERT_EQ(rfile->AddReusableBlock(2), MBError::SUCCESS);
+    EXPECT_EQ(rfile->GetReusableBlockCount(), 1u);
+
+    size_t alloc_offset = 0;
+    void* ptr = rfile->Malloc(256, alloc_offset);
+    ASSERT_NE(ptr, nullptr);
+
+    EXPECT_GE(alloc_offset, 2 * JEMALLOC_TEST_BLOCK_SIZE);
+    EXPECT_LT(alloc_offset, 3 * JEMALLOC_TEST_BLOCK_SIZE);
+    EXPECT_EQ(rfile->GetJemallocAllocSize(), boundary);
+
+    size_t alloc_offset2 = 0;
+    ptr = rfile->Malloc(JEMALLOC_TEST_BLOCK_SIZE, alloc_offset2);
+    ASSERT_NE(ptr, nullptr);
+    EXPECT_GE(rfile->GetJemallocAllocSize(), 2 * JEMALLOC_TEST_BLOCK_SIZE);
+}
+
 }

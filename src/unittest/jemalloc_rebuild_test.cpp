@@ -22,6 +22,7 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <vector>
 
 #include <gtest/gtest.h>
 
@@ -43,20 +44,51 @@ constexpr uint32_t kJemallocRebuildBlockSize = 4 * 1024 * 1024;
 constexpr int kJemallocRebuildMaxBlocks = 4;
 constexpr size_t kJemallocRebuildMemCap = kJemallocRebuildBlockSize * kJemallocRebuildMaxBlocks;
 
-MBConfig MakeJemallocRebuildConfig(int options, bool keep_db)
+MBConfig MakeSizedJemallocRebuildConfig(int options, bool keep_db,
+    uint32_t block_size, int max_blocks)
 {
     MBConfig config = {};
     config.mbdir = kJemallocRebuildTestPath;
     config.options = options;
-    config.block_size_index = kJemallocRebuildBlockSize;
-    config.block_size_data = kJemallocRebuildBlockSize;
-    config.max_num_index_block = kJemallocRebuildMaxBlocks;
-    config.max_num_data_block = kJemallocRebuildMaxBlocks;
-    config.memcap_index = kJemallocRebuildMemCap;
-    config.memcap_data = kJemallocRebuildMemCap;
+    config.block_size_index = block_size;
+    config.block_size_data = block_size;
+    config.max_num_index_block = max_blocks;
+    config.max_num_data_block = max_blocks;
+    config.memcap_index = static_cast<size_t>(block_size) * max_blocks;
+    config.memcap_data = static_cast<size_t>(block_size) * max_blocks;
     config.num_entry_per_bucket = 500;
     config.jemalloc_keep_db = keep_db;
     return config;
+}
+
+MBConfig MakeJemallocRebuildConfig(int options, bool keep_db)
+{
+    return MakeSizedJemallocRebuildConfig(
+        options, keep_db, kJemallocRebuildBlockSize, kJemallocRebuildMaxBlocks);
+}
+
+class ResourceCollectionTestPeer : public ResourceCollection {
+public:
+    explicit ResourceCollectionTestPeer(const DB& db)
+        : ResourceCollection(db)
+    {
+    }
+
+    using ResourceCollection::IsReaderEpochQuiesced;
+    using ResourceCollection::QueueReusableBlock;
+    using ResourceCollection::ReleaseReusableBlocks;
+    using ResourceCollection::DrainReusableBlocks;
+};
+
+int FindReaderEpochSlot(const IndexHeader* header, uint32_t connect_id)
+{
+    if (header == nullptr)
+        return -1;
+    for (uint32_t i = 0; i < header->reader_epoch_slot_count; i++) {
+        if (header->reader_epoch_slot[i].connect_id.load(MEMORY_ORDER_READER) == connect_id)
+            return static_cast<int>(i);
+    }
+    return -1;
 }
 
 void ExpectFindValue(DB& db, const std::string& key, const std::string& value)
@@ -145,6 +177,12 @@ TEST(JemallocRebuildHeaderHelperTest, ResetRebuildMetadataClearsOffsetsAndKeepsR
     header.rebuild_data_alloc_end = 505;
     header.rebuild_index_source_end = 606;
     header.rebuild_data_source_end = 707;
+    header.rebuild_index_block_cursor = 808;
+    header.rebuild_data_block_cursor = 909;
+    header.reusable_index_block_count = 3;
+    header.reusable_data_block_count = 4;
+    header.reusable_index_block[0].in_use = 1;
+    header.reusable_data_block[0].in_use = 1;
 
     header.ResetRebuildMetadata(REBUILD_STATE_CUTOVER);
 
@@ -157,6 +195,12 @@ TEST(JemallocRebuildHeaderHelperTest, ResetRebuildMetadataClearsOffsetsAndKeepsR
     EXPECT_EQ(header.rebuild_data_alloc_end, 0u);
     EXPECT_EQ(header.rebuild_index_source_end, 0u);
     EXPECT_EQ(header.rebuild_data_source_end, 0u);
+    EXPECT_EQ(header.rebuild_index_block_cursor, 0u);
+    EXPECT_EQ(header.rebuild_data_block_cursor, 0u);
+    EXPECT_EQ(header.reusable_index_block_count, 0u);
+    EXPECT_EQ(header.reusable_data_block_count, 0u);
+    EXPECT_EQ(header.reusable_index_block[0].in_use, 0u);
+    EXPECT_EQ(header.reusable_data_block[0].in_use, 0u);
     EXPECT_TRUE(header.RebuildInProgress());
 }
 
@@ -192,6 +236,13 @@ TEST_F(JemallocRebuildMetadataTest, NewDbInitializesRebuildMetadataToZero)
     EXPECT_EQ(header->rebuild_data_alloc_end, 0u);
     EXPECT_EQ(header->rebuild_index_source_end, 0u);
     EXPECT_EQ(header->rebuild_data_source_end, 0u);
+    EXPECT_EQ(header->rebuild_index_block_cursor, 0u);
+    EXPECT_EQ(header->rebuild_data_block_cursor, 0u);
+    EXPECT_EQ(header->reusable_index_block_count, 0u);
+    EXPECT_EQ(header->reusable_data_block_count, 0u);
+    EXPECT_EQ(header->reader_epoch_tracking_active.load(MEMORY_ORDER_READER), 0u);
+    EXPECT_EQ(header->reader_epoch_slot_count, MB_MAX_READER_EPOCH_SLOT);
+    EXPECT_EQ(header->reader_epoch.load(MEMORY_ORDER_READER), 1u);
     db.Close();
 }
 
@@ -213,6 +264,13 @@ TEST_F(JemallocRebuildMetadataTest, PrintHeaderIncludesRebuildMetadata)
     header->rebuild_data_alloc_end = 8765;
     header->rebuild_index_source_end = 11111;
     header->rebuild_data_source_end = 22222;
+    header->rebuild_index_block_cursor = 33333;
+    header->rebuild_data_block_cursor = 44444;
+    header->reader_epoch_tracking_active.store(1, MEMORY_ORDER_WRITER);
+    header->reader_epoch_slot_count = 7;
+    header->reader_epoch.store(99, MEMORY_ORDER_WRITER);
+    header->reusable_index_block_count = 2;
+    header->reusable_data_block_count = 5;
 
     std::ostringstream out;
     db.PrintHeader(out);
@@ -226,7 +284,218 @@ TEST_F(JemallocRebuildMetadataTest, PrintHeaderIncludesRebuildMetadata)
     EXPECT_NE(header_text.find("rebuild data alloc end: 8765"), std::string::npos);
     EXPECT_NE(header_text.find("rebuild index source end: 11111"), std::string::npos);
     EXPECT_NE(header_text.find("rebuild data source end: 22222"), std::string::npos);
+    EXPECT_NE(header_text.find("rebuild index block cursor: 33333"), std::string::npos);
+    EXPECT_NE(header_text.find("rebuild data block cursor: 44444"), std::string::npos);
+    EXPECT_NE(header_text.find("reader epoch tracking active: 1"), std::string::npos);
+    EXPECT_NE(header_text.find("reader epoch slot count: 7"), std::string::npos);
+    EXPECT_NE(header_text.find("reader epoch: 99"), std::string::npos);
+    EXPECT_NE(header_text.find("reusable index block count: 2"), std::string::npos);
+    EXPECT_NE(header_text.find("reusable data block count: 5"), std::string::npos);
     db.Close();
+}
+
+TEST_F(JemallocRebuildMetadataTest, ReaderEpochSlotStaysIdleWhenTrackingIsDisabled)
+{
+    CreateJemallocRebuildTestDir();
+    const std::string key("reader-epoch-idle");
+    const std::string value("value");
+
+    MBConfig writer_cfg = MakeJemallocRebuildConfig(CONSTS::WriterOptions(), false);
+    DB writer_db(writer_cfg);
+    ASSERT_TRUE(writer_db.is_open());
+    ASSERT_EQ(writer_db.Add(key, value), MBError::SUCCESS);
+    writer_db.Close();
+
+    MBConfig reader_cfg = MakeJemallocRebuildConfig(CONSTS::ACCESS_MODE_READER, false);
+    reader_cfg.connect_id = 0x3456;
+    DB reader_db(reader_cfg);
+    ASSERT_TRUE(reader_db.is_open());
+
+    IndexHeader* header = reader_db.GetDictPtr()->GetHeaderPtr();
+    ASSERT_NE(header, nullptr);
+    ASSERT_EQ(header->reader_epoch_tracking_active.load(MEMORY_ORDER_READER), 0u);
+
+    const int slot = FindReaderEpochSlot(header, reader_cfg.connect_id);
+    ASSERT_GE(slot, 0);
+    EXPECT_EQ(header->reader_epoch_slot[slot].epoch.load(MEMORY_ORDER_READER), 0u);
+
+    ExpectFindValue(reader_db, key, value);
+    EXPECT_EQ(header->reader_epoch_slot[slot].epoch.load(MEMORY_ORDER_READER), 0u);
+    reader_db.Close();
+}
+
+TEST_F(JemallocRebuildMetadataTest, ReaderEpochSlotIsClaimedOnOpenAndClearedOnClose)
+{
+    CreateJemallocRebuildTestDir();
+
+    MBConfig writer_cfg = MakeJemallocRebuildConfig(CONSTS::WriterOptions(), false);
+    DB writer_db(writer_cfg);
+    ASSERT_TRUE(writer_db.is_open());
+    writer_db.Close();
+
+    MBConfig reader_cfg = MakeJemallocRebuildConfig(CONSTS::ACCESS_MODE_READER, false);
+    reader_cfg.connect_id = 0x4567;
+    DB reader_db(reader_cfg);
+    ASSERT_TRUE(reader_db.is_open());
+
+    IndexHeader* header = reader_db.GetDictPtr()->GetHeaderPtr();
+    ASSERT_NE(header, nullptr);
+
+    const int slot = FindReaderEpochSlot(header, reader_cfg.connect_id);
+    ASSERT_GE(slot, 0);
+    EXPECT_EQ(header->reader_epoch_slot[slot].connect_id.load(MEMORY_ORDER_READER),
+        reader_cfg.connect_id);
+    EXPECT_NE(header->reader_epoch_slot[slot].pid.load(MEMORY_ORDER_READER), 0u);
+    EXPECT_EQ(header->reader_epoch_slot[slot].epoch.load(MEMORY_ORDER_READER), 0u);
+
+    reader_db.Close();
+    EXPECT_EQ(header->reader_epoch_slot[slot].connect_id.load(MEMORY_ORDER_READER), 0u);
+    EXPECT_EQ(header->reader_epoch_slot[slot].pid.load(MEMORY_ORDER_READER), 0u);
+    EXPECT_EQ(header->reader_epoch_slot[slot].epoch.load(MEMORY_ORDER_READER), 0u);
+}
+
+TEST_F(JemallocRebuildMetadataTest, ReaderEpochTrackingCanBeEnabledForCoveredLookupPaths)
+{
+    CreateJemallocRebuildTestDir();
+    const std::string key("reader-epoch-active");
+    const std::string value("value");
+
+    MBConfig writer_cfg = MakeJemallocRebuildConfig(CONSTS::WriterOptions(), false);
+    DB writer_db(writer_cfg);
+    ASSERT_TRUE(writer_db.is_open());
+    ASSERT_EQ(writer_db.Add(key, value), MBError::SUCCESS);
+    writer_db.Close();
+
+    MBConfig reader_cfg = MakeJemallocRebuildConfig(CONSTS::ACCESS_MODE_READER, false);
+    reader_cfg.connect_id = 0x5678;
+    DB reader_db(reader_cfg);
+    ASSERT_TRUE(reader_db.is_open());
+
+    IndexHeader* header = reader_db.GetDictPtr()->GetHeaderPtr();
+    ASSERT_NE(header, nullptr);
+    const int slot = FindReaderEpochSlot(header, reader_cfg.connect_id);
+    ASSERT_GE(slot, 0);
+
+    header->reader_epoch.store(17, MEMORY_ORDER_WRITER);
+    header->reader_epoch_tracking_active.store(1, MEMORY_ORDER_WRITER);
+    EXPECT_EQ(header->reader_epoch_slot[slot].epoch.load(MEMORY_ORDER_READER), 0u);
+
+    ExpectFindValue(reader_db, key, value);
+
+    EXPECT_EQ(header->reader_epoch_slot[slot].epoch.load(MEMORY_ORDER_READER), 0u);
+    EXPECT_EQ(header->reader_epoch.load(MEMORY_ORDER_READER), 17u);
+    reader_db.Close();
+}
+
+TEST_F(JemallocRebuildMetadataTest, ReaderEpochTrackingAlsoCoversFindLongestPrefix)
+{
+    CreateJemallocRebuildTestDir();
+    const std::string key("reader-epoch-prefix");
+    const std::string value("value-prefix");
+
+    MBConfig writer_cfg = MakeJemallocRebuildConfig(CONSTS::WriterOptions(), false);
+    DB writer_db(writer_cfg);
+    ASSERT_TRUE(writer_db.is_open());
+    ASSERT_EQ(writer_db.Add(key, value), MBError::SUCCESS);
+    writer_db.Close();
+
+    MBConfig reader_cfg = MakeJemallocRebuildConfig(CONSTS::ACCESS_MODE_READER, false);
+    reader_cfg.connect_id = 0x6789;
+    DB reader_db(reader_cfg);
+    ASSERT_TRUE(reader_db.is_open());
+
+    IndexHeader* header = reader_db.GetDictPtr()->GetHeaderPtr();
+    ASSERT_NE(header, nullptr);
+    const int slot = FindReaderEpochSlot(header, reader_cfg.connect_id);
+    ASSERT_GE(slot, 0);
+
+    header->reader_epoch.store(23, MEMORY_ORDER_WRITER);
+    header->reader_epoch_tracking_active.store(1, MEMORY_ORDER_WRITER);
+    EXPECT_EQ(header->reader_epoch_slot[slot].epoch.load(MEMORY_ORDER_READER), 0u);
+
+    MBData data;
+    ASSERT_EQ(reader_db.FindLongestPrefix(key, data), MBError::SUCCESS);
+    ASSERT_EQ(std::string(reinterpret_cast<const char*>(data.buff), data.data_len), value);
+
+    EXPECT_EQ(header->reader_epoch_slot[slot].epoch.load(MEMORY_ORDER_READER), 0u);
+    EXPECT_EQ(header->reader_epoch.load(MEMORY_ORDER_READER), 23u);
+    reader_db.Close();
+}
+
+TEST_F(JemallocRebuildMetadataTest, QuarantinedBlockStaysUnavailableWhileReaderPinnedToRetireEpoch)
+{
+    CreateJemallocRebuildTestDir();
+
+    MBConfig writer_cfg = MakeJemallocRebuildConfig(
+        CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, false);
+    DB writer_db(writer_cfg);
+    ASSERT_TRUE(writer_db.is_open());
+
+    IndexHeader* header = writer_db.GetDictPtr()->GetHeaderPtr();
+    ASSERT_NE(header, nullptr);
+    header->reader_epoch_tracking_active.store(1, MEMORY_ORDER_WRITER);
+    header->reader_epoch_slot[0].connect_id.store(0x1111, MEMORY_ORDER_WRITER);
+    header->reader_epoch_slot[0].pid.store(1, MEMORY_ORDER_WRITER);
+    header->reader_epoch_slot[0].epoch.store(9, MEMORY_ORDER_WRITER);
+
+    ResourceCollectionTestPeer rc(writer_db);
+    ASSERT_EQ(rc.QueueReusableBlock(header->reusable_index_block,
+        header->reusable_index_block_count, 2, 9), MBError::SUCCESS);
+    EXPECT_EQ(header->reusable_index_block_count, 1u);
+
+    ASSERT_EQ(rc.ReleaseReusableBlocks(header->reusable_index_block,
+        header->reusable_index_block_count, writer_db.GetDictPtr()->GetMM()), MBError::SUCCESS);
+    EXPECT_EQ(header->reusable_index_block_count, 1u);
+    EXPECT_EQ(header->reusable_index_block[0].in_use, REUSABLE_BLOCK_STATE_QUARANTINED);
+    EXPECT_EQ(writer_db.GetDictPtr()->GetMM()->GetReusableBlockCount(), 0u);
+    EXPECT_EQ(header->reader_epoch_tracking_active.load(MEMORY_ORDER_READER), 1u);
+    writer_db.Close();
+}
+
+TEST_F(JemallocRebuildMetadataTest, QuarantinedBlockBecomesReusableAfterReadersAdvance)
+{
+    CreateJemallocRebuildTestDir();
+
+    MBConfig writer_cfg = MakeJemallocRebuildConfig(
+        CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, false);
+    DB writer_db(writer_cfg);
+    ASSERT_TRUE(writer_db.is_open());
+
+    IndexHeader* header = writer_db.GetDictPtr()->GetHeaderPtr();
+    ASSERT_NE(header, nullptr);
+    header->reader_epoch_tracking_active.store(1, MEMORY_ORDER_WRITER);
+    header->reader_epoch_slot[0].connect_id.store(0x2222, MEMORY_ORDER_WRITER);
+    header->reader_epoch_slot[0].pid.store(1, MEMORY_ORDER_WRITER);
+    header->reader_epoch_slot[0].epoch.store(11, MEMORY_ORDER_WRITER);
+
+    ResourceCollectionTestPeer rc(writer_db);
+    ASSERT_EQ(rc.QueueReusableBlock(header->reusable_index_block,
+        header->reusable_index_block_count, 2, 9), MBError::SUCCESS);
+    ASSERT_EQ(rc.QueueReusableBlock(header->reusable_data_block,
+        header->reusable_data_block_count, 3, 9), MBError::SUCCESS);
+
+    header->reader_epoch_slot[0].epoch.store(12, MEMORY_ORDER_WRITER);
+    ASSERT_EQ(rc.ReleaseReusableBlocks(header->reusable_index_block,
+        header->reusable_index_block_count, writer_db.GetDictPtr()->GetMM()), MBError::SUCCESS);
+    ASSERT_EQ(rc.ReleaseReusableBlocks(header->reusable_data_block,
+        header->reusable_data_block_count, writer_db.GetDictPtr()), MBError::SUCCESS);
+    EXPECT_EQ(header->reusable_index_block_count, 1u);
+    EXPECT_EQ(header->reusable_data_block_count, 1u);
+    EXPECT_EQ(header->reusable_index_block[0].in_use, REUSABLE_BLOCK_STATE_READY);
+    EXPECT_EQ(header->reusable_data_block[0].in_use, REUSABLE_BLOCK_STATE_READY);
+    EXPECT_EQ(writer_db.GetDictPtr()->GetMM()->GetReusableBlockCount(), 0u);
+    EXPECT_EQ(writer_db.GetDictPtr()->GetReusableBlockCount(), 0u);
+    EXPECT_EQ(header->reader_epoch_tracking_active.load(MEMORY_ORDER_READER), 1u);
+
+    ASSERT_EQ(rc.DrainReusableBlocks(header->reusable_index_block,
+        header->reusable_index_block_count, writer_db.GetDictPtr()->GetMM()), MBError::SUCCESS);
+    ASSERT_EQ(rc.DrainReusableBlocks(header->reusable_data_block,
+        header->reusable_data_block_count, writer_db.GetDictPtr()), MBError::SUCCESS);
+    EXPECT_EQ(header->reusable_index_block_count, 0u);
+    EXPECT_EQ(header->reusable_data_block_count, 0u);
+    EXPECT_EQ(writer_db.GetDictPtr()->GetMM()->GetReusableBlockCount(), 1u);
+    EXPECT_EQ(writer_db.GetDictPtr()->GetReusableBlockCount(), 1u);
+    writer_db.Close();
 }
 
 TEST_F(JemallocRebuildMetadataTest, RejectsOlderHeaderVersion)
@@ -256,6 +525,10 @@ TEST_F(JemallocRebuildMetadataTest, PersistedHeaderKeepsRebuildMetadata)
         header->rebuild_data_alloc_end = 2002;
         header->rebuild_index_source_end = 3001;
         header->rebuild_data_source_end = 3002;
+        header->rebuild_index_block_cursor = 4001;
+        header->rebuild_data_block_cursor = 4002;
+        header->reusable_index_block_count = 6;
+        header->reusable_data_block_count = 7;
         writer_db.Close();
     }
 
@@ -276,6 +549,10 @@ TEST_F(JemallocRebuildMetadataTest, PersistedHeaderKeepsRebuildMetadata)
     EXPECT_EQ(persisted->rebuild_data_alloc_end, 2002u);
     EXPECT_EQ(persisted->rebuild_index_source_end, 3001u);
     EXPECT_EQ(persisted->rebuild_data_source_end, 3002u);
+    EXPECT_EQ(persisted->rebuild_index_block_cursor, 4001u);
+    EXPECT_EQ(persisted->rebuild_data_block_cursor, 4002u);
+    EXPECT_EQ(persisted->reusable_index_block_count, 6u);
+    EXPECT_EQ(persisted->reusable_data_block_count, 7u);
     EXPECT_TRUE(persisted->RebuildInProgress());
 }
 
@@ -364,8 +641,8 @@ TEST_F(JemallocRebuildMetadataTest, StartupShrinkCapturesCurrentJemallocTails)
     EXPECT_EQ(header->rebuild_data_alloc_start, header->m_data_offset);
     EXPECT_LE(header->rebuild_index_alloc_end, header->rebuild_index_alloc_start);
     EXPECT_LE(header->rebuild_data_alloc_end, header->rebuild_data_alloc_start);
-    EXPECT_EQ(header->rebuild_index_source_end, header->m_index_offset);
-    EXPECT_EQ(header->rebuild_data_source_end, header->m_data_offset);
+    EXPECT_GE(header->rebuild_index_source_end, header->m_index_offset);
+    EXPECT_GE(header->rebuild_data_source_end, header->m_data_offset);
     EXPECT_GE(header->rebuild_index_source_end, header->rebuild_index_alloc_end);
     EXPECT_GE(header->rebuild_data_source_end, header->rebuild_data_alloc_end);
     rebuild_db.Close();
@@ -403,12 +680,25 @@ TEST_F(JemallocRebuildMetadataTest, StartupEvacuateSeparatesExactBoundaryFromSou
     EXPECT_EQ(header->rebuild_state, REBUILD_STATE_CUTOVER);
     EXPECT_EQ(header->rebuild_index_alloc_end, index_boundary);
     EXPECT_EQ(header->rebuild_data_alloc_end, data_boundary);
-    EXPECT_EQ(rebuild_db.GetDictPtr()->GetMM()->GetJemallocAllocSize(), index_boundary);
-    EXPECT_EQ(rebuild_db.GetDictPtr()->GetJemallocAllocSize(), data_boundary);
+    EXPECT_GE(rebuild_db.GetDictPtr()->GetMM()->GetJemallocAllocSize(), index_boundary);
+    EXPECT_GE(rebuild_db.GetDictPtr()->GetJemallocAllocSize(), data_boundary);
     EXPECT_EQ(header->rebuild_index_alloc_start % header->index_block_size, 0u);
     EXPECT_EQ(header->rebuild_data_alloc_start % header->data_block_size, 0u);
     EXPECT_GE(header->rebuild_index_alloc_start, header->rebuild_index_alloc_end);
     EXPECT_GE(header->rebuild_data_alloc_start, header->rebuild_data_alloc_end);
+    EXPECT_GE(header->rebuild_index_block_cursor, header->rebuild_index_alloc_start);
+    EXPECT_LE(header->rebuild_index_block_cursor, header->rebuild_index_source_end);
+    EXPECT_GE(header->rebuild_data_block_cursor, header->rebuild_data_alloc_start);
+    EXPECT_LE(header->rebuild_data_block_cursor, header->rebuild_data_source_end);
+    EXPECT_LE(header->reusable_index_block_count, 1u);
+    EXPECT_LE(header->reusable_data_block_count, 1u);
+    if (header->reusable_index_block_count == 1u)
+        EXPECT_EQ(header->reusable_index_block[0].in_use, REUSABLE_BLOCK_STATE_READY);
+    if (header->reusable_data_block_count == 1u)
+        EXPECT_EQ(header->reusable_data_block[0].in_use, REUSABLE_BLOCK_STATE_READY);
+    EXPECT_EQ(header->reader_epoch_tracking_active.load(MEMORY_ORDER_READER),
+        (header->rebuild_index_block_cursor < header->rebuild_index_source_end
+            || header->rebuild_data_block_cursor < header->rebuild_data_source_end) ? 1u : 0u);
 
     if (index_boundary % header->index_block_size == 0)
         EXPECT_EQ(header->rebuild_index_alloc_start, index_boundary);
@@ -422,7 +712,7 @@ TEST_F(JemallocRebuildMetadataTest, StartupEvacuateSeparatesExactBoundaryFromSou
     rebuild_db.Close();
 }
 
-TEST_F(JemallocRebuildMetadataTest, StartupEvacuateIsIdempotentInCutoverState)
+TEST_F(JemallocRebuildMetadataTest, StartupEvacuateResumesFromCutoverState)
 {
     CreateJemallocRebuildTestDir();
     const std::string key("zeta");
@@ -450,6 +740,10 @@ TEST_F(JemallocRebuildMetadataTest, StartupEvacuateIsIdempotentInCutoverState)
     const size_t data_source_start = header->rebuild_data_alloc_start;
     const size_t index_boundary = header->rebuild_index_alloc_end;
     const size_t data_boundary = header->rebuild_data_alloc_end;
+    const size_t index_source_end = header->rebuild_index_source_end;
+    const size_t data_source_end = header->rebuild_data_source_end;
+    const size_t index_cursor_1 = header->rebuild_index_block_cursor;
+    const size_t data_cursor_1 = header->rebuild_data_block_cursor;
 
     ASSERT_EQ(rc.StartupEvacuate(), MBError::SUCCESS);
     EXPECT_EQ(header->rebuild_state, REBUILD_STATE_CUTOVER);
@@ -457,9 +751,64 @@ TEST_F(JemallocRebuildMetadataTest, StartupEvacuateIsIdempotentInCutoverState)
     EXPECT_EQ(header->rebuild_data_alloc_start, data_source_start);
     EXPECT_EQ(header->rebuild_index_alloc_end, index_boundary);
     EXPECT_EQ(header->rebuild_data_alloc_end, data_boundary);
-    EXPECT_EQ(rebuild_db.GetDictPtr()->GetMM()->GetJemallocAllocSize(), index_boundary);
-    EXPECT_EQ(rebuild_db.GetDictPtr()->GetJemallocAllocSize(), data_boundary);
+    EXPECT_EQ(header->rebuild_index_source_end, index_source_end);
+    EXPECT_EQ(header->rebuild_data_source_end, data_source_end);
+    EXPECT_GE(header->rebuild_index_block_cursor, index_cursor_1);
+    EXPECT_GE(header->rebuild_data_block_cursor, data_cursor_1);
+    EXPECT_LE(header->rebuild_data_block_cursor, header->rebuild_data_source_end);
+    EXPECT_LE(header->rebuild_index_block_cursor, header->rebuild_index_source_end);
+    EXPECT_GE(rebuild_db.GetDictPtr()->GetMM()->GetJemallocAllocSize(), index_boundary);
+    EXPECT_GE(rebuild_db.GetDictPtr()->GetJemallocAllocSize(), data_boundary);
     ExpectFindValue(rebuild_db, key, value);
+    rebuild_db.Close();
+}
+
+TEST_F(JemallocRebuildMetadataTest, StartupEvacuateReleasesOneFullIndexSourceBlockWhenReadersAreIdle)
+{
+    CreateJemallocRebuildTestDir();
+    const uint32_t small_block_size = 64 * 1024;
+    const int small_max_blocks = 8;
+    const std::string value(256, 'v');
+    std::vector<std::string> keys;
+
+    MBConfig initial_cfg = MakeSizedJemallocRebuildConfig(
+        CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, false,
+        small_block_size, small_max_blocks);
+    DB initial_db(initial_cfg);
+    ASSERT_TRUE(initial_db.is_open());
+    for (int i = 0; i < 2500; i++) {
+        keys.push_back("evac-" + std::to_string(i) + std::string(24, 'k'));
+        ASSERT_EQ(initial_db.Add(keys.back(), value), MBError::SUCCESS);
+    }
+    for (int i = 0; i < 2200; i++)
+        ASSERT_EQ(initial_db.Remove(keys[i]), MBError::SUCCESS);
+    initial_db.Close();
+
+    MBConfig rebuild_cfg = MakeSizedJemallocRebuildConfig(
+        CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, true,
+        small_block_size, small_max_blocks);
+    DB rebuild_db(rebuild_cfg);
+    ASSERT_TRUE(rebuild_db.is_open());
+
+    ResourceCollection rc(rebuild_db);
+    ASSERT_EQ(rc.StartupShrink(), MBError::SUCCESS);
+
+    IndexHeader* header = rebuild_db.GetDictPtr()->GetHeaderPtr();
+    ASSERT_NE(header, nullptr);
+    ASSERT_GE(header->rebuild_index_source_end,
+        header->rebuild_index_alloc_start + header->index_block_size);
+    const size_t first_source_block = header->rebuild_index_alloc_start;
+
+    ASSERT_EQ(rc.StartupEvacuate(), MBError::SUCCESS);
+    EXPECT_EQ(header->rebuild_state, REBUILD_STATE_CUTOVER);
+    EXPECT_EQ(header->rebuild_index_block_cursor, first_source_block + header->index_block_size);
+    EXPECT_EQ(header->reusable_index_block_count, 1u);
+    EXPECT_EQ(header->reusable_index_block[0].in_use, REUSABLE_BLOCK_STATE_READY);
+    EXPECT_EQ(rebuild_db.GetDictPtr()->GetMM()->GetReusableBlockCount(), 0u);
+
+    ASSERT_EQ(rc.StartupEvacuate(), MBError::SUCCESS);
+    EXPECT_GE(rebuild_db.GetDictPtr()->GetMM()->GetReusableBlockCount(), 1u);
+    ExpectFindValue(rebuild_db, keys.back(), value);
     rebuild_db.Close();
 }
 
@@ -481,6 +830,8 @@ TEST_F(JemallocRebuildMetadataTest, StartupEvacuateRejectsEmptySourceWindowGrace
 
     ResourceCollection rc(rebuild_db);
     EXPECT_EQ(rc.StartupEvacuate(), MBError::SUCCESS);
+    EXPECT_EQ(header->reader_epoch_tracking_active.load(MEMORY_ORDER_READER), 0u);
+    EXPECT_EQ(header->rebuild_index_block_cursor, header->rebuild_index_alloc_start);
 
     header->ResetRebuildMetadata(REBUILD_STATE_COPY);
     header->rebuild_index_alloc_end = header->index_block_size + 1;

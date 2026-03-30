@@ -29,6 +29,8 @@
 
 #define RESOURCE_COLLECTION_PHASE_REORDER 0x01
 #define RESOURCE_COLLECTION_PHASE_COLLECT 0x02
+#define RESOURCE_COLLECTION_PHASE_EVACUATE_INDEX 0x04
+#define RESOURCE_COLLECTION_PHASE_EVACUATE_DATA 0x08
 
 namespace mabain {
 
@@ -60,7 +62,18 @@ private:
     void CollectBuffers();
     void ReorderBuffers();
     void Finish();
+    bool MoveDataBufferEvacuate(size_t& offset_src, int size);
+    bool MoveIndexBufferEvacuate(size_t& offset_src, int size);
     bool MoveIndexBuffer(int phase, size_t& offset_src, int size);
+    bool HasPendingReusableBlocks(const ReusableBlockEntry* entries, uint32_t entry_count) const;
+    bool IsReaderEpochQuiesced(uint64_t retire_epoch) const;
+    int ReleaseReusableBlocks(ReusableBlockEntry* entries, uint32_t& entry_count,
+        DRMBase* drm);
+    int DrainReusableBlocks(ReusableBlockEntry* entries, uint32_t& entry_count, DRMBase* drm);
+    int QueueReusableBlock(ReusableBlockEntry* entries, uint32_t& entry_count,
+        size_t block_order, uint64_t retire_epoch);
+    int EvacuateOneIndexBlock();
+    int EvacuateOneDataBlock();
     bool MoveDataBuffer(int phase, size_t& offset_src, int size);
     int LRUEviction(int64_t max_dbsz, int64_t max_dbcnt);
     void ProcessRCTree();
@@ -86,6 +99,12 @@ private:
     int64_t db_cnt;
     size_t edge_str_size;
     int64_t node_cnt;
+
+    // Current full source block being evacuated in Step 6.
+    size_t evacuate_index_block_start;
+    size_t evacuate_index_block_end;
+    size_t evacuate_data_block_start;
+    size_t evacuate_data_block_end;
 };
 
 }

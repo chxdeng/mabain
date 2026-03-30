@@ -46,6 +46,9 @@ public:
     void* Malloc(size_t size, size_t& offset);
     size_t GetJemallocAllocSize() const;
     int ReseedJemalloc(size_t alloc_size);
+    int AddReusableBlock(size_t block_order);
+    size_t GetReusableBlockCount() const;
+    size_t GetExistingBlockEnd() const;
     size_t MemWrite(const void* src, size_t size, size_t offset);
     size_t MemRead(void* dst, size_t size, size_t offset);
     void Free(void* ptr) const;

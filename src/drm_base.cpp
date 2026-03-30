@@ -168,6 +168,13 @@ void DRMBase::PrintHeader(std::ostream& out_stream) const
     out_stream << "rebuild data alloc end: " << header->rebuild_data_alloc_end << std::endl;
     out_stream << "rebuild index source end: " << header->rebuild_index_source_end << std::endl;
     out_stream << "rebuild data source end: " << header->rebuild_data_source_end << std::endl;
+    out_stream << "rebuild index block cursor: " << header->rebuild_index_block_cursor << std::endl;
+    out_stream << "rebuild data block cursor: " << header->rebuild_data_block_cursor << std::endl;
+    out_stream << "reader epoch tracking active: " << header->reader_epoch_tracking_active << std::endl;
+    out_stream << "reader epoch slot count: " << header->reader_epoch_slot_count << std::endl;
+    out_stream << "reader epoch: " << header->reader_epoch << std::endl;
+    out_stream << "reusable index block count: " << header->reusable_index_block_count << std::endl;
+    out_stream << "reusable data block count: " << header->reusable_data_block_count << std::endl;
     out_stream << "shared memory queue size: " << header->async_queue_size << std::endl;
     out_stream << "shared memory queue index: " << header->queue_index << std::endl;
     out_stream << "shared memory writer index: " << header->writer_index << std::endl;
