@@ -233,6 +233,8 @@ public:
     inline size_t CheckAlignment(size_t offset, int size) const;
     inline int ReadData(uint8_t* buff, unsigned len, size_t offset) const;
     inline size_t GetJemallocAllocSize() const;
+    inline int ReseedJemalloc(size_t alloc_size) const;
+    inline int ResetJemalloc() const;
     inline size_t GetResourceCollectionOffset() const;
     inline void RemoveUnused(size_t max_size, bool writer_mode = false);
 
@@ -329,6 +331,16 @@ inline int DRMBase::ReadData(uint8_t* buff, unsigned len, size_t offset) const
 inline size_t DRMBase::GetJemallocAllocSize() const
 {
     return kv_file == nullptr ? 0 : kv_file->GetJemallocAllocSize();
+}
+
+inline int DRMBase::ReseedJemalloc(size_t alloc_size) const
+{
+    return kv_file == nullptr ? MBError::NOT_INITIALIZED : kv_file->ReseedJemalloc(alloc_size);
+}
+
+inline int DRMBase::ResetJemalloc() const
+{
+    return kv_file == nullptr ? MBError::NOT_INITIALIZED : kv_file->ResetJemalloc();
 }
 
 inline size_t DRMBase::GetResourceCollectionOffset() const

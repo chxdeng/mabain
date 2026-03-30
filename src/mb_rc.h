@@ -47,6 +47,10 @@ public:
     // Returns MBError and must leave the current root authoritative on failure.
     int StartupShrink();
 
+    // Startup-only allocator handoff after dense shrink.
+    // Returns MBError and keeps the live root unchanged.
+    int StartupEvacuate();
+
     // This function should be called when writer starts up.
     int ExceptionRecovery();
 

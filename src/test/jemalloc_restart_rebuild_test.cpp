@@ -386,6 +386,78 @@ int RunShrinkOnlyMode()
     return 0;
 }
 
+int RunEvacuateOnlyMode()
+{
+    if (PrepareArenaCursorDir() != 0) {
+        std::cerr << "failed to prepare evacuate_only test directory\n";
+        return 1;
+    }
+
+    mabain::ResourcePool::getInstance().RemoveAll();
+    const std::string key("epsilon");
+    const std::string value("value-epsilon");
+
+    {
+        MBConfig initial_cfg = MakeJemallocRebuildConfig(
+            mabain::CONSTS::ACCESS_MODE_WRITER | mabain::CONSTS::OPTION_JEMALLOC, false);
+        DB initial_db(initial_cfg);
+        if (!initial_db.is_open()) {
+            std::cerr << "initial evacuate_only open failed: " << initial_db.StatusStr() << "\n";
+            return 1;
+        }
+        if (initial_db.Add(key, value) != mabain::MBError::SUCCESS) {
+            std::cerr << "initial evacuate_only Add failed\n";
+            return 1;
+        }
+        initial_db.Close();
+    }
+
+    MBConfig rebuild_cfg = MakeJemallocRebuildConfig(
+        mabain::CONSTS::ACCESS_MODE_WRITER | mabain::CONSTS::OPTION_JEMALLOC, true);
+    DB rebuild_db(rebuild_cfg);
+    if (!rebuild_db.is_open()) {
+        std::cerr << "evacuate_only reopen failed: " << rebuild_db.StatusStr() << "\n";
+        return 1;
+    }
+
+    mabain::ResourceCollection rc(rebuild_db);
+    if (rc.StartupShrink() != mabain::MBError::SUCCESS) {
+        std::cerr << "StartupShrink failed\n";
+        return 1;
+    }
+    const IndexHeader* header = rebuild_db.GetDictPtr()->GetHeaderPtr();
+    if (header == nullptr) {
+        std::cerr << "evacuate_only missing header\n";
+        return 1;
+    }
+    const size_t index_boundary = header->rebuild_index_alloc_end;
+    const size_t data_boundary = header->rebuild_data_alloc_end;
+    if (rc.StartupEvacuate() != mabain::MBError::SUCCESS) {
+        std::cerr << "StartupEvacuate failed\n";
+        return 1;
+    }
+    if (header->rebuild_state != REBUILD_STATE_CUTOVER
+        || header->rebuild_index_alloc_end != index_boundary
+        || header->rebuild_data_alloc_end != data_boundary
+        || rebuild_db.GetDictPtr()->GetMM()->GetJemallocAllocSize() != index_boundary
+        || rebuild_db.GetDictPtr()->GetJemallocAllocSize() != data_boundary
+        || header->rebuild_index_alloc_start < index_boundary
+        || header->rebuild_data_alloc_start < data_boundary
+        || (header->rebuild_index_alloc_start % header->index_block_size) != 0
+        || (header->rebuild_data_alloc_start % header->data_block_size) != 0) {
+        std::cerr << "evacuate_only metadata mismatch\n";
+        return 1;
+    }
+    if (VerifyFindValue(rebuild_db, key, value, "evacuate_only writer") != 0) {
+        return 1;
+    }
+
+    rebuild_db.Close();
+    mabain::ResourcePool::getInstance().RemoveAll();
+    std::cout << "jemalloc_restart_rebuild_test: evacuate_only passed\n";
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char* argv[])
@@ -410,6 +482,9 @@ int main(int argc, char* argv[])
     }
     if (mode == "shrink_only") {
         return RunShrinkOnlyMode();
+    }
+    if (mode == "evacuate_only") {
+        return RunEvacuateOnlyMode();
     }
 
     return RunScaffoldMode(mode);

@@ -29,6 +29,15 @@
 #define RC_TASK_CHECK 10 // every Xth async task try to reclaim resources
 #define MIN_RC_OFFSET_GAP 1ULL * 1024 * 1024 // 1M
 
+namespace {
+
+inline size_t AlignUpToBlock(size_t offset, uint32_t block_size)
+{
+    return block_size == 0 ? offset : ((offset + block_size - 1) / block_size) * block_size;
+}
+
+}
+
 namespace mabain {
 
 ResourceCollection::ResourceCollection(const DB& db, int rct)
@@ -230,6 +239,61 @@ int ResourceCollection::StartupShrink()
         "startup shrink completed compacted index/data boundaries: index=%llu data=%llu",
         static_cast<unsigned long long>(header->rebuild_index_alloc_end),
         static_cast<unsigned long long>(header->rebuild_data_alloc_end));
+    return MBError::SUCCESS;
+}
+
+int ResourceCollection::StartupEvacuate()
+{
+    if (!db_ref.is_open())
+        return db_ref.Status();
+    if (!(db_ref.GetDBOptions() & CONSTS::ACCESS_MODE_WRITER))
+        return MBError::NOT_ALLOWED;
+    if (!(db_ref.GetDBOptions() & CONSTS::OPTION_JEMALLOC))
+        return MBError::NOT_ALLOWED;
+    if (header == NULL)
+        return MBError::NOT_INITIALIZED;
+    if (header->rebuild_state != REBUILD_STATE_COPY
+        && header->rebuild_state != REBUILD_STATE_CUTOVER) {
+        Logger::Log(LOG_LEVEL_WARN,
+            "startup evacuate requires COPY/CUTOVER state, current state=%d",
+            header->rebuild_state);
+        return MBError::NOT_ALLOWED;
+    }
+
+    const size_t index_boundary = header->rebuild_index_alloc_end;
+    const size_t data_boundary = header->rebuild_data_alloc_end;
+    if (index_boundary == 0 || data_boundary == 0)
+        return MBError::NOT_INITIALIZED;
+    if (index_boundary < header->m_index_offset || data_boundary < header->m_data_offset)
+        return MBError::INVALID_SIZE;
+
+    const size_t index_source_start = AlignUpToBlock(index_boundary, header->index_block_size);
+    const size_t data_source_start = AlignUpToBlock(data_boundary, header->data_block_size);
+    if (index_source_start < index_boundary || data_source_start < data_boundary)
+        return MBError::INVALID_SIZE;
+
+    int rval = dmm->ResetJemalloc();
+    if (rval != MBError::SUCCESS)
+        return rval;
+    rval = dmm->ReseedJemalloc(index_boundary);
+    if (rval != MBError::SUCCESS)
+        return rval;
+    rval = dict->ResetJemalloc();
+    if (rval != MBError::SUCCESS)
+        return rval;
+    rval = dict->ReseedJemalloc(data_boundary);
+    if (rval != MBError::SUCCESS)
+        return rval;
+
+    header->rebuild_index_alloc_start = index_source_start;
+    header->rebuild_data_alloc_start = data_source_start;
+    header->rebuild_state = REBUILD_STATE_CUTOVER;
+    Logger::Log(LOG_LEVEL_INFO,
+        "startup evacuate reseeded jemalloc at exact boundaries index=%llu data=%llu with source blocks starting at index=%llu data=%llu",
+        static_cast<unsigned long long>(index_boundary),
+        static_cast<unsigned long long>(data_boundary),
+        static_cast<unsigned long long>(index_source_start),
+        static_cast<unsigned long long>(data_source_start));
     return MBError::SUCCESS;
 }
 
