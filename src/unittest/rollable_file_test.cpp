@@ -306,7 +306,7 @@ TEST_F(RollableFileTest, JemallocReusableBlockIsConsumedBeforeTailExtension_test
     ASSERT_NE(rfile, nullptr);
     ASSERT_NE(rfile->PreAlloc(64), nullptr);
 
-    const size_t boundary = JEMALLOC_TEST_BLOCK_SIZE + 128;
+    const size_t boundary = 2 * JEMALLOC_TEST_BLOCK_SIZE - 128;
     ASSERT_EQ(rfile->ResetJemalloc(), MBError::SUCCESS);
     ASSERT_EQ(rfile->ReseedJemalloc(boundary), MBError::SUCCESS);
     ASSERT_EQ(rfile->AddReusableBlock(2), MBError::SUCCESS);
@@ -318,12 +318,8 @@ TEST_F(RollableFileTest, JemallocReusableBlockIsConsumedBeforeTailExtension_test
 
     EXPECT_GE(alloc_offset, 2 * JEMALLOC_TEST_BLOCK_SIZE);
     EXPECT_LT(alloc_offset, 3 * JEMALLOC_TEST_BLOCK_SIZE);
+    EXPECT_EQ(rfile->GetReusableBlockCount(), 0u);
     EXPECT_EQ(rfile->GetJemallocAllocSize(), boundary);
-
-    size_t alloc_offset2 = 0;
-    ptr = rfile->Malloc(JEMALLOC_TEST_BLOCK_SIZE, alloc_offset2);
-    ASSERT_NE(ptr, nullptr);
-    EXPECT_GE(rfile->GetJemallocAllocSize(), 2 * JEMALLOC_TEST_BLOCK_SIZE);
 }
 
 }

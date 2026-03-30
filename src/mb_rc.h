@@ -34,6 +34,8 @@
 
 namespace mabain {
 
+class ResourceCollectionTestPeer;
+
 // A garbage collector class
 class ResourceCollection : public DBTraverseBase {
 public:
@@ -55,6 +57,8 @@ public:
 
     // This function should be called when writer starts up.
     int ExceptionRecovery();
+
+    friend class ResourceCollectionTestPeer;
 
 private:
     void DoTask(int phase, DBTraverseNode& dbt_node);
