@@ -17,6 +17,8 @@
 // @author Changxue Deng <chadeng@cisco.com>
 
 #include <algorithm>
+#include <cerrno>
+#include <csignal>
 #include <sys/time.h>
 
 #include "dict.h"
@@ -352,11 +354,11 @@ int ResourceCollection::StartupEvacuate()
         return rval;
 
     rval = ReleaseReusableBlocks(header->reusable_index_block,
-        header->reusable_index_block_count, dmm);
+        header->reusable_index_block_count);
     if (rval != MBError::SUCCESS)
         return rval;
     rval = ReleaseReusableBlocks(header->reusable_data_block,
-        header->reusable_data_block_count, dict);
+        header->reusable_data_block_count);
     if (rval != MBError::SUCCESS)
         return rval;
 
@@ -431,12 +433,21 @@ bool ResourceCollection::IsReaderEpochQuiesced(uint64_t retire_epoch) const
         return true;
 
     for (uint32_t i = 0; i < header->reader_epoch_slot_count; i++) {
-        const ReaderEpochSlot& slot = header->reader_epoch_slot[i];
+        ReaderEpochSlot& slot = header->reader_epoch_slot[i];
         if (slot.connect_id.load(MEMORY_ORDER_READER) == 0)
             continue;
         uint64_t epoch = slot.epoch.load(MEMORY_ORDER_READER);
-        if (epoch != 0 && epoch <= retire_epoch)
+        if (epoch != 0 && epoch <= retire_epoch) {
+            uint32_t pid = slot.pid.load(MEMORY_ORDER_READER);
+            if (pid != 0) {
+                errno = 0;
+                if (kill(static_cast<pid_t>(pid), 0) != 0 && errno == ESRCH) {
+                    slot.Clear();
+                    continue;
+                }
+            }
             return false;
+        }
     }
     return true;
 }
@@ -456,12 +467,10 @@ int ResourceCollection::QueueReusableBlock(ReusableBlockEntry* entries, uint32_t
     return MBError::SUCCESS;
 }
 
-int ResourceCollection::ReleaseReusableBlocks(ReusableBlockEntry* entries, uint32_t& entry_count,
-    DRMBase* drm)
+int ResourceCollection::ReleaseReusableBlocks(ReusableBlockEntry* entries, uint32_t& entry_count)
 {
-    if (entries == NULL || drm == NULL)
+    if (entries == NULL)
         return MBError::INVALID_ARG;
-    (void)drm;
 
     for (uint32_t i = 0; i < entry_count; i++) {
         if (entries[i].in_use != REUSABLE_BLOCK_STATE_QUARANTINED)
@@ -525,7 +534,7 @@ int ResourceCollection::EvacuateOneIndexBlock()
     evacuate_index_block_start = 0;
     evacuate_index_block_end = 0;
     return ReleaseReusableBlocks(header->reusable_index_block,
-        header->reusable_index_block_count, dmm);
+        header->reusable_index_block_count);
 }
 
 int ResourceCollection::EvacuateOneDataBlock()
@@ -552,7 +561,7 @@ int ResourceCollection::EvacuateOneDataBlock()
     evacuate_data_block_start = 0;
     evacuate_data_block_end = 0;
     return ReleaseReusableBlocks(header->reusable_data_block,
-        header->reusable_data_block_count, dict);
+        header->reusable_data_block_count);
 }
 
 /////////////////////////////////////////////////////////

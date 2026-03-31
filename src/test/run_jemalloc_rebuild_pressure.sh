@@ -1,10 +1,17 @@
 #!/bin/bash
-set -u
+set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 BIN="$SCRIPT_DIR/jemalloc_restart_rebuild_test"
-STOP_FILE="/var/tmp/mabain_test/jemalloc_rebuild/full_cycle.stop"
 READER_COUNT=${1:-4}
+mkdir -p /var/tmp/mabain_test
+created_tmp_root=0
+if [[ -z "${MABAIN_JEMALLOC_REBUILD_DIR:-}" ]]; then
+    MABAIN_JEMALLOC_REBUILD_DIR=$(mktemp -d /var/tmp/mabain_test/jemalloc_rebuild.XXXXXX)
+    export MABAIN_JEMALLOC_REBUILD_DIR
+    created_tmp_root=1
+fi
+STOP_FILE="$MABAIN_JEMALLOC_REBUILD_DIR/full_cycle.stop"
 
 if [[ ! -x "$BIN" ]]; then
     echo "missing test binary: $BIN" >&2
@@ -19,6 +26,9 @@ cleanup() {
     for pid in "${reader_pids[@]}"; do
         wait "$pid" 2>/dev/null || true
     done
+    if [[ $created_tmp_root -eq 1 ]]; then
+        rm -rf "$MABAIN_JEMALLOC_REBUILD_DIR" 2>/dev/null || true
+    fi
 }
 trap cleanup EXIT INT TERM
 

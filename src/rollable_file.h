@@ -44,6 +44,7 @@ public:
     int ConfigureJemalloc(MemoryManagerMetadata* mm_meta);
     void* PreAlloc(size_t init_offset);
     void* Malloc(size_t size, size_t& offset);
+    int GetLastAllocError() const;
     size_t GetJemallocAllocSize() const;
     int ReseedJemalloc(size_t alloc_size);
     int AddReusableBlock(size_t block_order);

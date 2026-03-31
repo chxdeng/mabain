@@ -47,6 +47,7 @@ const char* MBError::error_str[] = {
     "rc skipped",
     "version mismatch",
     "jemalloc error",
+    "timeout",
 
     ///////////////////////////////////
     "DB not exist",

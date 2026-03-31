@@ -771,8 +771,10 @@ bool DictMem::ReserveNode(int nt, size_t& offset, uint8_t*& ptr)
         size_t buf_size = node_size[nt];
         ptr = (uint8_t*)kv_file->Malloc(buf_size, offset);
         if (ptr == nullptr) {
-            Logger::Log(LOG_LEVEL_ERROR, "failed to allocate node buffer");
-            throw MBError::NO_MEMORY;
+            int rval = kv_file->GetLastAllocError();
+            Logger::Log(LOG_LEVEL_ERROR, "failed to allocate node buffer: %s",
+                MBError::get_error_str(rval));
+            throw rval;
         }
         ret = false;
         size_t rel_size = ((size_t)buf_size + JEMALLOC_ALIGNMENT - 1) & ~(JEMALLOC_ALIGNMENT - 1);
@@ -845,8 +847,10 @@ void DictMem::ReserveData(const uint8_t* key, int size, size_t& offset, bool map
     if (options & CONSTS::OPTION_JEMALLOC) {
         void* ptr = kv_file->Malloc(size, offset);
         if (ptr == nullptr) {
-            Logger::Log(LOG_LEVEL_DEBUG, "failed to allocate buffer with size %zu", size);
-            throw MBError::NO_MEMORY;
+            int rval = kv_file->GetLastAllocError();
+            Logger::Log(LOG_LEVEL_DEBUG, "failed to allocate buffer with size %zu: %s",
+                size, MBError::get_error_str(rval));
+            throw rval;
         }
         memcpy(ptr, key, size);
         size_t rel_size = ((size_t)size + JEMALLOC_ALIGNMENT - 1) & ~(JEMALLOC_ALIGNMENT - 1);

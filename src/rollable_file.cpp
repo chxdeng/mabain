@@ -35,6 +35,9 @@
 #include "rollable_file.h"
 
 namespace mabain {
+namespace {
+thread_local int g_jemalloc_alloc_error = MBError::SUCCESS;
+}
 
 #define SLIDING_MEM_SIZE 16LLU * 1024 * 1024 // 16M
 #define MAX_NUM_BLOCK 2 * 1024 // 2K
@@ -496,19 +499,30 @@ void* RollableFile::PreAlloc(size_t init_off)
 void* RollableFile::Malloc(size_t size, size_t& offset)
 {
     void* ptr = nullptr;
+    offset = 0;
+    g_jemalloc_alloc_error = MBError::SUCCESS;
     if (size > 0) {
         if (files[0] == nullptr) {
             // create the first block file for memory metadata if not exist
             int rval = CheckAndOpenFile(0, true);
             if (rval != MBError::SUCCESS) {
-                throw (int)rval;
+                g_jemalloc_alloc_error = rval;
+                return nullptr;
             }
         }
         unsigned arena_index = files[0]->mm_meta->arena_index;
         ptr = mallocx(size, MALLOCX_ARENA(arena_index) | MALLOCX_TCACHE_NONE);
-        offset = get_shm_offset(ptr);
+        if (ptr != nullptr)
+            offset = get_shm_offset(ptr);
+        else if (g_jemalloc_alloc_error == MBError::SUCCESS)
+            g_jemalloc_alloc_error = MBError::NO_MEMORY;
     }
     return ptr;
+}
+
+int RollableFile::GetLastAllocError() const
+{
+    return g_jemalloc_alloc_error == MBError::SUCCESS ? MBError::NO_MEMORY : g_jemalloc_alloc_error;
 }
 
 size_t RollableFile::GetJemallocAllocSize() const
@@ -588,7 +602,13 @@ size_t RollableFile::GetExistingBlockEnd() const
         std::stringstream ss;
         ss << block_order;
         std::string file_path = path + ss.str();
+        errno = 0;
         if (stat(file_path.c_str(), &st) != 0) {
+            if (errno != ENOENT) {
+                Logger::Log(LOG_LEVEL_WARN,
+                    "GetExistingBlockEnd: stat failed for %s errno=%d %s",
+                    file_path.c_str(), errno, strerror(errno));
+            }
             break;
         }
         end_offset = (block_order + 1) * block_size;
@@ -741,7 +761,8 @@ void* RollableFile::custom_extent_alloc(void* new_addr, size_t size, size_t alig
                 Logger::Log(LOG_LEVEL_ERROR, "custom_extent_alloc: arena %u failed to reopen"
                                              " reusable block file (order: %d, size: %zu)",
                     arena_ind, block_order, size);
-                throw (int)MBError::MMAP_FAILED;
+                g_jemalloc_alloc_error = MBError::MMAP_FAILED;
+                return nullptr;
             }
             mm_meta->active_reusable_block_offset = aligned_offset + size;
             ptr = mgr->files[block_order]->GetMapAddr() + aligned_offset;
@@ -759,21 +780,23 @@ void* RollableFile::custom_extent_alloc(void* new_addr, size_t size, size_t alig
         if (aligned_offset + size > mgr->block_size) {
             if (!mm_meta->reusable_block_order.empty()) {
                 block_order = static_cast<int>(mm_meta->reusable_block_order.back());
-                mm_meta->reusable_block_order.pop_back();
                 int rval = mgr->CheckAndOpenFile(block_order, true);
                 if (rval != MBError::SUCCESS) {
                     Logger::Log(LOG_LEVEL_ERROR, "custom_extent_alloc: arena %u failed to open"
                                                  " reusable block file (order: %d, size: %zu)",
                         arena_ind, block_order, size);
-                    throw (int)MBError::MMAP_FAILED;
+                    g_jemalloc_alloc_error = MBError::MMAP_FAILED;
+                    return nullptr;
                 }
                 aligned_offset = 0;
                 if (size > mgr->block_size) {
                     Logger::Log(LOG_LEVEL_ERROR, "custom_extent_alloc: arena %u reusable block too"
                                                  " small (order: %d, size: %zu, block size: %zu)",
                         arena_ind, block_order, size, mgr->block_size);
-                    throw (int)MBError::NO_MEMORY;
+                    g_jemalloc_alloc_error = MBError::NO_MEMORY;
+                    return nullptr;
                 }
+                mm_meta->reusable_block_order.pop_back();
                 mm_meta->active_reusable_block_order = block_order;
                 mm_meta->active_reusable_block_offset = size;
                 ptr = mgr->files[block_order]->GetMapAddr();
@@ -784,21 +807,24 @@ void* RollableFile::custom_extent_alloc(void* new_addr, size_t size, size_t alig
                     Logger::Log(LOG_LEVEL_ERROR, "custom_extent_alloc: arena %u max block number exceeded",
                         " new memory (aligned offset: %zu, used: %zu, size: %zu)",
                         arena_ind, aligned_offset, mm_meta->alloc_size, size);
-                    throw (int)MBError::NO_MEMORY;
+                    g_jemalloc_alloc_error = MBError::NO_MEMORY;
+                    return nullptr;
                 }
                 int rval = mgr->CheckAndOpenFile(block_order, true);
                 if (rval != MBError::SUCCESS) {
                     Logger::Log(LOG_LEVEL_ERROR, "custom_extent_alloc: arena %u failed to open"
                                                  " new block file (order: %d, used: %zu, size: %zu)",
                         arena_ind, block_order, mm_meta->alloc_size, size);
-                    throw (int)MBError::MMAP_FAILED;
+                    g_jemalloc_alloc_error = MBError::MMAP_FAILED;
+                    return nullptr;
                 }
                 aligned_offset = 0; // reset aligned offset for new block
                 if (aligned_offset + size > mgr->block_size) {
                     Logger::Log(LOG_LEVEL_ERROR, "custom_extent_alloc: arena %u failed to extend"
                                                  " new memory (offset: %zu, size: %zu, used: %zu, size: %zu)",
                         arena_ind, aligned_offset, size, mgr->block_size);
-                    throw (int)MBError::NO_MEMORY;
+                    g_jemalloc_alloc_error = MBError::NO_MEMORY;
+                    return nullptr;
                 }
                 mm_meta->alloc_size = block_order * mgr->block_size + aligned_offset + size;
                 ptr = mgr->files[block_order]->GetMapAddr() + aligned_offset;

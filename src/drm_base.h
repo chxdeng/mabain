@@ -425,7 +425,7 @@ inline int DRMBase::AllocateJemalloc(size_t size, size_t& offset, uint8_t*& ptr)
         return MBError::INVALID_ARG;
     ptr = reinterpret_cast<uint8_t*>(kv_file->Malloc(size, offset));
     if (ptr == nullptr)
-        return MBError::NO_MEMORY;
+        return kv_file->GetLastAllocError();
     return MBError::SUCCESS;
 }
 

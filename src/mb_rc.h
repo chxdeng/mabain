@@ -71,8 +71,7 @@ private:
     bool MoveIndexBuffer(int phase, size_t& offset_src, int size);
     bool HasPendingReusableBlocks(const ReusableBlockEntry* entries, uint32_t entry_count) const;
     bool IsReaderEpochQuiesced(uint64_t retire_epoch) const;
-    int ReleaseReusableBlocks(ReusableBlockEntry* entries, uint32_t& entry_count,
-        DRMBase* drm);
+    int ReleaseReusableBlocks(ReusableBlockEntry* entries, uint32_t& entry_count);
     int DrainReusableBlocks(ReusableBlockEntry* entries, uint32_t& entry_count, DRMBase* drm);
     int QueueReusableBlock(ReusableBlockEntry* entries, uint32_t& entry_count,
         size_t block_order, uint64_t retire_epoch);

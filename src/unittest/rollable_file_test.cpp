@@ -298,6 +298,21 @@ TEST_F(RollableFileTest, JemallocResetAndReseedAreDeterministic_test)
     EXPECT_EQ(alloc_size1, alloc_size2);
 }
 
+TEST_F(RollableFileTest, JemallocExtentHookFailureReturnsNullptrAndError_test)
+{
+    rfile = new RollableFile(std::string(ROLLABLE_FILE_TEST_DIR) + "/_mabain_jem_i",
+        JEMALLOC_TEST_BLOCK_SIZE, JEMALLOC_TEST_MEMCAP,
+        CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, 4);
+    ASSERT_NE(rfile, nullptr);
+    ASSERT_NE(rfile->PreAlloc(64), nullptr);
+
+    size_t alloc_offset = 0;
+    void* ptr = rfile->Malloc(JEMALLOC_TEST_BLOCK_SIZE + 1, alloc_offset);
+    EXPECT_EQ(ptr, nullptr);
+    EXPECT_EQ(alloc_offset, 0u);
+    EXPECT_EQ(rfile->GetLastAllocError(), MBError::NO_MEMORY);
+}
+
 TEST_F(RollableFileTest, JemallocReusableBlockIsConsumedBeforeTailExtension_test)
 {
     rfile = new RollableFile(std::string(ROLLABLE_FILE_TEST_DIR) + "/_mabain_jem_i",

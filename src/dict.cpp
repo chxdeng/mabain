@@ -1028,8 +1028,10 @@ void Dict::ReserveData(const uint8_t* buff, int size, size_t& offset)
         int buf_size = size + DATA_HDR_BYTE;
         void* ptr = kv_file->Malloc(buf_size, offset);
         if (ptr == NULL) {
-            Logger::Log(LOG_LEVEL_ERROR, "failed to allocate memory for data buffer");
-            throw MBError::NO_MEMORY;
+            int rval = kv_file->GetLastAllocError();
+            Logger::Log(LOG_LEVEL_ERROR, "failed to allocate memory for data buffer: %s",
+                MBError::get_error_str(rval));
+            throw rval;
         }
         uint16_t dsize[2];
         dsize[0] = static_cast<uint16_t>(size);

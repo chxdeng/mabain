@@ -63,6 +63,8 @@ typedef struct _MBConfig {
 
 // Database handle class
 class DB {
+    friend class DBTestPeer;
+
 public:
     // DB iterator class as an inner class
     class iterator {
@@ -228,6 +230,7 @@ private:
     void PostDBUpdate(const MBConfig& config, bool init_header, bool update_header);
     bool StartupRebuildRequested(const MBConfig& config, bool init_header) const;
     int PrepareStartupRebuild(const MBConfig& config, bool init_header);
+    bool StartupRebuildMetadataReady() const;
     bool StartupRebuildComplete() const;
     int RunStartupRebuild();
     static int ValidateConfig(MBConfig& config);
