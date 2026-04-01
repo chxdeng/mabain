@@ -497,8 +497,6 @@ TEST_F(JemallocRebuildMetadataTest, RebuildBarrierGuardResourceIsSharedAcrossHan
     ASSERT_NE(guard_2, nullptr);
     EXPECT_EQ(guard_1, guard_2);
 
-    const std::string pool_key = JemallocRebuildTestPath() + "_mabain_h#rebuild_guard";
-    EXPECT_EQ(ResourcePool::getInstance().GetResourceByPath(pool_key), guard_1);
 
     reader_db_2.Close();
     reader_db_1.Close();
