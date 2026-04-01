@@ -119,6 +119,16 @@ public:
     {
         return db.StartupRebuildComplete();
     }
+
+    static uint64_t BeginReaderEpochGuard(DB& db)
+    {
+        return db.BeginReaderEpochGuard();
+    }
+
+    static void EndReaderEpochGuard(DB& db, uint64_t epoch)
+    {
+        db.EndReaderEpochGuard(epoch);
+    }
 };
 
 }
@@ -364,13 +374,13 @@ TEST_F(JemallocRebuildMetadataTest, ReaderEpochSlotStaysIdleWhenTrackingIsDisabl
     IndexHeader* header = writer_db.GetDictPtr()->GetHeaderPtr();
     ASSERT_NE(header, nullptr);
     ASSERT_EQ(header->reader_epoch_tracking_active.load(MEMORY_ORDER_READER), 0u);
+    EXPECT_EQ(FindReaderEpochSlot(header, reader_cfg.connect_id), -1);
 
-    const int slot = FindReaderEpochSlot(header, reader_cfg.connect_id);
-    ASSERT_GE(slot, 0);
-    EXPECT_EQ(header->reader_epoch_slot[slot].epoch.load(MEMORY_ORDER_READER), 0u);
+    EXPECT_EQ(DBTestPeer::BeginReaderEpochGuard(reader_db), 0u);
+    EXPECT_EQ(FindReaderEpochSlot(header, reader_cfg.connect_id), -1);
 
     ExpectFindValue(reader_db, key, value);
-    EXPECT_EQ(header->reader_epoch_slot[slot].epoch.load(MEMORY_ORDER_READER), 0u);
+    EXPECT_EQ(FindReaderEpochSlot(header, reader_cfg.connect_id), -1);
     reader_db.Close();
     writer_db.Close();
 }
@@ -390,18 +400,29 @@ TEST_F(JemallocRebuildMetadataTest, ReaderEpochSlotIsClaimedOnOpenAndClearedOnCl
 
     IndexHeader* header = writer_db.GetDictPtr()->GetHeaderPtr();
     ASSERT_NE(header, nullptr);
+    EXPECT_EQ(FindReaderEpochSlot(header, reader_cfg.connect_id), -1);
+
+    header->reader_epoch.store(19, MEMORY_ORDER_WRITER);
+    header->reader_epoch_tracking_active.store(1, MEMORY_ORDER_WRITER);
+
+    const uint64_t guard = DBTestPeer::BeginReaderEpochGuard(reader_db);
+    ASSERT_NE(guard, 0u);
 
     const int slot = FindReaderEpochSlot(header, reader_cfg.connect_id);
     ASSERT_GE(slot, 0);
     EXPECT_EQ(header->reader_epoch_slot[slot].connect_id.load(MEMORY_ORDER_READER),
         reader_cfg.connect_id);
     EXPECT_NE(header->reader_epoch_slot[slot].pid.load(MEMORY_ORDER_READER), 0u);
+    EXPECT_NE(header->reader_epoch_slot[slot].proc_start_time.load(MEMORY_ORDER_READER), 0u);
+    EXPECT_EQ(header->reader_epoch_slot[slot].epoch.load(MEMORY_ORDER_READER), 19u);
+
+    DBTestPeer::EndReaderEpochGuard(reader_db, guard);
+    EXPECT_EQ(header->reader_epoch_slot[slot].connect_id.load(MEMORY_ORDER_READER), 0u);
+    EXPECT_EQ(header->reader_epoch_slot[slot].pid.load(MEMORY_ORDER_READER), 0u);
+    EXPECT_EQ(header->reader_epoch_slot[slot].proc_start_time.load(MEMORY_ORDER_READER), 0u);
     EXPECT_EQ(header->reader_epoch_slot[slot].epoch.load(MEMORY_ORDER_READER), 0u);
 
     reader_db.Close();
-    EXPECT_EQ(header->reader_epoch_slot[slot].connect_id.load(MEMORY_ORDER_READER), 0u);
-    EXPECT_EQ(header->reader_epoch_slot[slot].pid.load(MEMORY_ORDER_READER), 0u);
-    EXPECT_EQ(header->reader_epoch_slot[slot].epoch.load(MEMORY_ORDER_READER), 0u);
     writer_db.Close();
 }
 
@@ -423,16 +444,17 @@ TEST_F(JemallocRebuildMetadataTest, ReaderEpochTrackingCanBeEnabledForCoveredLoo
 
     IndexHeader* header = writer_db.GetDictPtr()->GetHeaderPtr();
     ASSERT_NE(header, nullptr);
-    const int slot = FindReaderEpochSlot(header, reader_cfg.connect_id);
-    ASSERT_GE(slot, 0);
 
     header->reader_epoch.store(17, MEMORY_ORDER_WRITER);
     header->reader_epoch_tracking_active.store(1, MEMORY_ORDER_WRITER);
-    EXPECT_EQ(header->reader_epoch_slot[slot].epoch.load(MEMORY_ORDER_READER), 0u);
+    const uint64_t fast_slot_before = reader_db.GetReaderGuardFastSlotCount();
+    const uint64_t barrier_before = reader_db.GetReaderGuardBarrierFallbackCount();
 
     ExpectFindValue(reader_db, key, value);
 
-    EXPECT_EQ(header->reader_epoch_slot[slot].epoch.load(MEMORY_ORDER_READER), 0u);
+    EXPECT_EQ(reader_db.GetReaderGuardFastSlotCount(), fast_slot_before + 1);
+    EXPECT_EQ(reader_db.GetReaderGuardBarrierFallbackCount(), barrier_before);
+    EXPECT_EQ(FindReaderEpochSlot(header, reader_cfg.connect_id), -1);
     EXPECT_EQ(header->reader_epoch.load(MEMORY_ORDER_READER), 17u);
     reader_db.Close();
     writer_db.Close();
@@ -456,18 +478,19 @@ TEST_F(JemallocRebuildMetadataTest, ReaderEpochTrackingAlsoCoversFindLongestPref
 
     IndexHeader* header = writer_db.GetDictPtr()->GetHeaderPtr();
     ASSERT_NE(header, nullptr);
-    const int slot = FindReaderEpochSlot(header, reader_cfg.connect_id);
-    ASSERT_GE(slot, 0);
 
     header->reader_epoch.store(23, MEMORY_ORDER_WRITER);
     header->reader_epoch_tracking_active.store(1, MEMORY_ORDER_WRITER);
-    EXPECT_EQ(header->reader_epoch_slot[slot].epoch.load(MEMORY_ORDER_READER), 0u);
+    const uint64_t fast_slot_before = reader_db.GetReaderGuardFastSlotCount();
+    const uint64_t barrier_before = reader_db.GetReaderGuardBarrierFallbackCount();
 
     MBData data;
     ASSERT_EQ(reader_db.FindLongestPrefix(key, data), MBError::SUCCESS);
     ASSERT_EQ(std::string(reinterpret_cast<const char*>(data.buff), data.data_len), value);
 
-    EXPECT_EQ(header->reader_epoch_slot[slot].epoch.load(MEMORY_ORDER_READER), 0u);
+    EXPECT_EQ(reader_db.GetReaderGuardFastSlotCount(), fast_slot_before + 1);
+    EXPECT_EQ(reader_db.GetReaderGuardBarrierFallbackCount(), barrier_before);
+    EXPECT_EQ(FindReaderEpochSlot(header, reader_cfg.connect_id), -1);
     EXPECT_EQ(header->reader_epoch.load(MEMORY_ORDER_READER), 23u);
     reader_db.Close();
     writer_db.Close();
@@ -906,7 +929,7 @@ TEST_F(JemallocRebuildMetadataTest, StartupEvacuateResumesFromCutoverState)
     initial_db.Close();
 }
 
-TEST_F(JemallocRebuildMetadataTest, StartupEvacuateReleasesOneFullIndexSourceBlockWhenReadersAreIdle)
+TEST_F(JemallocRebuildMetadataTest, StartupEvacuateDrainsOneFullIndexSourceBlockOnNextPassWhenReadersAreIdle)
 {
     ASSERT_TRUE(CreateJemallocRebuildTestDir());
     const uint32_t small_block_size = 4 * 1024 * 1024;
@@ -948,7 +971,7 @@ TEST_F(JemallocRebuildMetadataTest, StartupEvacuateReleasesOneFullIndexSourceBlo
     EXPECT_EQ(header->rebuild_state, REBUILD_STATE_CUTOVER);
     EXPECT_EQ(header->rebuild_index_block_cursor, first_source_block + header->index_block_size);
     EXPECT_EQ(header->reusable_index_block_count, 1u);
-    EXPECT_EQ(header->reusable_index_block[0].in_use, REUSABLE_BLOCK_STATE_READY);
+    EXPECT_EQ(header->reusable_index_block[0].in_use, REUSABLE_BLOCK_STATE_QUARANTINED);
     EXPECT_EQ(initial_db.GetDictPtr()->GetMM()->GetReusableBlockCount(), 0u);
 
     ASSERT_EQ(rc.StartupEvacuate(), MBError::SUCCESS);

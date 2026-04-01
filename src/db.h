@@ -37,6 +37,7 @@ class Dict;
 class MBlsq;
 class LockFree;
 class AsyncWriter;
+class ResourceCollection;
 struct _DBTraverseNode;
 
 typedef struct _MBConfig {
@@ -64,6 +65,7 @@ typedef struct _MBConfig {
 // Database handle class
 class DB {
     friend class DBTestPeer;
+    friend class ResourceCollection;
 
 public:
     // DB iterator class as an inner class
@@ -206,6 +208,8 @@ public:
     Dict* GetDictPtr() const;
     int GetDBOptions() const;
     const std::string& GetDBDir() const;
+    uint64_t GetReaderGuardFastSlotCount() const;
+    uint64_t GetReaderGuardBarrierFallbackCount() const;
 
     void GetDBConfig(MBConfig& config) const;
 
@@ -223,6 +227,11 @@ public:
 private:
     uint64_t BeginReaderEpochGuard() const;
     void EndReaderEpochGuard(uint64_t epoch) const;
+    int EnsureRebuildGuardFd() const;
+    int AcquireRebuildBarrierShared() const;
+    void ReleaseRebuildBarrierShared() const;
+    int AcquireRebuildBarrierExclusive() const;
+    void ReleaseRebuildBarrierExclusive() const;
     void InitDB(MBConfig& config);
     void InitDBEx(MBConfig& config);
     void ReInit(MBConfig& config);
@@ -243,7 +252,10 @@ private:
 
     // DB connector ID
     uint32_t identifier;
-    int reader_epoch_slot_id;
+    mutable int rebuild_guard_fd;
+    uint64_t process_start_time;
+    mutable uint64_t reader_guard_fast_slot_count;
+    mutable uint64_t reader_guard_barrier_fallback_count;
 
     // db lock
     MBLock lock;

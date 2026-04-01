@@ -75,12 +75,14 @@ namespace mabain {
 typedef struct _ReaderEpochSlot {
     std::atomic<uint32_t> connect_id;
     std::atomic<uint32_t> pid;
+    std::atomic<uint64_t> proc_start_time;
     std::atomic<uint64_t> epoch;
 
     void Clear()
     {
         connect_id.store(0, MEMORY_ORDER_WRITER);
         pid.store(0, MEMORY_ORDER_WRITER);
+        proc_start_time.store(0, MEMORY_ORDER_WRITER);
         epoch.store(0, MEMORY_ORDER_WRITER);
     }
 } ReaderEpochSlot;

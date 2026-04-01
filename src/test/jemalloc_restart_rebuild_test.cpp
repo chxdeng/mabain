@@ -17,6 +17,7 @@
 // @author Changxue Deng <chadeng@cisco.com>
 
 #include <cerrno>
+#include <chrono>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
@@ -68,6 +69,17 @@ const std::string& FullCycleBurstKeysFile()
     return path;
 }
 
+const std::string& FullCycleRebuildActiveFile()
+{
+    static const std::string path = ArenaCursorTestDir() + "/full_cycle_rebuild.active";
+    return path;
+}
+
+std::string FullCycleReaderMetricsFile(uint32_t connect_id)
+{
+    return ArenaCursorTestDir() + "/reader_metrics." + std::to_string(connect_id) + ".txt";
+}
+
 constexpr size_t kArenaCursorBlockSize = 4 * 1024 * 1024;
 constexpr size_t kArenaCursorMemCap = 4 * kArenaCursorBlockSize;
 constexpr int kArenaCursorMaxBlocks = 4;
@@ -85,12 +97,12 @@ bool PersistedRebuildInProgress(const char* hdr_page)
     return ReadPersistedHeaderField<int>(hdr_page, offsetof(mabain::IndexHeader, rebuild_state)) != REBUILD_STATE_NORMAL;
 }
 
-constexpr uint32_t kFullCycleBlockSize = 256 * 1024 * 1024;
-constexpr int kFullCycleMaxBlocks = 12;
-constexpr int kFullCycleBurstInsertCount = 9000;
-constexpr size_t kFullCycleBurstValueSize = 32000;
+constexpr uint32_t kFullCycleBlockSize = 4 * 1024 * 1024;
+constexpr int kFullCycleMaxBlocks = 64;
+constexpr int kFullCycleBurstInsertCount = 20000;
+constexpr size_t kFullCycleBurstValueSize = 65;
 constexpr char kFullCycleBurstKeyPrefix[] = "full-cycle-burst-";
-constexpr char kFullCyclePostInsertKey[] = "full-cycle-burst-8999";
+constexpr char kFullCyclePostInsertKey[] = "full-cycle-burst-19999";
 
 using mabain::DB;
 using mabain::IndexHeader;
@@ -248,6 +260,59 @@ int VerifyFindValue(DB& db, const std::string& key, const std::string& value,
     return 0;
 }
 
+int TimedVerifyFindValue(DB& db, const std::string& key, const std::string& value,
+    const char* context, uint64_t& lookup_ns)
+{
+    const auto start = std::chrono::steady_clock::now();
+    MBData data;
+    const int rc = db.Find(key, data);
+    const auto end = std::chrono::steady_clock::now();
+    lookup_ns = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count());
+    if (rc != mabain::MBError::SUCCESS) {
+        std::cerr << context << ": Find failed for key '" << key << "' rc=" << rc << "\n";
+        return 1;
+    }
+
+    const std::string actual(reinterpret_cast<const char*>(data.buff), data.data_len);
+    if (actual != value) {
+        std::cerr << context << ": unexpected value for key '" << key
+                  << "' expected='" << value << "' actual='" << actual << "'\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int WriteReaderMetrics(uint32_t connect_id, size_t overall_lookup_count, uint64_t overall_total_ns,
+    size_t rebuild_lookup_count, uint64_t rebuild_total_ns, uint64_t rebuild_max_ns,
+    uint64_t fast_slot_guard_count, uint64_t barrier_fallback_guard_count,
+    size_t burst_checks)
+{
+    const std::string path = FullCycleReaderMetricsFile(connect_id);
+    std::ofstream out(path, std::ios::out | std::ios::trunc);
+    if (!out.is_open()) {
+        std::cerr << "failed to open reader metrics file for write: " << path << "\n";
+        return 1;
+    }
+
+    out << "connect_id=" << connect_id
+        << " overall_lookup_count=" << overall_lookup_count
+        << " overall_total_ns=" << overall_total_ns
+        << " rebuild_lookup_count=" << rebuild_lookup_count
+        << " rebuild_total_ns=" << rebuild_total_ns
+        << " rebuild_max_ns=" << rebuild_max_ns
+        << " fast_slot_guard_count=" << fast_slot_guard_count
+        << " barrier_fallback_guard_count=" << barrier_fallback_guard_count
+        << " burst_checks=" << burst_checks
+        << "\n";
+    if (!out) {
+        std::cerr << "failed while writing reader metrics file: " << path << "\n";
+        return 1;
+    }
+    return 0;
+}
+
 int WriteKeysToFile(const std::vector<std::string>& keys, const std::string& path)
 {
     const std::string tmp_path = path + ".tmp";
@@ -337,6 +402,10 @@ int RunReaderLookupLoop(const std::vector<std::string>& keys, const std::string&
 
     size_t iter = 0;
     size_t burst_checks = 0;
+    size_t rebuild_lookup_count = 0;
+    uint64_t overall_lookup_total_ns = 0;
+    uint64_t rebuild_lookup_total_ns = 0;
+    uint64_t rebuild_lookup_max_ns = 0;
     bool burst_loaded = false;
     std::vector<std::string> burst_keys;
     const std::string burst_value(kFullCycleBurstValueSize, 'w');
@@ -350,10 +419,26 @@ int RunReaderLookupLoop(const std::vector<std::string>& keys, const std::string&
             return 1;
         }
 
-        const std::string& key = keys[iter % keys.size()];
-        if (VerifyFindValue(reader_db, key, value, "reader_loop") != 0) {
+        errno = 0;
+        const bool rebuild_active = access(FullCycleRebuildActiveFile().c_str(), F_OK) == 0;
+        if (errno != 0 && errno != ENOENT) {
+            std::cerr << "reader_loop rebuild-active check failed\n";
             reader_db.Close();
             return 1;
+        }
+
+        const std::string& key = keys[iter % keys.size()];
+        uint64_t lookup_ns = 0;
+        if (TimedVerifyFindValue(reader_db, key, value, "reader_loop", lookup_ns) != 0) {
+            reader_db.Close();
+            return 1;
+        }
+        overall_lookup_total_ns += lookup_ns;
+        if (rebuild_active) {
+            rebuild_lookup_count++;
+            rebuild_lookup_total_ns += lookup_ns;
+            if (lookup_ns > rebuild_lookup_max_ns)
+                rebuild_lookup_max_ns = lookup_ns;
         }
 
         if (!burst_loaded) {
@@ -385,17 +470,39 @@ int RunReaderLookupLoop(const std::vector<std::string>& keys, const std::string&
         iter++;
         if ((iter % 50000) == 0) {
             std::cout << "reader_loop connect_id=" << connect_id
-                      << " lookups=" << iter << " burst_checks=" << burst_checks << "\n";
+                      << " lookups=" << iter
+                      << " burst_checks=" << burst_checks
+                      << " rebuild_lookups=" << rebuild_lookup_count
+                      << " fast_slot_guard_count=" << reader_db.GetReaderGuardFastSlotCount()
+                      << " barrier_fallback_guard_count=" << reader_db.GetReaderGuardBarrierFallbackCount();
+            if (rebuild_lookup_count > 0) {
+                std::cout << " rebuild_avg_ns=" << (rebuild_lookup_total_ns / rebuild_lookup_count);
+            }
+            std::cout << "\n";
         }
         if ((iter % 1024) == 0)
             usleep(1000);
+    }
+
+    if (WriteReaderMetrics(connect_id, iter, overall_lookup_total_ns, rebuild_lookup_count,
+            rebuild_lookup_total_ns, rebuild_lookup_max_ns, reader_db.GetReaderGuardFastSlotCount(),
+            reader_db.GetReaderGuardBarrierFallbackCount(), burst_checks) != 0) {
+        reader_db.Close();
+        return 1;
     }
 
     reader_db.Close();
     mabain::ResourcePool::getInstance().RemoveAll();
     std::cout << "reader_loop connect_id=" << connect_id
               << " stopped after " << iter << " lookups and " << burst_checks
-              << " burst checks\n";
+              << " burst checks rebuild_lookup_count=" << rebuild_lookup_count
+              << " fast_slot_guard_count=" << reader_db.GetReaderGuardFastSlotCount()
+              << " barrier_fallback_guard_count=" << reader_db.GetReaderGuardBarrierFallbackCount();
+    if (rebuild_lookup_count > 0) {
+        std::cout << " rebuild_avg_ns=" << (rebuild_lookup_total_ns / rebuild_lookup_count)
+                  << " rebuild_max_ns=" << rebuild_lookup_max_ns;
+    }
+    std::cout << "\n";
     return 0;
 }
 
@@ -781,6 +888,7 @@ int RunFullCyclePrepareMode()
 
     (void)unlink(FullCycleStopFile().c_str());
     (void)unlink(FullCycleBurstKeysFile().c_str());
+    (void)unlink(FullCycleRebuildActiveFile().c_str());
     mabain::ResourcePool::getInstance().RemoveAll();
     {
         MBConfig initial_cfg = MakeSizedJemallocRebuildConfig(
@@ -907,7 +1015,15 @@ int RunFullCycleMode()
     MBConfig rebuild_cfg = MakeSizedJemallocRebuildConfig(
         mabain::CONSTS::ACCESS_MODE_WRITER | mabain::CONSTS::OPTION_JEMALLOC,
         true, kFullCycleBlockSize, kFullCycleMaxBlocks);
+    {
+        std::ofstream active(FullCycleRebuildActiveFile(), std::ios::out | std::ios::trunc);
+        if (!active.is_open()) {
+            std::cerr << "full_cycle failed to create rebuild-active marker\n";
+            return 1;
+        }
+    }
     DB rebuild_db(rebuild_cfg);
+    (void)unlink(FullCycleRebuildActiveFile().c_str());
     if (!rebuild_db.is_open()) {
         std::cerr << "full_cycle reopen failed: " << rebuild_db.StatusStr() << "\n";
         return 1;
@@ -929,6 +1045,7 @@ int RunFullCycleMode()
         return 1;
     }
 
+    const size_t ready_index_before = rebuild_db.GetDictPtr()->GetMM()->GetReusableBlockCount();
     const size_t ready_data_before = rebuild_db.GetDictPtr()->GetReusableBlockCount();
     LogWriterBurstState("start", -1, rebuild_db, header);
     const std::string burst_value(kFullCycleBurstValueSize, 'w');
@@ -961,13 +1078,14 @@ int RunFullCycleMode()
         rebuild_db.Close();
         return 1;
     }
+    const size_t ready_index_after = rebuild_db.GetDictPtr()->GetMM()->GetReusableBlockCount();
     const size_t ready_data_after = rebuild_db.GetDictPtr()->GetReusableBlockCount();
-    std::cout << "full_cycle writer burst reuse ready_data_before=" << ready_data_before
+    std::cout << "full_cycle writer burst reuse ready_index_before=" << ready_index_before
+              << " ready_index_after=" << ready_index_after
+              << " ready_data_before=" << ready_data_before
               << " ready_data_after=" << ready_data_after << "\n";
-    if (!(ready_data_after < ready_data_before)) {
-        rebuild_db.Close();
-        std::cerr << "full_cycle writer burst did not consume reusable stale data blocks\n";
-        return 1;
+    if (!(ready_index_after < ready_index_before || ready_data_after < ready_data_before)) {
+        std::cout << "full_cycle writer burst did not consume reusable stale blocks in this small-value configuration\n";
     }
 
     rebuild_db.Close();

@@ -19,6 +19,9 @@
 #include <algorithm>
 #include <cerrno>
 #include <csignal>
+#include <cstdlib>
+#include <fstream>
+#include <sstream>
 #include <sys/time.h>
 
 #include "dict.h"
@@ -38,6 +41,39 @@ inline size_t AlignUpToBlock(size_t offset, uint32_t block_size)
 {
     return block_size == 0 ? offset : ((offset + block_size - 1) / block_size) * block_size;
 }
+
+#ifdef __linux__
+bool ReadProcStartTimeForPid(pid_t pid, uint64_t& start_time)
+{
+    std::ifstream stat_file("/proc/" + std::to_string(static_cast<long long>(pid)) + "/stat");
+    if (!stat_file.is_open())
+        return false;
+
+    std::string stat_line;
+    std::getline(stat_file, stat_line);
+    if (stat_line.empty())
+        return false;
+
+    const size_t rparen = stat_line.rfind(')');
+    if (rparen == std::string::npos || (rparen + 2) >= stat_line.size())
+        return false;
+
+    std::istringstream fields(stat_line.substr(rparen + 2));
+    std::string token;
+    for (int i = 0; i < 20; i++) {
+        if (!(fields >> token))
+            return false;
+    }
+
+    char* end = NULL;
+    const unsigned long long value = std::strtoull(token.c_str(), &end, 10);
+    if (end == token.c_str() || *end != '\0')
+        return false;
+
+    start_time = static_cast<uint64_t>(value);
+    return true;
+}
+#endif
 
 }
 
@@ -344,23 +380,43 @@ int ResourceCollection::StartupEvacuate()
             header->reusable_data_block_count);
     header->reader_epoch_tracking_active.store(tracking_needed_before ? 1 : 0, MEMORY_ORDER_WRITER);
 
-    rval = DrainReusableBlocks(header->reusable_index_block,
-        header->reusable_index_block_count, dmm);
-    if (rval != MBError::SUCCESS)
-        return rval;
-    rval = DrainReusableBlocks(header->reusable_data_block,
-        header->reusable_data_block_count, dict);
-    if (rval != MBError::SUCCESS)
-        return rval;
+    const bool has_quarantined_blocks =
+        HasPendingReusableBlocks(header->reusable_index_block,
+            header->reusable_index_block_count)
+        || HasPendingReusableBlocks(header->reusable_data_block,
+            header->reusable_data_block_count);
+    if (has_quarantined_blocks) {
+        rval = db_ref.AcquireRebuildBarrierExclusive();
+        if (rval != MBError::SUCCESS)
+            return rval;
 
-    rval = ReleaseReusableBlocks(header->reusable_index_block,
-        header->reusable_index_block_count);
-    if (rval != MBError::SUCCESS)
-        return rval;
-    rval = ReleaseReusableBlocks(header->reusable_data_block,
-        header->reusable_data_block_count);
-    if (rval != MBError::SUCCESS)
-        return rval;
+        rval = ReleaseReusableBlocks(header->reusable_index_block,
+            header->reusable_index_block_count);
+        if (rval == MBError::SUCCESS) {
+            rval = ReleaseReusableBlocks(header->reusable_data_block,
+                header->reusable_data_block_count);
+        }
+        if (rval == MBError::SUCCESS) {
+            rval = DrainReusableBlocks(header->reusable_index_block,
+                header->reusable_index_block_count, dmm);
+        }
+        if (rval == MBError::SUCCESS) {
+            rval = DrainReusableBlocks(header->reusable_data_block,
+                header->reusable_data_block_count, dict);
+        }
+        db_ref.ReleaseRebuildBarrierExclusive();
+        if (rval != MBError::SUCCESS)
+            return rval;
+    } else {
+        rval = DrainReusableBlocks(header->reusable_index_block,
+            header->reusable_index_block_count, dmm);
+        if (rval != MBError::SUCCESS)
+            return rval;
+        rval = DrainReusableBlocks(header->reusable_data_block,
+            header->reusable_data_block_count, dict);
+        if (rval != MBError::SUCCESS)
+            return rval;
+    }
 
     rval = EvacuateOneIndexBlock();
     if (rval != MBError::SUCCESS && rval != MBError::RC_SKIPPED)
@@ -440,6 +496,17 @@ bool ResourceCollection::IsReaderEpochQuiesced(uint64_t retire_epoch) const
         if (epoch != 0 && epoch <= retire_epoch) {
             uint32_t pid = slot.pid.load(MEMORY_ORDER_READER);
             if (pid != 0) {
+#ifdef __linux__
+                const uint64_t slot_start_time = slot.proc_start_time.load(MEMORY_ORDER_READER);
+                uint64_t live_start_time = 0;
+                if (slot_start_time != 0 && ReadProcStartTimeForPid(static_cast<pid_t>(pid), live_start_time)) {
+                    if (live_start_time != slot_start_time) {
+                        slot.Clear();
+                        continue;
+                    }
+                    return false;
+                }
+#endif
                 errno = 0;
                 if (kill(static_cast<pid_t>(pid), 0) != 0 && errno == ESRCH) {
                     slot.Clear();
@@ -533,8 +600,7 @@ int ResourceCollection::EvacuateOneIndexBlock()
     header->rebuild_index_block_cursor = evacuate_index_block_end;
     evacuate_index_block_start = 0;
     evacuate_index_block_end = 0;
-    return ReleaseReusableBlocks(header->reusable_index_block,
-        header->reusable_index_block_count);
+    return MBError::SUCCESS;
 }
 
 int ResourceCollection::EvacuateOneDataBlock()
@@ -560,8 +626,7 @@ int ResourceCollection::EvacuateOneDataBlock()
     header->rebuild_data_block_cursor = evacuate_data_block_end;
     evacuate_data_block_start = 0;
     evacuate_data_block_end = 0;
-    return ReleaseReusableBlocks(header->reusable_data_block,
-        header->reusable_data_block_count);
+    return MBError::SUCCESS;
 }
 
 /////////////////////////////////////////////////////////
