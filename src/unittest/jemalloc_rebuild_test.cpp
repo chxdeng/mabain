@@ -500,7 +500,7 @@ TEST_F(JemallocRebuildMetadataTest, DataReleaseBelowCompactedBoundaryDoesNotDecr
 {
     ASSERT_TRUE(CreateJemallocRebuildTestDir());
 
-    MBConfig writer_cfg = MakeJemallocRebuildConfig(CONSTS::WriterOptions(), false);
+    MBConfig writer_cfg = MakeJemallocRebuildConfig(CONSTS::WriterOptions() | CONSTS::OPTION_JEMALLOC, false);
     DB writer_db(writer_cfg);
     ASSERT_TRUE(writer_db.is_open());
 
@@ -526,7 +526,7 @@ TEST_F(JemallocRebuildMetadataTest, IndexEdgeReleaseBelowCompactedBoundaryDoesNo
 {
     ASSERT_TRUE(CreateJemallocRebuildTestDir());
 
-    MBConfig writer_cfg = MakeJemallocRebuildConfig(CONSTS::WriterOptions(), false);
+    MBConfig writer_cfg = MakeJemallocRebuildConfig(CONSTS::WriterOptions() | CONSTS::OPTION_JEMALLOC, false);
     DB writer_db(writer_cfg);
     ASSERT_TRUE(writer_db.is_open());
 
@@ -551,7 +551,7 @@ TEST_F(JemallocRebuildMetadataTest, IndexNodeReleaseBelowCompactedBoundaryDoesNo
 {
     ASSERT_TRUE(CreateJemallocRebuildTestDir());
 
-    MBConfig writer_cfg = MakeJemallocRebuildConfig(CONSTS::WriterOptions(), false);
+    MBConfig writer_cfg = MakeJemallocRebuildConfig(CONSTS::WriterOptions() | CONSTS::OPTION_JEMALLOC, false);
     DB writer_db(writer_cfg);
     ASSERT_TRUE(writer_db.is_open());
 
