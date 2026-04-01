@@ -75,7 +75,8 @@ void ResourcePool::RemoveResourceByDB(const std::string& db_path)
     pthread_mutex_unlock(&pool_mutex);
 }
 
-std::shared_ptr<MmapFileIO> ResourcePool::OpenFile(const std::string& fpath,
+std::shared_ptr<MmapFileIO> ResourcePool::OpenFileWithKey(const std::string& pool_key,
+    const std::string& fpath,
     int mode,
     size_t file_size,
     bool& map_file,
@@ -85,7 +86,7 @@ std::shared_ptr<MmapFileIO> ResourcePool::OpenFile(const std::string& fpath,
 
     pthread_mutex_lock(&pool_mutex);
 
-    auto search = file_pool.find(fpath);
+    auto search = file_pool.find(pool_key);
     if (search == file_pool.end()) {
         Logger::Log(LOG_LEVEL_DEBUG, "create resource %s", fpath.c_str());
         int flags = O_RDWR;
@@ -120,13 +121,22 @@ std::shared_ptr<MmapFileIO> ResourcePool::OpenFile(const std::string& fpath,
             }
         }
 
-        file_pool[fpath] = mmap_file;
+        file_pool[pool_key] = mmap_file;
     } else {
         mmap_file = search->second;
     }
 
     pthread_mutex_unlock(&pool_mutex);
     return mmap_file;
+}
+
+std::shared_ptr<MmapFileIO> ResourcePool::OpenFile(const std::string& fpath,
+    int mode,
+    size_t file_size,
+    bool& map_file,
+    bool create_file)
+{
+    return OpenFileWithKey(fpath, fpath, mode, file_size, map_file, create_file);
 }
 
 int ResourcePool::AddResourceByPath(const std::string& path, std::shared_ptr<MmapFileIO> resource)

@@ -41,6 +41,7 @@ public:
     int TruncateFile(off_t filesize);
     int AllocateFile(off_t filesize);
     bool IsOpen() const;
+    int GetFD() const;
     void Close();
 
     size_t Write(const void* data, size_t bytes);

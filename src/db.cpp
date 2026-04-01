@@ -49,12 +49,6 @@ namespace {
 
 const uint64_t kRebuildBarrierGuardToken = static_cast<uint64_t>(-1);
 
-int OpenRebuildGuardFd(const std::string& mb_dir, int options)
-{
-    const int flags = (options & CONSTS::ACCESS_MODE_WRITER) ? O_RDWR : O_RDONLY;
-    return open((mb_dir + "_mabain_h").c_str(), flags);
-}
-
 int WaitForRebuildBarrierLock(int fd, int op)
 {
     if (fd < 0)
@@ -121,16 +115,6 @@ uint64_t ReadSelfProcStartTime()
 }
 #endif
 
-void MaybeHoldRebuildGuardForExperiment()
-{
-    static const int hold_us = []() {
-        const char* env = getenv("MABAIN_REBUILD_GUARD_HOLD_US");
-        return env == NULL ? 0 : atoi(env);
-    }();
-    if (hold_us > 0)
-        usleep(static_cast<useconds_t>(hold_us));
-}
-
 } // namespace
 
 // Current mabain version 1.7.0
@@ -167,10 +151,7 @@ int DB::Close()
         rval = status;
     }
 
-    if (rebuild_guard_fd >= 0) {
-        close(rebuild_guard_fd);
-        rebuild_guard_fd = -1;
-    }
+    rebuild_guard_file.reset();
 
     status = MBError::DB_CLOSED;
     if (options & CONSTS::ACCESS_MODE_WRITER) {
@@ -218,10 +199,8 @@ uint64_t DB::BeginReaderEpochGuard() const
             uint64_t epoch = header->reader_epoch.load(MEMORY_ORDER_READER);
             slot.epoch.store(epoch, MEMORY_ORDER_WRITER);
             reader_guard_fast_slot_count++;
-            if (epoch == header->reader_epoch.load(MEMORY_ORDER_READER)) {
-                MaybeHoldRebuildGuardForExperiment();
+            if (epoch == header->reader_epoch.load(MEMORY_ORDER_READER))
                 return i + 1;
-            }
         }
     }
 
@@ -236,7 +215,6 @@ uint64_t DB::BeginReaderEpochGuard() const
         return 0;
     }
     reader_guard_barrier_fallback_count++;
-    MaybeHoldRebuildGuardForExperiment();
     return kRebuildBarrierGuardToken;
 }
 
@@ -264,13 +242,17 @@ void DB::EndReaderEpochGuard(uint64_t epoch) const
 
 int DB::EnsureRebuildGuardFd() const
 {
-    if (rebuild_guard_fd >= 0)
+    if (rebuild_guard_file)
         return MBError::SUCCESS;
     if (options & CONSTS::MEMORY_ONLY_MODE)
         return MBError::NOT_INITIALIZED;
 
-    rebuild_guard_fd = OpenRebuildGuardFd(mb_dir, options);
-    if (rebuild_guard_fd < 0)
+    bool map_file = false;
+    const std::string header_path = mb_dir + "_mabain_h";
+    const std::string pool_key = header_path + "#rebuild_guard";
+    rebuild_guard_file = ResourcePool::getInstance().OpenFileWithKey(
+        pool_key, header_path, options, 0, map_file, false);
+    if (rebuild_guard_file == NULL || !rebuild_guard_file->IsOpen())
         return MBError::OPEN_FAILURE;
     return MBError::SUCCESS;
 }
@@ -280,12 +262,13 @@ int DB::AcquireRebuildBarrierShared() const
     int rval = EnsureRebuildGuardFd();
     if (rval != MBError::SUCCESS)
         return rval;
-    return WaitForRebuildBarrierLock(rebuild_guard_fd, LOCK_SH);
+    return WaitForRebuildBarrierLock(rebuild_guard_file->GetFD(), LOCK_SH);
 }
 
 void DB::ReleaseRebuildBarrierShared() const
 {
-    UnlockRebuildBarrier(rebuild_guard_fd);
+    if (rebuild_guard_file != NULL)
+        UnlockRebuildBarrier(rebuild_guard_file->GetFD());
 }
 
 int DB::AcquireRebuildBarrierExclusive() const
@@ -293,7 +276,7 @@ int DB::AcquireRebuildBarrierExclusive() const
     int rval = EnsureRebuildGuardFd();
     if (rval != MBError::SUCCESS)
         return rval;
-    return WaitForRebuildBarrierLock(rebuild_guard_fd, LOCK_EX);
+    return WaitForRebuildBarrierLock(rebuild_guard_file->GetFD(), LOCK_EX);
 }
 
 uint64_t DB::GetReaderGuardFastSlotCount() const
@@ -308,7 +291,8 @@ uint64_t DB::GetReaderGuardBarrierFallbackCount() const
 
 void DB::ReleaseRebuildBarrierExclusive() const
 {
-    UnlockRebuildBarrier(rebuild_guard_fd);
+    if (rebuild_guard_file != NULL)
+        UnlockRebuildBarrier(rebuild_guard_file->GetFD());
 }
 
 // Constructor for initializing DB handle
@@ -319,7 +303,7 @@ DB::DB(const char* db_path,
     uint32_t id,
     uint32_t queue_size)
     : status(MBError::NOT_INITIALIZED)
-    , rebuild_guard_fd(-1)
+    , rebuild_guard_file(NULL)
     , process_start_time(0)
     , reader_guard_fast_slot_count(0)
     , reader_guard_barrier_fallback_count(0)
@@ -339,7 +323,7 @@ DB::DB(const char* db_path,
 
 DB::DB(MBConfig& config)
     : status(MBError::NOT_INITIALIZED)
-    , rebuild_guard_fd(-1)
+    , rebuild_guard_file(NULL)
     , process_start_time(0)
     , reader_guard_fast_slot_count(0)
     , reader_guard_barrier_fallback_count(0)
@@ -817,7 +801,7 @@ int DB::Status() const
 
 DB::DB(const DB& db)
     : status(MBError::NOT_INITIALIZED)
-    , rebuild_guard_fd(-1)
+    , rebuild_guard_file(NULL)
     , process_start_time(0)
     , reader_guard_fast_slot_count(0)
     , reader_guard_barrier_fallback_count(0)
@@ -839,7 +823,7 @@ const DB& DB::operator=(const DB& db)
     MBConfig db_config = db.dbConfig;
     db_config.mbdir = db.mb_dir.c_str();
     status = MBError::NOT_INITIALIZED;
-    rebuild_guard_fd = -1;
+    rebuild_guard_file.reset();
     process_start_time = 0;
     reader_guard_fast_slot_count = 0;
     reader_guard_barrier_fallback_count = 0;

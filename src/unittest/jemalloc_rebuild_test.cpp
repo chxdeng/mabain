@@ -129,6 +129,16 @@ public:
     {
         db.EndReaderEpochGuard(epoch);
     }
+
+    static int EnsureRebuildGuardFd(DB& db)
+    {
+        return db.EnsureRebuildGuardFd();
+    }
+
+    static MmapFileIO* GetRebuildGuardFile(const DB& db)
+    {
+        return db.rebuild_guard_file.get();
+    }
 };
 
 }
@@ -457,6 +467,41 @@ TEST_F(JemallocRebuildMetadataTest, ReaderEpochTrackingCanBeEnabledForCoveredLoo
     EXPECT_EQ(FindReaderEpochSlot(header, reader_cfg.connect_id), -1);
     EXPECT_EQ(header->reader_epoch.load(MEMORY_ORDER_READER), 17u);
     reader_db.Close();
+    writer_db.Close();
+}
+
+TEST_F(JemallocRebuildMetadataTest, RebuildBarrierGuardResourceIsSharedAcrossHandlesForSameDb)
+{
+    ASSERT_TRUE(CreateJemallocRebuildTestDir());
+
+    MBConfig writer_cfg = MakeJemallocRebuildConfig(CONSTS::WriterOptions(), false);
+    DB writer_db(writer_cfg);
+    ASSERT_TRUE(writer_db.is_open());
+
+    MBConfig reader_cfg_1 = MakeJemallocRebuildConfig(CONSTS::ACCESS_MODE_READER, false);
+    reader_cfg_1.connect_id = 0x6011;
+    DB reader_db_1(reader_cfg_1);
+    ASSERT_TRUE(reader_db_1.is_open());
+
+    MBConfig reader_cfg_2 = MakeJemallocRebuildConfig(CONSTS::ACCESS_MODE_READER, false);
+    reader_cfg_2.connect_id = 0x6012;
+    DB reader_db_2(reader_cfg_2);
+    ASSERT_TRUE(reader_db_2.is_open());
+
+    ASSERT_EQ(DBTestPeer::EnsureRebuildGuardFd(reader_db_1), MBError::SUCCESS);
+    ASSERT_EQ(DBTestPeer::EnsureRebuildGuardFd(reader_db_2), MBError::SUCCESS);
+
+    MmapFileIO* guard_1 = DBTestPeer::GetRebuildGuardFile(reader_db_1);
+    MmapFileIO* guard_2 = DBTestPeer::GetRebuildGuardFile(reader_db_2);
+    ASSERT_NE(guard_1, nullptr);
+    ASSERT_NE(guard_2, nullptr);
+    EXPECT_EQ(guard_1, guard_2);
+
+    const std::string pool_key = JemallocRebuildTestPath() + "_mabain_h#rebuild_guard";
+    EXPECT_EQ(ResourcePool::getInstance().GetResourceByPath(pool_key), guard_1);
+
+    reader_db_2.Close();
+    reader_db_1.Close();
     writer_db.Close();
 }
 

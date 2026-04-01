@@ -19,6 +19,7 @@
 #ifndef __DB_H__
 #define __DB_H__
 
+#include <memory>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -38,6 +39,7 @@ class MBlsq;
 class LockFree;
 class AsyncWriter;
 class ResourceCollection;
+class MmapFileIO;
 struct _DBTraverseNode;
 
 typedef struct _MBConfig {
@@ -252,7 +254,7 @@ private:
 
     // DB connector ID
     uint32_t identifier;
-    mutable int rebuild_guard_fd;
+    mutable std::shared_ptr<MmapFileIO> rebuild_guard_file;
     uint64_t process_start_time;
     mutable uint64_t reader_guard_fast_slot_count;
     mutable uint64_t reader_guard_barrier_fallback_count;
