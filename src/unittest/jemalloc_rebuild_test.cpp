@@ -141,6 +141,32 @@ public:
     }
 };
 
+class DictReleaseTestPeer {
+public:
+    static int ReleaseBuffer(Dict& dict, size_t offset, int size)
+    {
+        return dict.ReleaseBuffer(offset, size);
+    }
+};
+
+class DictMemReleaseTestPeer {
+public:
+    static bool ReserveNode(DictMem& dmm, int nt, size_t& offset, uint8_t*& ptr)
+    {
+        return dmm.ReserveNode(nt, offset, ptr);
+    }
+
+    static void ReleaseNode(DictMem& dmm, size_t offset, int nt)
+    {
+        dmm.ReleaseNode(offset, nt);
+    }
+
+    static void ReleaseBuffer(DictMem& dmm, size_t offset, int size)
+    {
+        dmm.ReleaseBuffer(offset, size);
+    }
+};
+
 }
 namespace {
 int FindReaderEpochSlot(const IndexHeader* header, uint32_t connect_id)
@@ -433,6 +459,116 @@ TEST_F(JemallocRebuildMetadataTest, ReaderEpochSlotIsClaimedOnOpenAndClearedOnCl
     EXPECT_EQ(header->reader_epoch_slot[slot].epoch.load(MEMORY_ORDER_READER), 0u);
 
     reader_db.Close();
+    writer_db.Close();
+}
+
+TEST_F(JemallocRebuildMetadataTest, ReaderEpochGuardFallsBackToBarrierWhenFastSlotsAreUnavailable)
+{
+    ASSERT_TRUE(CreateJemallocRebuildTestDir());
+
+    MBConfig writer_cfg = MakeJemallocRebuildConfig(CONSTS::WriterOptions(), false);
+    DB writer_db(writer_cfg);
+    ASSERT_TRUE(writer_db.is_open());
+
+    MBConfig reader_cfg = MakeJemallocRebuildConfig(CONSTS::ACCESS_MODE_READER, false);
+    reader_cfg.connect_id = 0x4568;
+    DB reader_db(reader_cfg);
+    ASSERT_TRUE(reader_db.is_open());
+
+    IndexHeader* header = writer_db.GetDictPtr()->GetHeaderPtr();
+    ASSERT_NE(header, nullptr);
+    header->reader_epoch.store(21, MEMORY_ORDER_WRITER);
+    header->reader_epoch_tracking_active.store(1, MEMORY_ORDER_WRITER);
+    header->reader_epoch_slot_count = 1;
+    header->reader_epoch_slot[0].connect_id.store(0x1111, MEMORY_ORDER_WRITER);
+    header->reader_epoch_slot[0].pid.store(1, MEMORY_ORDER_WRITER);
+    header->reader_epoch_slot[0].proc_start_time.store(1, MEMORY_ORDER_WRITER);
+    header->reader_epoch_slot[0].epoch.store(21, MEMORY_ORDER_WRITER);
+
+    const uint64_t guard = DBTestPeer::BeginReaderEpochGuard(reader_db);
+    ASSERT_NE(guard, 0u);
+    EXPECT_EQ(FindReaderEpochSlot(header, reader_cfg.connect_id), -1);
+    EXPECT_EQ(reader_db.GetReaderGuardFastSlotCount(), 0u);
+    EXPECT_EQ(reader_db.GetReaderGuardBarrierFallbackCount(), 1u);
+
+    DBTestPeer::EndReaderEpochGuard(reader_db, guard);
+    reader_db.Close();
+    writer_db.Close();
+}
+
+TEST_F(JemallocRebuildMetadataTest, DataReleaseBelowCompactedBoundaryDoesNotDecrementPendingSize)
+{
+    ASSERT_TRUE(CreateJemallocRebuildTestDir());
+
+    MBConfig writer_cfg = MakeJemallocRebuildConfig(CONSTS::WriterOptions(), false);
+    DB writer_db(writer_cfg);
+    ASSERT_TRUE(writer_db.is_open());
+
+    Dict* dict = writer_db.GetDictPtr();
+    ASSERT_NE(dict, nullptr);
+    IndexHeader* header = dict->GetHeaderPtr();
+    ASSERT_NE(header, nullptr);
+
+    const std::string value("value-below-boundary");
+    size_t offset = 0;
+    dict->ReserveData(reinterpret_cast<const uint8_t*>(value.data()), value.size(), offset);
+
+    header->pending_data_buff_size = 123456;
+    header->jemalloc_data_free_start = offset + 1;
+    ASSERT_EQ(DictReleaseTestPeer::ReleaseBuffer(*dict, offset, value.size() + DATA_HDR_BYTE),
+        MBError::SUCCESS);
+    EXPECT_EQ(header->pending_data_buff_size, 123456);
+
+    writer_db.Close();
+}
+
+TEST_F(JemallocRebuildMetadataTest, IndexEdgeReleaseBelowCompactedBoundaryDoesNotDecrementPendingSize)
+{
+    ASSERT_TRUE(CreateJemallocRebuildTestDir());
+
+    MBConfig writer_cfg = MakeJemallocRebuildConfig(CONSTS::WriterOptions(), false);
+    DB writer_db(writer_cfg);
+    ASSERT_TRUE(writer_db.is_open());
+
+    DictMem* dmm = writer_db.GetDictPtr()->GetMM();
+    ASSERT_NE(dmm, nullptr);
+    IndexHeader* header = dmm->GetHeaderPtr();
+    ASSERT_NE(header, nullptr);
+
+    const std::string key("edge-below-boundary");
+    size_t offset = 0;
+    dmm->ReserveData(reinterpret_cast<const uint8_t*>(key.data()), key.size(), offset);
+
+    header->pending_index_buff_size = 234567;
+    header->jemalloc_index_free_start = offset + 1;
+    DictMemReleaseTestPeer::ReleaseBuffer(*dmm, offset, key.size());
+    EXPECT_EQ(header->pending_index_buff_size, 234567);
+
+    writer_db.Close();
+}
+
+TEST_F(JemallocRebuildMetadataTest, IndexNodeReleaseBelowCompactedBoundaryDoesNotDecrementPendingSize)
+{
+    ASSERT_TRUE(CreateJemallocRebuildTestDir());
+
+    MBConfig writer_cfg = MakeJemallocRebuildConfig(CONSTS::WriterOptions(), false);
+    DB writer_db(writer_cfg);
+    ASSERT_TRUE(writer_db.is_open());
+
+    DictMem* dmm = writer_db.GetDictPtr()->GetMM();
+    ASSERT_NE(dmm, nullptr);
+    IndexHeader* header = dmm->GetHeaderPtr();
+    ASSERT_NE(header, nullptr);
+
+    size_t offset = 0;
+    uint8_t* ptr = nullptr;
+    ASSERT_FALSE(DictMemReleaseTestPeer::ReserveNode(*dmm, 0, offset, ptr));
+
+    header->pending_index_buff_size = 345678;
+    header->jemalloc_index_free_start = offset + 1;
+    DictMemReleaseTestPeer::ReleaseNode(*dmm, offset, 0);
+    EXPECT_EQ(header->pending_index_buff_size, 345678);
+
     writer_db.Close();
 }
 

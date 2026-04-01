@@ -48,6 +48,7 @@ namespace mabain {
 namespace {
 
 const uint64_t kRebuildBarrierGuardToken = static_cast<uint64_t>(-1);
+const uint32_t kReaderEpochGuardMaxStabilizeRetries = 32;
 
 int WaitForRebuildBarrierLock(int fd, int op)
 {
@@ -195,13 +196,16 @@ uint64_t DB::BeginReaderEpochGuard() const
 
         slot.pid.store(static_cast<uint32_t>(getpid()), MEMORY_ORDER_WRITER);
         slot.proc_start_time.store(process_start_time, MEMORY_ORDER_WRITER);
-        for (;;) {
+        for (uint32_t retry = 0; retry < kReaderEpochGuardMaxStabilizeRetries; retry++) {
             uint64_t epoch = header->reader_epoch.load(MEMORY_ORDER_READER);
             slot.epoch.store(epoch, MEMORY_ORDER_WRITER);
-            reader_guard_fast_slot_count++;
-            if (epoch == header->reader_epoch.load(MEMORY_ORDER_READER))
+            if (epoch == header->reader_epoch.load(MEMORY_ORDER_READER)) {
+                reader_guard_fast_slot_count++;
                 return i + 1;
+            }
         }
+        slot.Clear();
+        break;
     }
 
     if (AcquireRebuildBarrierShared() != MBError::SUCCESS) {

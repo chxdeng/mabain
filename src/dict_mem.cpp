@@ -917,23 +917,23 @@ void DictMem::ReleaseNode(size_t offset, int nt)
     if (options & CONSTS::OPTION_JEMALLOC) {
         if (offset >= header->jemalloc_index_free_start) {
             kv_file->Free(offset);
+            size_t rel_size = ((size_t)node_size[nt] + JEMALLOC_ALIGNMENT - 1) & ~(JEMALLOC_ALIGNMENT - 1);
+            header->pending_index_buff_size -= (int64_t)rel_size;
+            if (header->pending_index_buff_size < 0) {
+                Logger::Log(LOG_LEVEL_WARN,
+                    "pending index buffer size underflow after node free: off=%zu rel=%zu pending=%lld start=%zu",
+                    offset, rel_size,
+                    static_cast<long long>(header->pending_index_buff_size),
+                    header->jemalloc_index_free_start);
+#ifdef __DEBUG__
+                assert(false && "pending_index_buff_size underflow after node free");
+#endif
+                header->pending_index_buff_size = 0;
+            }
         } else {
             Logger::Log(LOG_LEVEL_DEBUG,
                 "skip jemalloc node free below compacted boundary: off=%zu start=%zu",
                 offset, header->jemalloc_index_free_start);
-        }
-        size_t rel_size = ((size_t)node_size[nt] + JEMALLOC_ALIGNMENT - 1) & ~(JEMALLOC_ALIGNMENT - 1);
-        header->pending_index_buff_size -= (int64_t)rel_size;
-        if (header->pending_index_buff_size < 0) {
-            Logger::Log(LOG_LEVEL_WARN,
-                "pending index buffer size underflow after node free: off=%zu rel=%zu pending=%lld start=%zu",
-                offset, rel_size,
-                static_cast<long long>(header->pending_index_buff_size),
-                header->jemalloc_index_free_start);
-#ifdef __DEBUG__
-            assert(false && "pending_index_buff_size underflow after node free");
-#endif
-            header->pending_index_buff_size = 0;
         }
     } else {
         releaseNodeFL(offset, nt);
@@ -963,23 +963,23 @@ void DictMem::ReleaseBuffer(size_t offset, int size)
     if (options & CONSTS::OPTION_JEMALLOC) {
         if (offset >= header->jemalloc_index_free_start) {
             kv_file->Free(offset);
+            size_t rel_size = ((size_t)size + JEMALLOC_ALIGNMENT - 1) & ~(JEMALLOC_ALIGNMENT - 1);
+            header->pending_index_buff_size -= (int64_t)rel_size;
+            if (header->pending_index_buff_size < 0) {
+                Logger::Log(LOG_LEVEL_WARN,
+                    "pending index buffer size underflow after edge free: off=%zu rel=%zu pending=%lld start=%zu",
+                    offset, rel_size,
+                    static_cast<long long>(header->pending_index_buff_size),
+                    header->jemalloc_index_free_start);
+#ifdef __DEBUG__
+                assert(false && "pending_index_buff_size underflow after edge free");
+#endif
+                header->pending_index_buff_size = 0;
+            }
         } else {
             Logger::Log(LOG_LEVEL_DEBUG,
                 "skip jemalloc edge-string free below compacted boundary: off=%zu start=%zu",
                 offset, header->jemalloc_index_free_start);
-        }
-        size_t rel_size = ((size_t)size + JEMALLOC_ALIGNMENT - 1) & ~(JEMALLOC_ALIGNMENT - 1);
-        header->pending_index_buff_size -= (int64_t)rel_size;
-        if (header->pending_index_buff_size < 0) {
-            Logger::Log(LOG_LEVEL_WARN,
-                "pending index buffer size underflow after edge free: off=%zu rel=%zu pending=%lld start=%zu",
-                offset, rel_size,
-                static_cast<long long>(header->pending_index_buff_size),
-                header->jemalloc_index_free_start);
-#ifdef __DEBUG__
-            assert(false && "pending_index_buff_size underflow after edge free");
-#endif
-            header->pending_index_buff_size = 0;
         }
     } else {
         releaseBufferFL(offset, size);

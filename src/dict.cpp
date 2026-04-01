@@ -1109,17 +1109,17 @@ int Dict::ReleaseBuffer(size_t offset, int size)
     if (options & CONSTS::OPTION_JEMALLOC) {
         if (offset >= header->jemalloc_data_free_start) {
             kv_file->Free(offset);
+            size_t rel_size = ((size_t)size + JEMALLOC_ALIGNMENT - 1) & ~(JEMALLOC_ALIGNMENT - 1);
+            header->pending_data_buff_size -= (int64_t)rel_size;
+            if (header->pending_data_buff_size < 0) {
+                Logger::Log(LOG_LEVEL_DEBUG, "pending data buffer size is negative: %d",
+                    header->pending_data_buff_size);
+                header->pending_data_buff_size = 0;
+            }
         } else {
             Logger::Log(LOG_LEVEL_DEBUG,
                 "skip jemalloc data free below compacted boundary: off=%zu start=%zu",
                 offset, header->jemalloc_data_free_start);
-        }
-        size_t rel_size = ((size_t)size + JEMALLOC_ALIGNMENT - 1) & ~(JEMALLOC_ALIGNMENT - 1);
-        header->pending_data_buff_size -= (int64_t)rel_size;
-        if (header->pending_data_buff_size < 0) {
-            Logger::Log(LOG_LEVEL_DEBUG, "pending data buffer size is negative: %d",
-                header->pending_data_buff_size);
-            header->pending_data_buff_size = 0;
         }
         return MBError::SUCCESS;
     } else {
@@ -1161,18 +1161,17 @@ int Dict::ReleaseBuffer(size_t offset)
     if (options & CONSTS::OPTION_JEMALLOC) {
         if (offset >= header->jemalloc_data_free_start) {
             kv_file->Free(offset);
+            size_t rel_size = ((size_t)data_size + JEMALLOC_ALIGNMENT - 1) & ~(JEMALLOC_ALIGNMENT - 1);
+            header->pending_data_buff_size -= (int64_t)rel_size;
+            if (header->pending_data_buff_size < 0) {
+                Logger::Log(LOG_LEVEL_DEBUG, "pending data buffer size is negative: %d",
+                    header->pending_data_buff_size);
+                header->pending_data_buff_size = 0;
+            }
         } else {
             Logger::Log(LOG_LEVEL_DEBUG,
                 "skip jemalloc data free below compacted boundary: off=%zu start=%zu",
                 offset, header->jemalloc_data_free_start);
-        }
-
-        size_t rel_size = ((size_t)data_size + JEMALLOC_ALIGNMENT - 1) & ~(JEMALLOC_ALIGNMENT - 1);
-        header->pending_data_buff_size -= (int64_t)rel_size;
-        if (header->pending_data_buff_size < 0) {
-            Logger::Log(LOG_LEVEL_DEBUG, "pending data buffer size is negative: %d",
-                header->pending_data_buff_size);
-            header->pending_data_buff_size = 0;
         }
         return MBError::SUCCESS;
     } else {

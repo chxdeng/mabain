@@ -105,6 +105,7 @@ public:
     static const uint8_t empty_edge[EDGE_SIZE];
 
 private:
+    friend class DictMemReleaseTestPeer;
     bool ReserveNode(int nt, size_t& offset, uint8_t*& ptr);
     void ReleaseNode(size_t offset, int nt);
     void ReleaseBuffer(size_t offset, int size);

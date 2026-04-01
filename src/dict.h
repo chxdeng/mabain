@@ -137,6 +137,7 @@ public:
 private:
     // Allow internal SearchEngine to orchestrate lookups without exposing members publicly
     friend class detail::SearchEngine;
+    friend class DictReleaseTestPeer;
     // Search internals moved to detail::SearchEngine
     // Prefix traversal helpers moved to SearchEngine.
     // Traversal helpers are owned by SearchEngine.

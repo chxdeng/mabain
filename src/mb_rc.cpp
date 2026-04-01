@@ -236,20 +236,6 @@ int ResourceCollection::StartupShrink()
     const size_t data_block_end = dict->GetExistingBlockEnd();
     size_t index_tail = std::max(dmm->GetJemallocAllocSize(), index_block_end);
     size_t data_tail = std::max(dict->GetJemallocAllocSize(), data_block_end);
-    if (index_tail < index_block_end) {
-        Logger::Log(LOG_LEVEL_WARN,
-            "startup shrink index tail invalid on reopen, using existing block end %llu instead of %llu",
-            static_cast<unsigned long long>(index_block_end),
-            static_cast<unsigned long long>(index_tail));
-        index_tail = index_block_end;
-    }
-    if (data_tail < data_block_end) {
-        Logger::Log(LOG_LEVEL_WARN,
-            "startup shrink data tail invalid on reopen, using existing block end %llu instead of %llu",
-            static_cast<unsigned long long>(data_block_end),
-            static_cast<unsigned long long>(data_tail));
-        data_tail = data_block_end;
-    }
     if (index_tail == 0 || data_tail == 0)
         return MBError::NOT_INITIALIZED;
     if (index_tail < header->m_index_offset || data_tail < header->m_data_offset) {
