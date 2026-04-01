@@ -35,6 +35,9 @@
 #include "rollable_file.h"
 
 namespace mabain {
+namespace {
+thread_local int g_jemalloc_alloc_error = MBError::SUCCESS;
+}
 
 #define SLIDING_MEM_SIZE 16LLU * 1024 * 1024 // 16M
 #define MAX_NUM_BLOCK 2 * 1024 // 2K
@@ -109,6 +112,9 @@ void RollableFile::InitShmSlidingAddr(std::atomic<size_t>* shm_sliding_addr)
 
 void RollableFile::Close()
 {
+    if (mode & CONSTS::OPTION_JEMALLOC) {
+        DestroyJemallocArena(false);
+    }
     if (sliding_addr != NULL) {
         munmap(sliding_addr, sliding_size);
         sliding_addr = NULL;
@@ -163,6 +169,12 @@ int RollableFile::OpenAndMapBlockFile(size_t block_order, bool create_file)
     if (map_file) {
         mem_used += block_size;
         if (init_jem) {
+            if (files[0]->mm_meta == nullptr) {
+                rval = files[0]->InitMemoryManager();
+                if (rval != MBError::SUCCESS) {
+                    return rval;
+                }
+            }
             rval = ConfigureJemalloc(files[0]->mm_meta);
         }
     } else if ((mode & CONSTS::MEMORY_ONLY_MODE) || (mode & CONSTS::OPTION_JEMALLOC)) {
@@ -487,19 +499,121 @@ void* RollableFile::PreAlloc(size_t init_off)
 void* RollableFile::Malloc(size_t size, size_t& offset)
 {
     void* ptr = nullptr;
+    offset = 0;
+    g_jemalloc_alloc_error = MBError::SUCCESS;
     if (size > 0) {
         if (files[0] == nullptr) {
             // create the first block file for memory metadata if not exist
             int rval = CheckAndOpenFile(0, true);
             if (rval != MBError::SUCCESS) {
-                throw (int)rval;
+                g_jemalloc_alloc_error = rval;
+                return nullptr;
             }
         }
         unsigned arena_index = files[0]->mm_meta->arena_index;
         ptr = mallocx(size, MALLOCX_ARENA(arena_index) | MALLOCX_TCACHE_NONE);
-        offset = get_shm_offset(ptr);
+        if (ptr != nullptr)
+            offset = get_shm_offset(ptr);
+        else if (g_jemalloc_alloc_error == MBError::SUCCESS)
+            g_jemalloc_alloc_error = MBError::NO_MEMORY;
     }
     return ptr;
+}
+
+int RollableFile::GetLastAllocError() const
+{
+    return g_jemalloc_alloc_error == MBError::SUCCESS ? MBError::NO_MEMORY : g_jemalloc_alloc_error;
+}
+
+size_t RollableFile::GetJemallocAllocSize() const
+{
+    if (!(mode & CONSTS::OPTION_JEMALLOC) || files.empty() ||
+        files[0] == nullptr || files[0]->mm_meta == nullptr) {
+        return 0;
+    }
+    return files[0]->mm_meta->alloc_size;
+}
+
+// Reseed the current jemalloc arena to continue allocating from a specific
+// shared-memory tail offset. This helper is intended for a freshly configured
+// or reset arena before new allocations are issued.
+int RollableFile::ReseedJemalloc(size_t alloc_size)
+{
+    if (!(mode & CONSTS::OPTION_JEMALLOC)) {
+        return MBError::INVALID_ARG;
+    }
+
+    int rval = CheckAndOpenFile(0, true);
+    if (rval != MBError::SUCCESS) {
+        return rval;
+    }
+    if (!files[0]->IsMapped() || files[0]->mm_meta == nullptr) {
+        return MBError::MMAP_FAILED;
+    }
+
+    size_t block_order = alloc_size / block_size;
+    rval = CheckAndOpenFile(block_order, true);
+    if (rval != MBError::SUCCESS) {
+        return rval;
+    }
+    if (files[block_order] == nullptr || !files[block_order]->IsMapped()) {
+        return MBError::MMAP_FAILED;
+    }
+
+    files[0]->mm_meta->alloc_size = alloc_size;
+    return MBError::SUCCESS;
+}
+
+int RollableFile::AddReusableBlock(size_t block_order)
+{
+    if (!(mode & CONSTS::OPTION_JEMALLOC)) {
+        return MBError::INVALID_ARG;
+    }
+    if (block_order >= max_num_block) {
+        return MBError::OUT_OF_BOUND;
+    }
+    int rval = CheckAndOpenFile(0, true);
+    if (rval != MBError::SUCCESS || files[0] == nullptr || files[0]->mm_meta == nullptr) {
+        return rval != MBError::SUCCESS ? rval : MBError::NOT_INITIALIZED;
+    }
+
+    MemoryManagerMetadata* mm_meta = files[0]->mm_meta;
+    if (mm_meta->active_reusable_block_order == static_cast<int>(block_order))
+        return MBError::SUCCESS;
+    for (size_t i = 0; i < mm_meta->reusable_block_order.size(); i++) {
+        if (mm_meta->reusable_block_order[i] == block_order)
+            return MBError::SUCCESS;
+    }
+    mm_meta->reusable_block_order.push_back(static_cast<uint32_t>(block_order));
+    return MBError::SUCCESS;
+}
+
+size_t RollableFile::GetReusableBlockCount() const
+{
+    return (files.empty() || files[0] == nullptr || files[0]->mm_meta == nullptr)
+        ? 0 : files[0]->mm_meta->reusable_block_order.size();
+}
+
+size_t RollableFile::GetExistingBlockEnd() const
+{
+    size_t end_offset = 0;
+    struct stat st;
+    for (size_t block_order = 0; block_order < max_num_block; block_order++) {
+        std::stringstream ss;
+        ss << block_order;
+        std::string file_path = path + ss.str();
+        errno = 0;
+        if (stat(file_path.c_str(), &st) != 0) {
+            if (errno != ENOENT) {
+                Logger::Log(LOG_LEVEL_WARN,
+                    "GetExistingBlockEnd: stat failed for %s errno=%d %s",
+                    file_path.c_str(), errno, strerror(errno));
+            }
+            break;
+        }
+        end_offset = (block_order + 1) * block_size;
+    }
+    return end_offset;
 }
 
 // offset is the total offset. It is used to find the block order and relative offset within the block.
@@ -581,28 +695,41 @@ void RollableFile::Purge() const
 // Reset jemalloc
 int RollableFile::ResetJemalloc()
 {
+    return DestroyJemallocArena(true);
+}
+
+int RollableFile::DestroyJemallocArena(bool reinitialize)
+{
     if (!(mode & CONSTS::OPTION_JEMALLOC)) {
         return MBError::INVALID_ARG;
     }
-    if (files[0] == nullptr) {
-        Logger::Log(LOG_LEVEL_DEBUG, "jemalloc not initialized, no need to reset");
+    if (files.empty() || files[0] == nullptr || files[0]->mm_meta == nullptr) {
+        Logger::Log(LOG_LEVEL_DEBUG, "jemalloc not initialized, no need to %s",
+            reinitialize ? "reset" : "close");
         return MBError::SUCCESS;
     }
+
     unsigned arena_index = files[0]->mm_meta->arena_index;
-    // Remove from global arena manager map before destruction
-    arena_manager_map.erase(arena_index);
-    // Destroy the arena
-    std::string arena_destroy = "arena." + std::to_string(arena_index) + ".destroy";
-    int rc = mallctl(arena_destroy.c_str(), nullptr, nullptr, nullptr, 0);
-    if (rc != 0) {
-        Logger::Log(LOG_LEVEL_ERROR, "failed to destroy jemalloc arena %u, error code %d",
-            arena_index, rc);
+    if (arena_index != 0) {
+        arena_manager_map.erase(arena_index);
+        std::string arena_destroy = "arena." + std::to_string(arena_index) + ".destroy";
+        int rc = mallctl(arena_destroy.c_str(), nullptr, nullptr, nullptr, 0);
+        if (rc != 0) {
+            Logger::Log(LOG_LEVEL_ERROR, "failed to destroy jemalloc arena %u, error code %d",
+                arena_index, rc);
+            if (!reinitialize) {
+                return MBError::JEMALLOC_ERROR;
+            }
+        }
+        files[0]->mm_meta->arena_index = 0;
     }
-    // Reset the memory manager metadata
-    if (files[0]->mm_meta != nullptr) {
-        delete files[0]->mm_meta;
-        files[0]->mm_meta = nullptr;
+
+    if (!reinitialize) {
+        return MBError::SUCCESS;
     }
+
+    delete files[0]->mm_meta;
+    files[0]->mm_meta = nullptr;
     files[0]->InitMemoryManager();
     return ConfigureJemalloc(files[0]->mm_meta);
 }
@@ -625,37 +752,87 @@ void* RollableFile::custom_extent_alloc(void* new_addr, size_t size, size_t alig
                 arena_ind, aligned_offset, size, mgr->block_size);
             return nullptr;
         }
-    } else {
+    } else if (mm_meta->active_reusable_block_order >= 0) {
+        int block_order = mm_meta->active_reusable_block_order;
+        aligned_offset = (mm_meta->active_reusable_block_offset + alignment - 1) & ~(alignment - 1);
+        if (aligned_offset + size <= mgr->block_size) {
+            int rval = mgr->CheckAndOpenFile(block_order, true);
+            if (rval != MBError::SUCCESS) {
+                Logger::Log(LOG_LEVEL_ERROR, "custom_extent_alloc: arena %u failed to reopen"
+                                             " reusable block file (order: %d, size: %zu)",
+                    arena_ind, block_order, size);
+                g_jemalloc_alloc_error = MBError::MMAP_FAILED;
+                return nullptr;
+            }
+            mm_meta->active_reusable_block_offset = aligned_offset + size;
+            ptr = mgr->files[block_order]->GetMapAddr() + aligned_offset;
+        } else {
+            mm_meta->active_reusable_block_order = -1;
+            mm_meta->active_reusable_block_offset = 0;
+        }
+    }
+
+    if (ptr == nullptr) {
         // Note alloc_size is the current total allocation size used by all blocks
         int block_order = mm_meta->alloc_size / mgr->block_size;
         size_t relative_offset = mm_meta->alloc_size % mgr->block_size;
         aligned_offset = (relative_offset + alignment - 1) & ~(alignment - 1);
         if (aligned_offset + size > mgr->block_size) {
-            // Try next block
-            block_order++;
-            if ((size_t)block_order >= mgr->max_num_block) {
-                Logger::Log(LOG_LEVEL_ERROR, "custom_extent_alloc: arena %u max block number exceeded",
-                    " new memory (aligned offset: %zu, used: %zu, size: %zu)",
-                    arena_ind, aligned_offset, mm_meta->alloc_size, size);
-                throw (int)MBError::NO_MEMORY;
+            if (!mm_meta->reusable_block_order.empty()) {
+                block_order = static_cast<int>(mm_meta->reusable_block_order.back());
+                int rval = mgr->CheckAndOpenFile(block_order, true);
+                if (rval != MBError::SUCCESS) {
+                    Logger::Log(LOG_LEVEL_ERROR, "custom_extent_alloc: arena %u failed to open"
+                                                 " reusable block file (order: %d, size: %zu)",
+                        arena_ind, block_order, size);
+                    g_jemalloc_alloc_error = MBError::MMAP_FAILED;
+                    return nullptr;
+                }
+                aligned_offset = 0;
+                if (size > mgr->block_size) {
+                    Logger::Log(LOG_LEVEL_ERROR, "custom_extent_alloc: arena %u reusable block too"
+                                                 " small (order: %d, size: %zu, block size: %zu)",
+                        arena_ind, block_order, size, mgr->block_size);
+                    g_jemalloc_alloc_error = MBError::NO_MEMORY;
+                    return nullptr;
+                }
+                mm_meta->reusable_block_order.pop_back();
+                mm_meta->active_reusable_block_order = block_order;
+                mm_meta->active_reusable_block_offset = size;
+                ptr = mgr->files[block_order]->GetMapAddr();
+            } else {
+                // Try next tail block
+                block_order++;
+                if ((size_t)block_order >= mgr->max_num_block) {
+                    Logger::Log(LOG_LEVEL_ERROR, "custom_extent_alloc: arena %u max block number exceeded",
+                        " new memory (aligned offset: %zu, used: %zu, size: %zu)",
+                        arena_ind, aligned_offset, mm_meta->alloc_size, size);
+                    g_jemalloc_alloc_error = MBError::NO_MEMORY;
+                    return nullptr;
+                }
+                int rval = mgr->CheckAndOpenFile(block_order, true);
+                if (rval != MBError::SUCCESS) {
+                    Logger::Log(LOG_LEVEL_ERROR, "custom_extent_alloc: arena %u failed to open"
+                                                 " new block file (order: %d, used: %zu, size: %zu)",
+                        arena_ind, block_order, mm_meta->alloc_size, size);
+                    g_jemalloc_alloc_error = MBError::MMAP_FAILED;
+                    return nullptr;
+                }
+                aligned_offset = 0; // reset aligned offset for new block
+                if (aligned_offset + size > mgr->block_size) {
+                    Logger::Log(LOG_LEVEL_ERROR, "custom_extent_alloc: arena %u failed to extend"
+                                                 " new memory (offset: %zu, size: %zu, used: %zu, size: %zu)",
+                        arena_ind, aligned_offset, size, mgr->block_size);
+                    g_jemalloc_alloc_error = MBError::NO_MEMORY;
+                    return nullptr;
+                }
+                mm_meta->alloc_size = block_order * mgr->block_size + aligned_offset + size;
+                ptr = mgr->files[block_order]->GetMapAddr() + aligned_offset;
             }
-            int rval = mgr->CheckAndOpenFile(block_order, true);
-            if (rval != MBError::SUCCESS) {
-                Logger::Log(LOG_LEVEL_ERROR, "custom_extent_alloc: arena %u failed to open"
-                                             " new block file (order: %d, used: %zu, size: %zu)",
-                    arena_ind, block_order, mm_meta->alloc_size, size);
-                throw (int)MBError::MMAP_FAILED;
-            }
-            aligned_offset = 0; // reset aligned offset for new block
-            if (aligned_offset + size > mgr->block_size) {
-                Logger::Log(LOG_LEVEL_ERROR, "custom_extent_alloc: arena %u failed to extend"
-                                             " new memory (offset: %zu, size: %zu, used: %zu, size: %zu)",
-                    arena_ind, aligned_offset, size, mgr->block_size);
-                throw (int)MBError::NO_MEMORY;
-            }
+        } else {
+            mm_meta->alloc_size = block_order * mgr->block_size + aligned_offset + size;
+            ptr = mgr->files[block_order]->GetMapAddr() + aligned_offset;
         }
-        mm_meta->alloc_size = block_order * mgr->block_size + aligned_offset + size;
-        ptr = mgr->files[block_order]->GetMapAddr() + aligned_offset;
     }
 
     // Set zero and commit flags

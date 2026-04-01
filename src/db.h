@@ -19,6 +19,7 @@
 #ifndef __DB_H__
 #define __DB_H__
 
+#include <memory>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -37,6 +38,8 @@ class Dict;
 class MBlsq;
 class LockFree;
 class AsyncWriter;
+class ResourceCollection;
+class MmapFileIO;
 struct _DBTraverseNode;
 
 typedef struct _MBConfig {
@@ -63,6 +66,9 @@ typedef struct _MBConfig {
 
 // Database handle class
 class DB {
+    friend class DBTestPeer;
+    friend class ResourceCollection;
+
 public:
     // DB iterator class as an inner class
     class iterator {
@@ -204,6 +210,8 @@ public:
     Dict* GetDictPtr() const;
     int GetDBOptions() const;
     const std::string& GetDBDir() const;
+    uint64_t GetReaderGuardFastSlotCount() const;
+    uint64_t GetReaderGuardBarrierFallbackCount() const;
 
     void GetDBConfig(MBConfig& config) const;
 
@@ -219,11 +227,23 @@ public:
     static bool PrefixCacheConfigured(int options) { return (options & CONSTS::OPTION_PREFIX_CACHE) != 0; }
 
 private:
+    uint64_t BeginReaderEpochGuard() const;
+    void EndReaderEpochGuard(uint64_t epoch) const;
+    int EnsureRebuildGuardFd() const;
+    int AcquireRebuildBarrierShared() const;
+    void ReleaseRebuildBarrierShared() const;
+    int AcquireRebuildBarrierExclusive() const;
+    void ReleaseRebuildBarrierExclusive() const;
     void InitDB(MBConfig& config);
     void InitDBEx(MBConfig& config);
     void ReInit(MBConfig& config);
     void PreCheckDB(const MBConfig& config, bool& init_header, bool& update_header);
     void PostDBUpdate(const MBConfig& config, bool init_header, bool update_header);
+    bool StartupRebuildRequested(const MBConfig& config, bool init_header) const;
+    int PrepareStartupRebuild(const MBConfig& config, bool init_header);
+    bool StartupRebuildMetadataReady() const;
+    bool StartupRebuildComplete() const;
+    int RunStartupRebuild();
     static int ValidateConfig(MBConfig& config);
 
     // DB directory
@@ -234,6 +254,10 @@ private:
 
     // DB connector ID
     uint32_t identifier;
+    mutable std::shared_ptr<MmapFileIO> rebuild_guard_file;
+    uint64_t process_start_time;
+    mutable uint64_t reader_guard_fast_slot_count;
+    mutable uint64_t reader_guard_barrier_fallback_count;
 
     // db lock
     MBLock lock;

@@ -141,6 +141,11 @@ bool FileIO::IsOpen() const
     return fd >= 0;
 }
 
+int FileIO::GetFD() const
+{
+    return fd;
+}
+
 int FileIO::TruncateFile(off_t filesize)
 {
     if (fd >= 0)

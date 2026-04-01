@@ -204,6 +204,11 @@ DictMem::DictMem(const std::string& mbdir, bool init_header, size_t memsize,
         header->version[1] = version[1];
         header->version[2] = version[2];
         header->version[3] = 0;
+        // Step 2: make rebuild metadata initialization explicit for new-format DBs.
+        header->ClearRebuildMetadata();
+        header->ResetReaderEpochState();
+        header->jemalloc_index_free_start = 0;
+        header->jemalloc_data_free_start = 0;
         // Set up inode number and create queue
         header->shm_queue_id = get_file_inode(mbdir + "_mabain_h");
         // Cannot set is_valid to true.
@@ -766,8 +771,10 @@ bool DictMem::ReserveNode(int nt, size_t& offset, uint8_t*& ptr)
         size_t buf_size = node_size[nt];
         ptr = (uint8_t*)kv_file->Malloc(buf_size, offset);
         if (ptr == nullptr) {
-            Logger::Log(LOG_LEVEL_ERROR, "failed to allocate node buffer");
-            throw MBError::NO_MEMORY;
+            int rval = kv_file->GetLastAllocError();
+            Logger::Log(LOG_LEVEL_ERROR, "failed to allocate node buffer: %s",
+                MBError::get_error_str(rval));
+            throw rval;
         }
         ret = false;
         size_t rel_size = ((size_t)buf_size + JEMALLOC_ALIGNMENT - 1) & ~(JEMALLOC_ALIGNMENT - 1);
@@ -840,8 +847,10 @@ void DictMem::ReserveData(const uint8_t* key, int size, size_t& offset, bool map
     if (options & CONSTS::OPTION_JEMALLOC) {
         void* ptr = kv_file->Malloc(size, offset);
         if (ptr == nullptr) {
-            Logger::Log(LOG_LEVEL_DEBUG, "failed to allocate buffer with size %zu", size);
-            throw MBError::NO_MEMORY;
+            int rval = kv_file->GetLastAllocError();
+            Logger::Log(LOG_LEVEL_DEBUG, "failed to allocate buffer with size %zu: %s",
+                size, MBError::get_error_str(rval));
+            throw rval;
         }
         memcpy(ptr, key, size);
         size_t rel_size = ((size_t)size + JEMALLOC_ALIGNMENT - 1) & ~(JEMALLOC_ALIGNMENT - 1);
@@ -906,9 +915,26 @@ void DictMem::ReleaseNode(size_t offset, int nt)
     remove_tracking_buffer(offset);
 #endif
     if (options & CONSTS::OPTION_JEMALLOC) {
-        kv_file->Free(offset);
-        size_t rel_size = ((size_t)node_size[nt] + JEMALLOC_ALIGNMENT - 1) & ~(JEMALLOC_ALIGNMENT - 1);
-        header->pending_index_buff_size -= (int64_t)rel_size;
+        if (offset >= header->jemalloc_index_free_start) {
+            kv_file->Free(offset);
+            size_t rel_size = ((size_t)node_size[nt] + JEMALLOC_ALIGNMENT - 1) & ~(JEMALLOC_ALIGNMENT - 1);
+            header->pending_index_buff_size -= (int64_t)rel_size;
+            if (header->pending_index_buff_size < 0) {
+                Logger::Log(LOG_LEVEL_WARN,
+                    "pending index buffer size underflow after node free: off=%zu rel=%zu pending=%lld start=%zu",
+                    offset, rel_size,
+                    static_cast<long long>(header->pending_index_buff_size),
+                    header->jemalloc_index_free_start);
+#ifdef __DEBUG__
+                assert(false && "pending_index_buff_size underflow after node free");
+#endif
+                header->pending_index_buff_size = 0;
+            }
+        } else {
+            Logger::Log(LOG_LEVEL_DEBUG,
+                "skip jemalloc node free below compacted boundary: off=%zu start=%zu",
+                offset, header->jemalloc_index_free_start);
+        }
     } else {
         releaseNodeFL(offset, nt);
     }
@@ -935,9 +961,26 @@ void DictMem::ReleaseBuffer(size_t offset, int size)
     remove_tracking_buffer(offset, size);
 #endif
     if (options & CONSTS::OPTION_JEMALLOC) {
-        kv_file->Free(offset);
-        size_t rel_size = ((size_t)size + JEMALLOC_ALIGNMENT - 1) & ~(JEMALLOC_ALIGNMENT - 1);
-        header->pending_index_buff_size -= (int64_t)rel_size;
+        if (offset >= header->jemalloc_index_free_start) {
+            kv_file->Free(offset);
+            size_t rel_size = ((size_t)size + JEMALLOC_ALIGNMENT - 1) & ~(JEMALLOC_ALIGNMENT - 1);
+            header->pending_index_buff_size -= (int64_t)rel_size;
+            if (header->pending_index_buff_size < 0) {
+                Logger::Log(LOG_LEVEL_WARN,
+                    "pending index buffer size underflow after edge free: off=%zu rel=%zu pending=%lld start=%zu",
+                    offset, rel_size,
+                    static_cast<long long>(header->pending_index_buff_size),
+                    header->jemalloc_index_free_start);
+#ifdef __DEBUG__
+                assert(false && "pending_index_buff_size underflow after edge free");
+#endif
+                header->pending_index_buff_size = 0;
+            }
+        } else {
+            Logger::Log(LOG_LEVEL_DEBUG,
+                "skip jemalloc edge-string free below compacted boundary: off=%zu start=%zu",
+                offset, header->jemalloc_index_free_start);
+        }
     } else {
         releaseBufferFL(offset, size);
     }

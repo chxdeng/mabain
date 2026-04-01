@@ -52,6 +52,7 @@ public:
         RC_SKIPPED = 22,
         VERSION_MISMATCH = 23,
         JEMALLOC_ERROR = 24,
+        TIMEOUT = 25,
 
         // NO_DB should be the last enum.
         NO_DB

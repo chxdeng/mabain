@@ -16,10 +16,15 @@
 
 // @author Changxue Deng <chadeng@cisco.com>
 
+#include <fcntl.h>
+#include <fstream>
 #include <iostream>
+#include <sstream>
+#include <sys/file.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 
+#include <cstdlib>
 #include <errno.h>
 
 #include "async_writer.h"
@@ -40,8 +45,81 @@
 
 namespace mabain {
 
-// Current mabain version 1.6.2
-uint16_t version[4] = { 1, 6, 2, 0 };
+namespace {
+
+const uint64_t kRebuildBarrierGuardToken = static_cast<uint64_t>(-1);
+const uint32_t kReaderEpochGuardMaxStabilizeRetries = 32;
+
+int WaitForRebuildBarrierLock(int fd, int op)
+{
+    if (fd < 0)
+        return MBError::NOT_INITIALIZED;
+    while (flock(fd, op) != 0) {
+        if (errno == EINTR)
+            continue;
+        return MBError::MUTEX_ERROR;
+    }
+    return MBError::SUCCESS;
+}
+
+void UnlockRebuildBarrier(int fd)
+{
+    if (fd < 0)
+        return;
+    while (flock(fd, LOCK_UN) != 0) {
+        if (errno != EINTR)
+            break;
+    }
+}
+
+#ifdef __linux__
+bool ReadProcStartTimeFromStatPath(const std::string& stat_path, uint64_t& start_time)
+{
+    std::ifstream stat_file(stat_path);
+    if (!stat_file.is_open())
+        return false;
+
+    std::string stat_line;
+    std::getline(stat_file, stat_line);
+    if (stat_line.empty())
+        return false;
+
+    const size_t rparen = stat_line.rfind(')');
+    if (rparen == std::string::npos || (rparen + 2) >= stat_line.size())
+        return false;
+
+    std::istringstream fields(stat_line.substr(rparen + 2));
+    std::string token;
+    for (int i = 0; i < 20; i++) {
+        if (!(fields >> token))
+            return false;
+    }
+
+    char* end = NULL;
+    const unsigned long long value = std::strtoull(token.c_str(), &end, 10);
+    if (end == token.c_str() || *end != '\0')
+        return false;
+
+    start_time = static_cast<uint64_t>(value);
+    return true;
+}
+
+uint64_t ReadSelfProcStartTime()
+{
+    uint64_t start_time = 0;
+    return ReadProcStartTimeFromStatPath("/proc/self/stat", start_time) ? start_time : 0;
+}
+#else
+uint64_t ReadSelfProcStartTime()
+{
+    return 0;
+}
+#endif
+
+} // namespace
+
+// Current mabain version 1.7.0
+uint16_t version[4] = { 1, 7, 0, 0 };
 
 DB::~DB()
 {
@@ -74,6 +152,8 @@ int DB::Close()
         rval = status;
     }
 
+    rebuild_guard_file.reset();
+
     status = MBError::DB_CLOSED;
     if (options & CONSTS::ACCESS_MODE_WRITER) {
         release_file_lock(writer_lock_fd);
@@ -96,6 +176,129 @@ int DB::UpdateNumHandlers(int mode, int delta)
     return rval;
 }
 
+uint64_t DB::BeginReaderEpochGuard() const
+{
+    if (dict == NULL)
+        return 0;
+
+    IndexHeader* header = dict->GetHeaderPtr();
+    if (header == NULL
+        || !header->reader_epoch_tracking_active.load(MEMORY_ORDER_READER))
+        return 0;
+
+    const uint32_t slot_connect_id = identifier != 0 ? identifier : static_cast<uint32_t>(getpid());
+    for (uint32_t i = 0; i < header->reader_epoch_slot_count; i++) {
+        ReaderEpochSlot& slot = header->reader_epoch_slot[i];
+        uint32_t expected = 0;
+        if (!slot.connect_id.compare_exchange_strong(
+                expected, slot_connect_id, MEMORY_ORDER_WRITER, MEMORY_ORDER_READER))
+            continue;
+
+        slot.pid.store(static_cast<uint32_t>(getpid()), MEMORY_ORDER_WRITER);
+        slot.proc_start_time.store(process_start_time, MEMORY_ORDER_WRITER);
+        for (uint32_t retry = 0; retry < kReaderEpochGuardMaxStabilizeRetries; retry++) {
+            uint64_t epoch = header->reader_epoch.load(MEMORY_ORDER_READER);
+            slot.epoch.store(epoch, MEMORY_ORDER_WRITER);
+            if (epoch == header->reader_epoch.load(MEMORY_ORDER_READER)) {
+                reader_guard_fast_slot_count++;
+                return i + 1;
+            }
+        }
+        slot.Clear();
+        break;
+    }
+
+    if (AcquireRebuildBarrierShared() != MBError::SUCCESS) {
+        Logger::Log(LOG_LEVEL_ERROR, "failed to acquire rebuild reader barrier fallback");
+        return 0;
+    }
+    header = dict->GetHeaderPtr();
+    if (header == NULL
+        || !header->reader_epoch_tracking_active.load(MEMORY_ORDER_READER)) {
+        ReleaseRebuildBarrierShared();
+        return 0;
+    }
+    reader_guard_barrier_fallback_count++;
+    return kRebuildBarrierGuardToken;
+}
+
+void DB::EndReaderEpochGuard(uint64_t epoch) const
+{
+    if (epoch == 0)
+        return;
+
+    if (epoch == kRebuildBarrierGuardToken) {
+        ReleaseRebuildBarrierShared();
+        return;
+    }
+
+    if (dict == NULL)
+        return;
+
+    IndexHeader* header = dict->GetHeaderPtr();
+    if (header == NULL)
+        return;
+
+    const uint64_t slot_index = epoch - 1;
+    if (slot_index < header->reader_epoch_slot_count)
+        header->reader_epoch_slot[slot_index].Clear();
+}
+
+int DB::EnsureRebuildGuardFd() const
+{
+    if (rebuild_guard_file)
+        return MBError::SUCCESS;
+    if (options & CONSTS::MEMORY_ONLY_MODE)
+        return MBError::NOT_INITIALIZED;
+
+    bool map_file = false;
+    const std::string header_path = mb_dir + "_mabain_h";
+    const std::string pool_key = header_path + "#rebuild_guard";
+    rebuild_guard_file = ResourcePool::getInstance().OpenFileWithKey(
+        pool_key, header_path, options, 0, map_file, false);
+    if (rebuild_guard_file == NULL || !rebuild_guard_file->IsOpen())
+        return MBError::OPEN_FAILURE;
+    return MBError::SUCCESS;
+}
+
+int DB::AcquireRebuildBarrierShared() const
+{
+    int rval = EnsureRebuildGuardFd();
+    if (rval != MBError::SUCCESS)
+        return rval;
+    return WaitForRebuildBarrierLock(rebuild_guard_file->GetFD(), LOCK_SH);
+}
+
+void DB::ReleaseRebuildBarrierShared() const
+{
+    if (rebuild_guard_file != NULL)
+        UnlockRebuildBarrier(rebuild_guard_file->GetFD());
+}
+
+int DB::AcquireRebuildBarrierExclusive() const
+{
+    int rval = EnsureRebuildGuardFd();
+    if (rval != MBError::SUCCESS)
+        return rval;
+    return WaitForRebuildBarrierLock(rebuild_guard_file->GetFD(), LOCK_EX);
+}
+
+uint64_t DB::GetReaderGuardFastSlotCount() const
+{
+    return reader_guard_fast_slot_count;
+}
+
+uint64_t DB::GetReaderGuardBarrierFallbackCount() const
+{
+    return reader_guard_barrier_fallback_count;
+}
+
+void DB::ReleaseRebuildBarrierExclusive() const
+{
+    if (rebuild_guard_file != NULL)
+        UnlockRebuildBarrier(rebuild_guard_file->GetFD());
+}
+
 // Constructor for initializing DB handle
 DB::DB(const char* db_path,
     int db_options,
@@ -104,6 +307,10 @@ DB::DB(const char* db_path,
     uint32_t id,
     uint32_t queue_size)
     : status(MBError::NOT_INITIALIZED)
+    , rebuild_guard_file(NULL)
+    , process_start_time(0)
+    , reader_guard_fast_slot_count(0)
+    , reader_guard_barrier_fallback_count(0)
     , writer_lock_fd(-1)
 {
     MBConfig config;
@@ -120,6 +327,10 @@ DB::DB(const char* db_path,
 
 DB::DB(MBConfig& config)
     : status(MBError::NOT_INITIALIZED)
+    , rebuild_guard_file(NULL)
+    , process_start_time(0)
+    , reader_guard_fast_slot_count(0)
+    , reader_guard_barrier_fallback_count(0)
     , writer_lock_fd(-1)
 {
     InitDB(config);
@@ -261,8 +472,12 @@ void DB::PostDBUpdate(const MBConfig& config, bool init_header, bool update_head
                 version[0], version[1], version[2]);
         }
         IndexHeader* header = dict->GetHeaderPtr();
-        if (header != NULL)
+        if (header != NULL) {
             header->async_queue_size = config.queue_size;
+            header->ResetReaderEpochState();
+            header->jemalloc_index_free_start = 0;
+            header->jemalloc_data_free_start = 0;
+        }
         dict->Init(identifier);
     }
 
@@ -271,6 +486,16 @@ void DB::PostDBUpdate(const MBConfig& config, bool init_header, bool update_head
             MBError::get_error_str(dict->Status()));
         status = dict->Status();
         return;
+    }
+
+    process_start_time = ReadSelfProcStartTime();
+
+    if (config.options & CONSTS::ACCESS_MODE_WRITER) {
+        int rval = PrepareStartupRebuild(config, init_header);
+        if (rval != MBError::SUCCESS) {
+            status = rval;
+            return;
+        }
     }
 
     lock.Init(dict->GetShmLockPtr());
@@ -299,8 +524,15 @@ void DB::PostDBUpdate(const MBConfig& config, bool init_header, bool update_head
         if (config.options & CONSTS::OPTION_JEMALLOC) {
             if (!init_header) {
                 if (config.jemalloc_keep_db) {
-                    // Keep existing DB for warm restart when explicitly configured
-                    Logger::Log(LOG_LEVEL_DEBUG, "jemalloc mode: keeping existing db for warm restart");
+                    Logger::Log(LOG_LEVEL_DEBUG,
+                        "jemalloc mode: preserving existing db for startup rebuild");
+                    int rval = RunStartupRebuild();
+                    if (rval != MBError::SUCCESS) {
+                        Logger::Log(LOG_LEVEL_ERROR, "startup rebuild failed: %s",
+                            MBError::get_error_str(rval));
+                        status = rval;
+                        return;
+                    }
                 } else {
                     // Default behavior: reset db in jemalloc mode if header already exists
                     Logger::Log(LOG_LEVEL_DEBUG, "reset db in jemalloc mode");
@@ -329,6 +561,156 @@ void DB::PostDBUpdate(const MBConfig& config, bool init_header, bool update_head
     }
 }
 
+bool DB::StartupRebuildRequested(const MBConfig& config, bool init_header) const
+{
+    return (config.options & CONSTS::ACCESS_MODE_WRITER)
+        && (config.options & CONSTS::OPTION_JEMALLOC)
+        && !init_header
+        && config.jemalloc_keep_db;
+}
+
+int DB::PrepareStartupRebuild(const MBConfig& config, bool init_header)
+{
+    if (!StartupRebuildRequested(config, init_header))
+        return MBError::SUCCESS;
+
+    if (config.options & CONSTS::ASYNC_WRITER_MODE) {
+        Logger::Log(LOG_LEVEL_ERROR,
+            "jemalloc startup rebuild does not support async writer mode");
+        return MBError::NOT_ALLOWED;
+    }
+
+    IndexHeader* header = dict->GetHeaderPtr();
+    if (header == NULL)
+        return MBError::NOT_INITIALIZED;
+
+    if (!header->RebuildInProgress()) {
+        header->ResetRebuildMetadata(REBUILD_STATE_PREP);
+        Logger::Log(LOG_LEVEL_INFO, "jemalloc startup rebuild entering PREP for %s",
+            mb_dir.c_str());
+    } else {
+        Logger::Log(LOG_LEVEL_INFO, "jemalloc startup rebuild resuming state %u for %s",
+            header->rebuild_state, mb_dir.c_str());
+    }
+
+    return MBError::SUCCESS;
+}
+
+bool DB::StartupRebuildMetadataReady() const
+{
+    IndexHeader* header = dict == NULL ? NULL : dict->GetHeaderPtr();
+    if (header == NULL)
+        return false;
+    if (header->rebuild_state == REBUILD_STATE_PREP)
+        return false;
+    if (header->rebuild_state != REBUILD_STATE_COPY
+        && header->rebuild_state != REBUILD_STATE_CUTOVER)
+        return false;
+    if (header->rebuild_index_alloc_end == 0 || header->rebuild_data_alloc_end == 0
+        || header->rebuild_index_source_end == 0 || header->rebuild_data_source_end == 0)
+        return false;
+    if (header->rebuild_index_source_end < header->rebuild_index_alloc_end
+        || header->rebuild_data_source_end < header->rebuild_data_alloc_end)
+        return false;
+    return true;
+}
+
+bool DB::StartupRebuildComplete() const
+{
+    IndexHeader* header = dict == NULL ? NULL : dict->GetHeaderPtr();
+    if (header == NULL || !StartupRebuildMetadataReady())
+        return false;
+
+    return header->rebuild_index_block_cursor >= header->rebuild_index_source_end
+        && header->rebuild_data_block_cursor >= header->rebuild_data_source_end
+        && header->reusable_index_block_count == 0
+        && header->reusable_data_block_count == 0;
+}
+
+int DB::RunStartupRebuild()
+{
+    try {
+        if (!(options & CONSTS::ACCESS_MODE_WRITER)
+            || !(options & CONSTS::OPTION_JEMALLOC))
+            return MBError::NOT_ALLOWED;
+        if (dict == NULL)
+            return MBError::NOT_INITIALIZED;
+        IndexHeader* header = dict->GetHeaderPtr();
+        if (header == NULL)
+            return MBError::NOT_INITIALIZED;
+        if (!header->RebuildInProgress())
+            return MBError::SUCCESS;
+
+        if (header->excep_updating_status != EXCEP_STATUS_NONE) {
+            int rval = dict->ExceptionRecovery();
+            if (rval != MBError::SUCCESS)
+                return rval;
+            header->excep_lf_offset = 0;
+            header->excep_offset = 0;
+        }
+
+        ResourceCollection rc(*this);
+        if (header->rebuild_state == REBUILD_STATE_PREP) {
+            int rval = rc.StartupShrink();
+            if (rval != MBError::SUCCESS)
+                return rval;
+        } else if (!StartupRebuildMetadataReady()) {
+            Logger::Log(LOG_LEVEL_ERROR,
+                "startup rebuild metadata incomplete for resumed state %u", header->rebuild_state);
+            return MBError::INVALID_SIZE;
+        }
+
+        uint32_t stalled_retry_count = 0;
+        const uint32_t startup_rebuild_stall_retry_limit = 60000;
+        while (!StartupRebuildComplete()) {
+            const size_t index_cursor = header->rebuild_index_block_cursor;
+            const size_t data_cursor = header->rebuild_data_block_cursor;
+            const uint32_t index_reusable = header->reusable_index_block_count;
+            const uint32_t data_reusable = header->reusable_data_block_count;
+
+            int rval = rc.StartupEvacuate();
+            if (rval != MBError::SUCCESS)
+                return rval;
+            if (!StartupRebuildComplete()
+                && index_cursor == header->rebuild_index_block_cursor
+                && data_cursor == header->rebuild_data_block_cursor
+                && index_reusable == header->reusable_index_block_count
+                && data_reusable == header->reusable_data_block_count) {
+                if (++stalled_retry_count > startup_rebuild_stall_retry_limit) {
+                    Logger::Log(LOG_LEVEL_ERROR,
+                        "startup rebuild timed out waiting for progress index_cursor=%llu/%llu data_cursor=%llu/%llu reusable=%u/%u",
+                        static_cast<unsigned long long>(header->rebuild_index_block_cursor),
+                        static_cast<unsigned long long>(header->rebuild_index_source_end),
+                        static_cast<unsigned long long>(header->rebuild_data_block_cursor),
+                        static_cast<unsigned long long>(header->rebuild_data_source_end),
+                        header->reusable_index_block_count,
+                        header->reusable_data_block_count);
+                    return MBError::TIMEOUT;
+                }
+                usleep(1000);
+            } else {
+                stalled_retry_count = 0;
+            }
+        }
+
+        header->pending_index_buff_size = 0;
+        header->pending_data_buff_size = 0;
+        header->reader_epoch_tracking_active.store(0, MEMORY_ORDER_WRITER);
+        header->jemalloc_index_free_start = header->rebuild_index_alloc_end;
+        header->jemalloc_data_free_start = header->rebuild_data_alloc_end;
+        header->ClearRebuildMetadata();
+        Logger::Log(LOG_LEVEL_INFO, "jemalloc startup rebuild completed for %s", mb_dir.c_str());
+        return MBError::SUCCESS;
+    } catch (int err) {
+        Logger::Log(LOG_LEVEL_ERROR, "startup rebuild failed with exception: %s",
+            MBError::get_error_str(err));
+        return err;
+    } catch (...) {
+        Logger::Log(LOG_LEVEL_ERROR, "startup rebuild failed with unknown exception");
+        return MBError::UNKNOWN_ERROR;
+    }
+}
+
 void DB::ReInit(MBConfig& config)
 {
     std::cout << "failed to open db with error: " << MBError::get_error_str(status) << "\n";
@@ -352,7 +734,8 @@ void DB::InitDB(MBConfig& config)
 
     int fd = acquire_file_lock_wait_n(lock_file, 5000);
     InitDBEx(config);
-    if ((config.options & CONSTS::ACCESS_MODE_WRITER) && !is_open() && status != MBError::WRITER_EXIST) {
+    if ((config.options & CONSTS::ACCESS_MODE_WRITER) && !is_open()
+        && status != MBError::WRITER_EXIST && status != MBError::NOT_ALLOWED) {
         ReInit(config);
     }
     release_file_lock(fd);
@@ -422,6 +805,10 @@ int DB::Status() const
 
 DB::DB(const DB& db)
     : status(MBError::NOT_INITIALIZED)
+    , rebuild_guard_file(NULL)
+    , process_start_time(0)
+    , reader_guard_fast_slot_count(0)
+    , reader_guard_barrier_fallback_count(0)
     , writer_lock_fd(-1)
 {
     MBConfig db_config = db.dbConfig;
@@ -440,6 +827,10 @@ const DB& DB::operator=(const DB& db)
     MBConfig db_config = db.dbConfig;
     db_config.mbdir = db.mb_dir.c_str();
     status = MBError::NOT_INITIALIZED;
+    rebuild_guard_file.reset();
+    process_start_time = 0;
+    reader_guard_fast_slot_count = 0;
+    reader_guard_barrier_fallback_count = 0;
     writer_lock_fd = -1;
     InitDB(db_config);
 
@@ -493,8 +884,11 @@ int DB::Find(const char* key, int len, MBData& mdata) const
     if (options & CONSTS::ASYNC_WRITER_MODE)
         return MBError::NOT_ALLOWED;
 
+    uint64_t reader_epoch = BeginReaderEpochGuard();
     detail::SearchEngine engine(*dict);
-    return engine.find(reinterpret_cast<const uint8_t*>(key), len, mdata);
+    int rval = engine.find(reinterpret_cast<const uint8_t*>(key), len, mdata);
+    EndReaderEpochGuard(reader_epoch);
+    return rval;
 }
 
 int DB::Find(const std::string& key, MBData& mdata) const
@@ -534,8 +928,11 @@ int DB::FindLongestPrefix(const char* key, int len, MBData& data) const
         return MBError::NOT_ALLOWED;
 
     data.match_len = 0;
+    uint64_t reader_epoch = BeginReaderEpochGuard();
     detail::SearchEngine engine(*dict);
-    return engine.findPrefix(reinterpret_cast<const uint8_t*>(key), len, data);
+    int rval = engine.findPrefix(reinterpret_cast<const uint8_t*>(key), len, data);
+    EndReaderEpochGuard(reader_epoch);
+    return rval;
 }
 
 int DB::FindLongestPrefix(const std::string& key, MBData& data) const

@@ -102,6 +102,7 @@ TEST_F(CorruptHeaderTest, test_zero_hdr_1)
     int options = CONSTS::WriterOptions();
     DB db(MB_DIR, options);
     EXPECT_TRUE(db.is_open());
+    EXPECT_EQ(db.Status(), MBError::SUCCESS);
 }
 
 TEST_F(CorruptHeaderTest, test_zero_hdr_2)
@@ -126,6 +127,7 @@ TEST_F(CorruptHeaderTest, test_invalid_hdr_1)
     int options = CONSTS::WriterOptions();
     DB db(MB_DIR, options);
     EXPECT_TRUE(db.is_open());
+    EXPECT_EQ(db.Status(), MBError::SUCCESS);
 }
 
 TEST_F(CorruptHeaderTest, test_invalid_hdr_2)
@@ -150,6 +152,7 @@ TEST_F(CorruptHeaderTest, test_random_hdr_1)
     int options = CONSTS::WriterOptions();
     DB db(MB_DIR, options);
     EXPECT_TRUE(db.is_open());
+    EXPECT_EQ(db.Status(), MBError::SUCCESS);
 }
 
 TEST_F(CorruptHeaderTest, test_random_hdr_2)

@@ -16,6 +16,12 @@
 
 // @author Changxue Deng <chadeng@cisco.com>
 
+#include <algorithm>
+#include <cerrno>
+#include <csignal>
+#include <cstdlib>
+#include <fstream>
+#include <sstream>
 #include <sys/time.h>
 
 #include "dict.h"
@@ -29,12 +35,58 @@
 #define RC_TASK_CHECK 10 // every Xth async task try to reclaim resources
 #define MIN_RC_OFFSET_GAP 1ULL * 1024 * 1024 // 1M
 
+namespace {
+
+inline size_t AlignUpToBlock(size_t offset, uint32_t block_size)
+{
+    return block_size == 0 ? offset : ((offset + block_size - 1) / block_size) * block_size;
+}
+
+#ifdef __linux__
+bool ReadProcStartTimeForPid(pid_t pid, uint64_t& start_time)
+{
+    std::ifstream stat_file("/proc/" + std::to_string(static_cast<long long>(pid)) + "/stat");
+    if (!stat_file.is_open())
+        return false;
+
+    std::string stat_line;
+    std::getline(stat_file, stat_line);
+    if (stat_line.empty())
+        return false;
+
+    const size_t rparen = stat_line.rfind(')');
+    if (rparen == std::string::npos || (rparen + 2) >= stat_line.size())
+        return false;
+
+    std::istringstream fields(stat_line.substr(rparen + 2));
+    std::string token;
+    for (int i = 0; i < 20; i++) {
+        if (!(fields >> token))
+            return false;
+    }
+
+    char* end = NULL;
+    const unsigned long long value = std::strtoull(token.c_str(), &end, 10);
+    if (end == token.c_str() || *end != '\0')
+        return false;
+
+    start_time = static_cast<uint64_t>(value);
+    return true;
+}
+#endif
+
+}
+
 namespace mabain {
 
 ResourceCollection::ResourceCollection(const DB& db, int rct)
     : DBTraverseBase(db)
     , rc_type(rct)
 {
+    evacuate_index_block_start = 0;
+    evacuate_index_block_end = 0;
+    evacuate_data_block_start = 0;
+    evacuate_data_block_end = 0;
     async_writer_ptr = NULL;
 }
 
@@ -162,6 +214,407 @@ void ResourceCollection::ReclaimResource(int64_t min_index_size,
     }
 }
 
+int ResourceCollection::StartupShrink()
+{
+    if (!db_ref.is_open())
+        return db_ref.Status();
+    if (!(db_ref.GetDBOptions() & CONSTS::ACCESS_MODE_WRITER))
+        return MBError::NOT_ALLOWED;
+    if (!(db_ref.GetDBOptions() & CONSTS::OPTION_JEMALLOC))
+        return MBError::NOT_ALLOWED;
+    if (header == NULL)
+        return MBError::NOT_INITIALIZED;
+    if (header->rebuild_state != REBUILD_STATE_PREP
+        && header->rebuild_state != REBUILD_STATE_COPY) {
+        Logger::Log(LOG_LEVEL_WARN,
+            "startup shrink requires PREP/COPY state, current state=%d",
+            header->rebuild_state);
+        return MBError::NOT_ALLOWED;
+    }
+
+    const size_t index_block_end = dmm->GetExistingBlockEnd();
+    const size_t data_block_end = dict->GetExistingBlockEnd();
+    size_t index_tail = std::max(dmm->GetJemallocAllocSize(), index_block_end);
+    size_t data_tail = std::max(dict->GetJemallocAllocSize(), data_block_end);
+    if (index_tail == 0 || data_tail == 0)
+        return MBError::NOT_INITIALIZED;
+    if (index_tail < header->m_index_offset || data_tail < header->m_data_offset) {
+        Logger::Log(LOG_LEVEL_WARN,
+            "startup shrink live offsets exceed reopen tails index=%llu/%llu data=%llu/%llu",
+            static_cast<unsigned long long>(header->m_index_offset),
+            static_cast<unsigned long long>(index_tail),
+            static_cast<unsigned long long>(header->m_data_offset),
+            static_cast<unsigned long long>(data_tail));
+        return MBError::INVALID_SIZE;
+    }
+
+    header->ResetRebuildMetadata(REBUILD_STATE_COPY);
+    header->rebuild_index_alloc_start = index_tail;
+    header->rebuild_data_alloc_start = data_tail;
+    header->rebuild_index_alloc_end = index_tail;
+    header->rebuild_data_alloc_end = data_tail;
+
+    // In jemalloc mode, normal live offsets are not reliable reopen tails.
+    // Reorder must use a non-overlapping workspace beyond the existing block end.
+    header->m_index_offset = index_tail;
+    header->m_data_offset = data_tail;
+    header->rc_m_index_off_pre = index_tail;
+    header->rc_m_data_off_pre = data_tail;
+
+    rc_type = RESOURCE_COLLECTION_TYPE_INDEX | RESOURCE_COLLECTION_TYPE_DATA;
+    if (index_free_lists != NULL)
+        index_free_lists->Empty();
+    if (data_free_lists != NULL)
+        data_free_lists->Empty();
+    rc_loop_counter = 0;
+    index_reorder_cnt = 0;
+    data_reorder_cnt = 0;
+    index_rc_status = MBError::NOT_INITIALIZED;
+    data_rc_status = MBError::NOT_INITIALIZED;
+    index_reorder_status = MBError::NOT_INITIALIZED;
+    data_reorder_status = MBError::NOT_INITIALIZED;
+    header->rc_root_offset.store(0, MEMORY_ORDER_WRITER);
+    ReorderBuffers();
+    CollectBuffers();
+    Finish();
+
+    header->rebuild_index_alloc_start = header->m_index_offset;
+    header->rebuild_index_source_end = std::max(index_block_end, header->m_index_offset);
+    header->rebuild_data_alloc_start = header->m_data_offset;
+    header->rebuild_data_source_end = std::max(data_block_end, header->m_data_offset);
+    header->rebuild_index_alloc_end = header->m_index_offset;
+    header->rebuild_data_alloc_end = header->m_data_offset;
+    Logger::Log(LOG_LEVEL_INFO,
+        "startup shrink completed compacted boundaries index=%llu data=%llu with source block ends index=%llu data=%llu",
+        static_cast<unsigned long long>(header->rebuild_index_alloc_end),
+        static_cast<unsigned long long>(header->rebuild_data_alloc_end),
+        static_cast<unsigned long long>(header->rebuild_index_source_end),
+        static_cast<unsigned long long>(header->rebuild_data_source_end));
+    return MBError::SUCCESS;
+}
+
+int ResourceCollection::StartupEvacuate()
+{
+    if (!db_ref.is_open())
+        return db_ref.Status();
+    if (!(db_ref.GetDBOptions() & CONSTS::ACCESS_MODE_WRITER))
+        return MBError::NOT_ALLOWED;
+    if (!(db_ref.GetDBOptions() & CONSTS::OPTION_JEMALLOC))
+        return MBError::NOT_ALLOWED;
+    if (header == NULL)
+        return MBError::NOT_INITIALIZED;
+    if (header->rebuild_state != REBUILD_STATE_COPY
+        && header->rebuild_state != REBUILD_STATE_CUTOVER) {
+        Logger::Log(LOG_LEVEL_WARN,
+            "startup evacuate requires COPY/CUTOVER state, current state=%d",
+            header->rebuild_state);
+        return MBError::NOT_ALLOWED;
+    }
+
+    const size_t index_boundary = header->rebuild_index_alloc_end;
+    const size_t data_boundary = header->rebuild_data_alloc_end;
+    const size_t index_source_end = header->rebuild_index_source_end;
+    const size_t data_source_end = header->rebuild_data_source_end;
+    if (index_boundary == 0 || data_boundary == 0
+        || index_source_end == 0 || data_source_end == 0)
+        return MBError::NOT_INITIALIZED;
+    if (index_boundary < header->m_index_offset || data_boundary < header->m_data_offset)
+        return MBError::INVALID_SIZE;
+    if (index_source_end < index_boundary || data_source_end < data_boundary)
+        return MBError::INVALID_SIZE;
+
+    const size_t index_source_start = AlignUpToBlock(index_boundary, header->index_block_size);
+    const size_t data_source_start = AlignUpToBlock(data_boundary, header->data_block_size);
+    if (index_source_start < index_boundary || data_source_start < data_boundary)
+        return MBError::INVALID_SIZE;
+
+    int rval = MBError::SUCCESS;
+    if (header->rebuild_state == REBUILD_STATE_COPY) {
+        rval = dmm->ResetJemalloc();
+        if (rval != MBError::SUCCESS)
+            return rval;
+        rval = dmm->ReseedJemalloc(index_boundary);
+        if (rval != MBError::SUCCESS)
+            return rval;
+        rval = dict->ResetJemalloc();
+        if (rval != MBError::SUCCESS)
+            return rval;
+        rval = dict->ReseedJemalloc(data_boundary);
+        if (rval != MBError::SUCCESS)
+            return rval;
+
+        header->rebuild_index_alloc_start = index_source_start;
+        header->rebuild_data_alloc_start = data_source_start;
+        header->rebuild_index_block_cursor = index_source_start;
+        header->rebuild_data_block_cursor = data_source_start;
+        header->reusable_index_block_count = 0;
+        header->reusable_data_block_count = 0;
+        for (int i = 0; i < MB_MAX_REUSABLE_BLOCKS; i++) {
+            header->reusable_index_block[i].Clear();
+            header->reusable_data_block[i].Clear();
+        }
+        header->reader_epoch.store(1, MEMORY_ORDER_WRITER);
+        header->rebuild_state = REBUILD_STATE_CUTOVER;
+    }
+
+    const bool tracking_needed_before =
+        (header->rebuild_index_block_cursor < header->rebuild_index_source_end)
+        || (header->rebuild_data_block_cursor < header->rebuild_data_source_end)
+        || HasPendingReusableBlocks(header->reusable_index_block,
+            header->reusable_index_block_count)
+        || HasPendingReusableBlocks(header->reusable_data_block,
+            header->reusable_data_block_count);
+    header->reader_epoch_tracking_active.store(tracking_needed_before ? 1 : 0, MEMORY_ORDER_WRITER);
+
+    const bool has_quarantined_blocks =
+        HasPendingReusableBlocks(header->reusable_index_block,
+            header->reusable_index_block_count)
+        || HasPendingReusableBlocks(header->reusable_data_block,
+            header->reusable_data_block_count);
+    if (has_quarantined_blocks) {
+        rval = db_ref.AcquireRebuildBarrierExclusive();
+        if (rval != MBError::SUCCESS)
+            return rval;
+
+        rval = ReleaseReusableBlocks(header->reusable_index_block,
+            header->reusable_index_block_count);
+        if (rval == MBError::SUCCESS) {
+            rval = ReleaseReusableBlocks(header->reusable_data_block,
+                header->reusable_data_block_count);
+        }
+        if (rval == MBError::SUCCESS) {
+            rval = DrainReusableBlocks(header->reusable_index_block,
+                header->reusable_index_block_count, dmm);
+        }
+        if (rval == MBError::SUCCESS) {
+            rval = DrainReusableBlocks(header->reusable_data_block,
+                header->reusable_data_block_count, dict);
+        }
+        db_ref.ReleaseRebuildBarrierExclusive();
+        if (rval != MBError::SUCCESS)
+            return rval;
+    } else {
+        rval = DrainReusableBlocks(header->reusable_index_block,
+            header->reusable_index_block_count, dmm);
+        if (rval != MBError::SUCCESS)
+            return rval;
+        rval = DrainReusableBlocks(header->reusable_data_block,
+            header->reusable_data_block_count, dict);
+        if (rval != MBError::SUCCESS)
+            return rval;
+    }
+
+    rval = EvacuateOneIndexBlock();
+    if (rval != MBError::SUCCESS && rval != MBError::RC_SKIPPED)
+        return rval;
+    rval = EvacuateOneDataBlock();
+    if (rval != MBError::SUCCESS && rval != MBError::RC_SKIPPED)
+        return rval;
+
+    const bool tracking_needed =
+        (header->rebuild_index_block_cursor < header->rebuild_index_source_end)
+        || (header->rebuild_data_block_cursor < header->rebuild_data_source_end)
+        || HasPendingReusableBlocks(header->reusable_index_block,
+            header->reusable_index_block_count)
+        || HasPendingReusableBlocks(header->reusable_data_block,
+            header->reusable_data_block_count);
+    header->reader_epoch_tracking_active.store(tracking_needed ? 1 : 0, MEMORY_ORDER_WRITER);
+
+    return MBError::SUCCESS;
+}
+
+bool ResourceCollection::MoveIndexBufferEvacuate(size_t& offset_src, int size)
+{
+    if (offset_src < evacuate_index_block_start || offset_src >= evacuate_index_block_end)
+        return false;
+
+    size_t offset_dst = 0;
+    uint8_t* ptr_dst = NULL;
+    int rval = dmm->AllocateJemalloc(size, offset_dst, ptr_dst);
+    if (rval != MBError::SUCCESS)
+        throw rval;
+
+    uint8_t* ptr_src = dmm->GetShmPtr(offset_src, size);
+    BufferCopy(offset_dst, ptr_dst, offset_src, ptr_src, size, dmm);
+    offset_src = offset_dst;
+    return true;
+}
+
+bool ResourceCollection::MoveDataBufferEvacuate(size_t& offset_src, int size)
+{
+    if (offset_src < evacuate_data_block_start || offset_src >= evacuate_data_block_end)
+        return false;
+
+    size_t offset_dst = 0;
+    uint8_t* ptr_dst = NULL;
+    int rval = dict->AllocateJemalloc(size, offset_dst, ptr_dst);
+    if (rval != MBError::SUCCESS)
+        throw rval;
+
+    uint8_t* ptr_src = dict->GetShmPtr(offset_src, size);
+    BufferCopy(offset_dst, ptr_dst, offset_src, ptr_src, size, dict);
+    offset_src = offset_dst;
+    return true;
+}
+
+bool ResourceCollection::HasPendingReusableBlocks(const ReusableBlockEntry* entries,
+    uint32_t entry_count) const
+{
+    if (entries == NULL)
+        return false;
+    for (uint32_t i = 0; i < entry_count; i++) {
+        if (entries[i].in_use == REUSABLE_BLOCK_STATE_QUARANTINED)
+            return true;
+    }
+    return false;
+}
+
+bool ResourceCollection::IsReaderEpochQuiesced(uint64_t retire_epoch) const
+{
+    if (retire_epoch == 0 || header == NULL)
+        return true;
+
+    for (uint32_t i = 0; i < header->reader_epoch_slot_count; i++) {
+        ReaderEpochSlot& slot = header->reader_epoch_slot[i];
+        if (slot.connect_id.load(MEMORY_ORDER_READER) == 0)
+            continue;
+        uint64_t epoch = slot.epoch.load(MEMORY_ORDER_READER);
+        if (epoch != 0 && epoch <= retire_epoch) {
+            uint32_t pid = slot.pid.load(MEMORY_ORDER_READER);
+            if (pid != 0) {
+#ifdef __linux__
+                const uint64_t slot_start_time = slot.proc_start_time.load(MEMORY_ORDER_READER);
+                uint64_t live_start_time = 0;
+                if (slot_start_time != 0 && ReadProcStartTimeForPid(static_cast<pid_t>(pid), live_start_time)) {
+                    if (live_start_time != slot_start_time) {
+                        slot.Clear();
+                        continue;
+                    }
+                    return false;
+                }
+#endif
+                errno = 0;
+                if (kill(static_cast<pid_t>(pid), 0) != 0 && errno == ESRCH) {
+                    slot.Clear();
+                    continue;
+                }
+            }
+            return false;
+        }
+    }
+    return true;
+}
+
+int ResourceCollection::QueueReusableBlock(ReusableBlockEntry* entries, uint32_t& entry_count,
+    size_t block_order, uint64_t retire_epoch)
+{
+    if (entries == NULL)
+        return MBError::INVALID_ARG;
+    if (entry_count >= MB_MAX_REUSABLE_BLOCKS)
+        return MBError::OUT_OF_BOUND;
+
+    entries[entry_count].block_order = static_cast<uint32_t>(block_order);
+    entries[entry_count].retire_epoch = retire_epoch;
+    entries[entry_count].in_use = REUSABLE_BLOCK_STATE_QUARANTINED;
+    entry_count++;
+    return MBError::SUCCESS;
+}
+
+int ResourceCollection::ReleaseReusableBlocks(ReusableBlockEntry* entries, uint32_t& entry_count)
+{
+    if (entries == NULL)
+        return MBError::INVALID_ARG;
+
+    for (uint32_t i = 0; i < entry_count; i++) {
+        if (entries[i].in_use != REUSABLE_BLOCK_STATE_QUARANTINED)
+            continue;
+        if (IsReaderEpochQuiesced(entries[i].retire_epoch))
+            entries[i].in_use = REUSABLE_BLOCK_STATE_READY;
+    }
+    return MBError::SUCCESS;
+}
+
+int ResourceCollection::DrainReusableBlocks(ReusableBlockEntry* entries, uint32_t& entry_count,
+    DRMBase* drm)
+{
+    if (entries == NULL || drm == NULL)
+        return MBError::INVALID_ARG;
+
+    uint32_t write_index = 0;
+    for (uint32_t i = 0; i < entry_count; i++) {
+        if (!entries[i].in_use)
+            continue;
+        if (entries[i].in_use == REUSABLE_BLOCK_STATE_READY) {
+            int rval = drm->AddReusableBlock(entries[i].block_order);
+            if (rval != MBError::SUCCESS)
+                return rval;
+            entries[i].Clear();
+            continue;
+        }
+
+        if (write_index != i)
+            entries[write_index] = entries[i];
+        write_index++;
+    }
+
+    for (uint32_t i = write_index; i < entry_count; i++)
+        entries[i].Clear();
+    entry_count = write_index;
+    return MBError::SUCCESS;
+}
+
+int ResourceCollection::EvacuateOneIndexBlock()
+{
+    if (header->rebuild_index_block_cursor >= header->rebuild_index_source_end)
+        return MBError::RC_SKIPPED;
+
+    evacuate_index_block_start = header->rebuild_index_block_cursor;
+    evacuate_index_block_end = evacuate_index_block_start + header->index_block_size;
+    if (evacuate_index_block_end > header->rebuild_index_source_end)
+        return MBError::RC_SKIPPED;
+
+    TraverseDB(RESOURCE_COLLECTION_PHASE_EVACUATE_INDEX);
+
+    uint64_t retire_epoch = header->reader_epoch.fetch_add(1, MEMORY_ORDER_WRITER);
+    int rval = QueueReusableBlock(header->reusable_index_block,
+        header->reusable_index_block_count,
+        evacuate_index_block_start / header->index_block_size,
+        retire_epoch);
+    if (rval != MBError::SUCCESS)
+        return rval;
+
+    header->rebuild_index_block_cursor = evacuate_index_block_end;
+    evacuate_index_block_start = 0;
+    evacuate_index_block_end = 0;
+    return MBError::SUCCESS;
+}
+
+int ResourceCollection::EvacuateOneDataBlock()
+{
+    if (header->rebuild_data_block_cursor >= header->rebuild_data_source_end)
+        return MBError::RC_SKIPPED;
+
+    evacuate_data_block_start = header->rebuild_data_block_cursor;
+    evacuate_data_block_end = evacuate_data_block_start + header->data_block_size;
+    if (evacuate_data_block_end > header->rebuild_data_source_end)
+        return MBError::RC_SKIPPED;
+
+    TraverseDB(RESOURCE_COLLECTION_PHASE_EVACUATE_DATA);
+
+    uint64_t retire_epoch = header->reader_epoch.fetch_add(1, MEMORY_ORDER_WRITER);
+    int rval = QueueReusableBlock(header->reusable_data_block,
+        header->reusable_data_block_count,
+        evacuate_data_block_start / header->data_block_size,
+        retire_epoch);
+    if (rval != MBError::SUCCESS)
+        return rval;
+
+    header->rebuild_data_block_cursor = evacuate_data_block_end;
+    evacuate_data_block_start = 0;
+    evacuate_data_block_end = 0;
+    return MBError::SUCCESS;
+}
+
 /////////////////////////////////////////////////////////
 ////////////////// Private Methods //////////////////////
 /////////////////////////////////////////////////////////
@@ -191,8 +644,10 @@ void ResourceCollection::Prepare(int64_t min_index_size, int64_t min_data_size)
         throw (int)MBError::RC_SKIPPED;
     }
 
-    index_free_lists->Empty();
-    data_free_lists->Empty();
+    if (index_free_lists != NULL)
+        index_free_lists->Empty();
+    if (data_free_lists != NULL)
+        data_free_lists->Empty();
 
     rc_loop_counter = 0;
     index_reorder_cnt = 0;
@@ -271,8 +726,10 @@ void ResourceCollection::Finish()
     }
 
     if (async_writer_ptr != NULL) {
-        index_free_lists->Empty();
-        data_free_lists->Empty();
+        if (index_free_lists != NULL)
+            index_free_lists->Empty();
+        if (data_free_lists != NULL)
+            data_free_lists->Empty();
         ProcessRCTree();
     }
 
@@ -360,6 +817,64 @@ bool ResourceCollection::MoveDataBuffer(int phase, size_t& offset_src, int size)
 
 void ResourceCollection::DoTask(int phase, DBTraverseNode& dbt_node)
 {
+    if (phase == RESOURCE_COLLECTION_PHASE_EVACUATE_INDEX) {
+        header->excep_lf_offset = dbt_node.edge_offset;
+        if (dbt_node.buffer_type & BUFFER_TYPE_NODE) {
+            if (MoveIndexBufferEvacuate(dbt_node.node_offset, dbt_node.node_size)) {
+                Write6BInteger(header->excep_buff, dbt_node.node_offset);
+#ifdef __LOCK_FREE__
+                lfree->WriterLockFreeStart(dbt_node.edge_offset);
+#endif
+                header->excep_offset = dbt_node.node_link_offset;
+                header->excep_updating_status = EXCEP_STATUS_RC_NODE;
+                dmm->WriteData(header->excep_buff, OFFSET_SIZE, dbt_node.node_link_offset);
+                header->excep_updating_status = 0;
+#ifdef __LOCK_FREE__
+                lfree->WriterLockFreeStop();
+#endif
+                if (dbt_node.buffer_type & BUFFER_TYPE_DATA)
+                    dbt_node.data_link_offset = dbt_node.node_offset + 2;
+            }
+        }
+
+        if (dbt_node.buffer_type & BUFFER_TYPE_EDGE_STR) {
+            if (MoveIndexBufferEvacuate(dbt_node.edgestr_offset, dbt_node.edgestr_size)) {
+                Write5BInteger(header->excep_buff, dbt_node.edgestr_offset);
+#ifdef __LOCK_FREE__
+                lfree->WriterLockFreeStart(dbt_node.edge_offset);
+#endif
+                header->excep_offset = dbt_node.edgestr_link_offset;
+                header->excep_updating_status = EXCEP_STATUS_RC_EDGE_STR;
+                dmm->WriteData(header->excep_buff, OFFSET_SIZE - 1, dbt_node.edgestr_link_offset);
+                header->excep_updating_status = 0;
+#ifdef __LOCK_FREE__
+                lfree->WriterLockFreeStop();
+#endif
+            }
+        }
+        return;
+    }
+
+    if (phase == RESOURCE_COLLECTION_PHASE_EVACUATE_DATA) {
+        header->excep_lf_offset = dbt_node.edge_offset;
+        if (dbt_node.buffer_type & BUFFER_TYPE_DATA) {
+            if (MoveDataBufferEvacuate(dbt_node.data_offset, dbt_node.data_size)) {
+                Write6BInteger(header->excep_buff, dbt_node.data_offset);
+#ifdef __LOCK_FREE__
+                lfree->WriterLockFreeStart(dbt_node.edge_offset);
+#endif
+                header->excep_offset = dbt_node.data_link_offset;
+                header->excep_updating_status = EXCEP_STATUS_RC_DATA;
+                dmm->WriteData(header->excep_buff, OFFSET_SIZE, dbt_node.data_link_offset);
+                header->excep_updating_status = 0;
+#ifdef __LOCK_FREE__
+                lfree->WriterLockFreeStop();
+#endif
+            }
+        }
+        return;
+    }
+
     if (phase == RESOURCE_COLLECTION_PHASE_REORDER) {
         // collect stats for adjusting values in header
         if (dbt_node.buffer_type & BUFFER_TYPE_DATA)

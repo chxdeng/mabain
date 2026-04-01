@@ -39,6 +39,10 @@ public:
     std::shared_ptr<MmapFileIO> OpenFile(const std::string& fpath, int mode,
         size_t file_size, bool& map_file,
         bool create_file);
+    std::shared_ptr<MmapFileIO> OpenFileWithKey(const std::string& pool_key,
+        const std::string& fpath, int mode,
+        size_t file_size, bool& map_file,
+        bool create_file);
     void RemoveResourceByDB(const std::string& db_path);
     void RemoveResourceByPath(const std::string& path);
     void RemoveAll();

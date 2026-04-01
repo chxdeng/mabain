@@ -50,7 +50,18 @@
 #define EXCEP_STATUS_RC_EDGE_STR 7
 #define EXCEP_STATUS_RC_DATA 8
 #define EXCEP_STATUS_RC_TREE 9
+#define EXCEP_STATUS_REBUILD_ROOT_EDGE 10
 #define MB_EXCEPTION_BUFF_SIZE 16
+
+#define REBUILD_STATE_NORMAL 0
+#define REBUILD_STATE_PREP 1
+#define REBUILD_STATE_COPY 2
+#define REBUILD_STATE_CUTOVER 3
+#define REBUILD_STATE_POST 4
+#define MB_MAX_READER_EPOCH_SLOT 64
+#define MB_MAX_REUSABLE_BLOCKS 64
+#define REUSABLE_BLOCK_STATE_QUARANTINED 1
+#define REUSABLE_BLOCK_STATE_READY 2
 
 #define MAX_BUFFER_RESERVE_SIZE 8192
 #define NUM_BUFFER_RESERVE MAX_BUFFER_RESERVE_SIZE / BUFFER_ALIGNMENT
@@ -60,6 +71,34 @@
 #define JEMALLOC_ALIGNMENT 8
 
 namespace mabain {
+
+typedef struct _ReaderEpochSlot {
+    std::atomic<uint32_t> connect_id;
+    std::atomic<uint32_t> pid;
+    std::atomic<uint64_t> proc_start_time;
+    std::atomic<uint64_t> epoch;
+
+    void Clear()
+    {
+        connect_id.store(0, MEMORY_ORDER_WRITER);
+        pid.store(0, MEMORY_ORDER_WRITER);
+        proc_start_time.store(0, MEMORY_ORDER_WRITER);
+        epoch.store(0, MEMORY_ORDER_WRITER);
+    }
+} ReaderEpochSlot;
+
+typedef struct _ReusableBlockEntry {
+    uint32_t block_order;
+    uint32_t in_use;
+    uint64_t retire_epoch;
+
+    void Clear()
+    {
+        block_order = 0;
+        in_use = 0;
+        retire_epoch = 0;
+    }
+} ReusableBlockEntry;
 
 //
 // File/Layout Overview
@@ -150,6 +189,36 @@ typedef struct _IndexHeader {
     std::atomic<size_t> rc_root_offset;
     int64_t rc_count;
 
+    // startup rebuild metadata (jemalloc keep-db path)
+    int rebuild_state;
+    size_t rebuild_root_offset;
+    size_t rebuild_index_alloc_start;
+    size_t rebuild_data_alloc_start;
+    int rebuild_cutover_index;
+    size_t rebuild_index_alloc_end;
+    size_t rebuild_data_alloc_end;
+    size_t rebuild_index_source_end;
+    size_t rebuild_data_source_end;
+    size_t rebuild_index_block_cursor;
+    size_t rebuild_data_block_cursor;
+
+    // Offsets below these boundaries were compacted into place by startup rebuild
+    // and must not be returned to the current jemalloc arena via dallocx().
+    size_t jemalloc_index_free_start;
+    size_t jemalloc_data_free_start;
+
+    // Reader epoch tracking for safe quarantined-block reuse.
+    std::atomic<uint32_t> reader_epoch_tracking_active;
+    uint32_t reader_epoch_slot_count;
+    std::atomic<uint64_t> reader_epoch;
+    ReaderEpochSlot reader_epoch_slot[MB_MAX_READER_EPOCH_SLOT];
+
+    // Quarantined whole blocks that can later become reusable.
+    uint32_t reusable_index_block_count;
+    uint32_t reusable_data_block_count;
+    ReusableBlockEntry reusable_index_block[MB_MAX_REUSABLE_BLOCKS];
+    ReusableBlockEntry reusable_data_block[MB_MAX_REUSABLE_BLOCKS];
+
     // multi-process async queue
     int async_queue_size;
     std::atomic<uint32_t> queue_index;
@@ -163,6 +232,46 @@ typedef struct _IndexHeader {
     uint32_t pfx_cap2;      // number of slots in 2-byte table
     uint32_t pfx_cap3;      // number of slots in 3-byte table
     uint32_t pfx_cap4;      // number of slots in 4-byte table
+
+    void ResetRebuildMetadata(int state)
+    {
+        rebuild_state = state;
+        rebuild_root_offset = 0;
+        rebuild_index_alloc_start = 0;
+        rebuild_data_alloc_start = 0;
+        rebuild_cutover_index = 0;
+        rebuild_index_alloc_end = 0;
+        rebuild_data_alloc_end = 0;
+        rebuild_index_source_end = 0;
+        rebuild_data_source_end = 0;
+        rebuild_index_block_cursor = 0;
+        rebuild_data_block_cursor = 0;
+        reusable_index_block_count = 0;
+        reusable_data_block_count = 0;
+        for (int i = 0; i < MB_MAX_REUSABLE_BLOCKS; i++) {
+            reusable_index_block[i].Clear();
+            reusable_data_block[i].Clear();
+        }
+    }
+
+    void ClearRebuildMetadata()
+    {
+        ResetRebuildMetadata(REBUILD_STATE_NORMAL);
+    }
+
+    void ResetReaderEpochState()
+    {
+        reader_epoch_tracking_active.store(0, MEMORY_ORDER_WRITER);
+        reader_epoch_slot_count = MB_MAX_READER_EPOCH_SLOT;
+        reader_epoch.store(1, MEMORY_ORDER_WRITER);
+        for (uint32_t i = 0; i < reader_epoch_slot_count; i++)
+            reader_epoch_slot[i].Clear();
+    }
+
+    bool RebuildInProgress() const
+    {
+        return rebuild_state != REBUILD_STATE_NORMAL;
+    }
 } IndexHeader;
 
 // An abstract interface class for Dict and DictMem
@@ -195,6 +304,13 @@ public:
     inline uint8_t* GetShmPtr(size_t offset, int size) const;
     inline size_t CheckAlignment(size_t offset, int size) const;
     inline int ReadData(uint8_t* buff, unsigned len, size_t offset) const;
+    inline size_t GetJemallocAllocSize() const;
+    inline int ReseedJemalloc(size_t alloc_size) const;
+    inline int ResetJemalloc() const;
+    inline int AllocateJemalloc(size_t size, size_t& offset, uint8_t*& ptr) const;
+    inline size_t GetExistingBlockEnd() const;
+    inline int AddReusableBlock(size_t block_order) const;
+    inline size_t GetReusableBlockCount() const;
     inline size_t GetResourceCollectionOffset() const;
     inline void RemoveUnused(size_t max_size, bool writer_mode = false);
 
@@ -286,6 +402,48 @@ inline int DRMBase::ReadData(uint8_t* buff, unsigned len, size_t offset) const
         return kv_file->MemRead(buff, len, offset);
     }
     return kv_file->RandomRead(buff, len, offset);
+}
+
+inline size_t DRMBase::GetJemallocAllocSize() const
+{
+    return kv_file == nullptr ? 0 : kv_file->GetJemallocAllocSize();
+}
+
+inline int DRMBase::ReseedJemalloc(size_t alloc_size) const
+{
+    return kv_file == nullptr ? MBError::NOT_INITIALIZED : kv_file->ReseedJemalloc(alloc_size);
+}
+
+inline int DRMBase::ResetJemalloc() const
+{
+    return kv_file == nullptr ? MBError::NOT_INITIALIZED : kv_file->ResetJemalloc();
+}
+
+inline int DRMBase::AllocateJemalloc(size_t size, size_t& offset, uint8_t*& ptr) const
+{
+    if (kv_file == nullptr)
+        return MBError::NOT_INITIALIZED;
+    if (!(options & CONSTS::OPTION_JEMALLOC))
+        return MBError::INVALID_ARG;
+    ptr = reinterpret_cast<uint8_t*>(kv_file->Malloc(size, offset));
+    if (ptr == nullptr)
+        return kv_file->GetLastAllocError();
+    return MBError::SUCCESS;
+}
+
+inline size_t DRMBase::GetExistingBlockEnd() const
+{
+    return kv_file == nullptr ? 0 : kv_file->GetExistingBlockEnd();
+}
+
+inline int DRMBase::AddReusableBlock(size_t block_order) const
+{
+    return kv_file == nullptr ? MBError::NOT_INITIALIZED : kv_file->AddReusableBlock(block_order);
+}
+
+inline size_t DRMBase::GetReusableBlockCount() const
+{
+    return kv_file == nullptr ? 0 : kv_file->GetReusableBlockCount();
 }
 
 inline size_t DRMBase::GetResourceCollectionOffset() const

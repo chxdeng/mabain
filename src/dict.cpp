@@ -1028,8 +1028,10 @@ void Dict::ReserveData(const uint8_t* buff, int size, size_t& offset)
         int buf_size = size + DATA_HDR_BYTE;
         void* ptr = kv_file->Malloc(buf_size, offset);
         if (ptr == NULL) {
-            Logger::Log(LOG_LEVEL_ERROR, "failed to allocate memory for data buffer");
-            throw MBError::NO_MEMORY;
+            int rval = kv_file->GetLastAllocError();
+            Logger::Log(LOG_LEVEL_ERROR, "failed to allocate memory for data buffer: %s",
+                MBError::get_error_str(rval));
+            throw rval;
         }
         uint16_t dsize[2];
         dsize[0] = static_cast<uint16_t>(size);
@@ -1105,13 +1107,19 @@ int Dict::ReleaseBuffer(size_t offset, int size)
     remove_tracking_buffer(offset, size);
 #endif
     if (options & CONSTS::OPTION_JEMALLOC) {
-        kv_file->Free(offset);
-        size_t rel_size = ((size_t)size + JEMALLOC_ALIGNMENT - 1) & ~(JEMALLOC_ALIGNMENT - 1);
-        header->pending_data_buff_size -= (int64_t)rel_size;
-        if (header->pending_data_buff_size < 0) {
-            Logger::Log(LOG_LEVEL_DEBUG, "pending data buffer size is negative: %d",
-                header->pending_data_buff_size);
-            header->pending_data_buff_size = 0;
+        if (offset >= header->jemalloc_data_free_start) {
+            kv_file->Free(offset);
+            size_t rel_size = ((size_t)size + JEMALLOC_ALIGNMENT - 1) & ~(JEMALLOC_ALIGNMENT - 1);
+            header->pending_data_buff_size -= (int64_t)rel_size;
+            if (header->pending_data_buff_size < 0) {
+                Logger::Log(LOG_LEVEL_DEBUG, "pending data buffer size is negative: %d",
+                    header->pending_data_buff_size);
+                header->pending_data_buff_size = 0;
+            }
+        } else {
+            Logger::Log(LOG_LEVEL_DEBUG,
+                "skip jemalloc data free below compacted boundary: off=%zu start=%zu",
+                offset, header->jemalloc_data_free_start);
         }
         return MBError::SUCCESS;
     } else {
@@ -1139,21 +1147,31 @@ int Dict::ReleaseBuffer(size_t offset)
     uint16_t data_size;
     if (ReadData(reinterpret_cast<uint8_t*>(&data_size), DATA_SIZE_BYTE, offset) != DATA_SIZE_BYTE) {
         if (options & CONSTS::OPTION_JEMALLOC) {
-            // For jemalloc mode, we can just free the buffer and return
-            kv_file->Free(offset);
+            if (offset >= header->jemalloc_data_free_start) {
+                kv_file->Free(offset);
+            } else {
+                Logger::Log(LOG_LEVEL_DEBUG,
+                    "skip jemalloc unreadable data free below compacted boundary: off=%zu start=%zu",
+                    offset, header->jemalloc_data_free_start);
+            }
         }
         return MBError::READ_ERROR;
     }
     data_size += DATA_HDR_BYTE;
     if (options & CONSTS::OPTION_JEMALLOC) {
-        kv_file->Free(offset);
-
-        size_t rel_size = ((size_t)data_size + JEMALLOC_ALIGNMENT - 1) & ~(JEMALLOC_ALIGNMENT - 1);
-        header->pending_data_buff_size -= (int64_t)rel_size;
-        if (header->pending_data_buff_size < 0) {
-            Logger::Log(LOG_LEVEL_DEBUG, "pending data buffer size is negative: %d",
-                header->pending_data_buff_size);
-            header->pending_data_buff_size = 0;
+        if (offset >= header->jemalloc_data_free_start) {
+            kv_file->Free(offset);
+            size_t rel_size = ((size_t)data_size + JEMALLOC_ALIGNMENT - 1) & ~(JEMALLOC_ALIGNMENT - 1);
+            header->pending_data_buff_size -= (int64_t)rel_size;
+            if (header->pending_data_buff_size < 0) {
+                Logger::Log(LOG_LEVEL_DEBUG, "pending data buffer size is negative: %d",
+                    header->pending_data_buff_size);
+                header->pending_data_buff_size = 0;
+            }
+        } else {
+            Logger::Log(LOG_LEVEL_DEBUG,
+                "skip jemalloc data free below compacted boundary: off=%zu start=%zu",
+                offset, header->jemalloc_data_free_start);
         }
         return MBError::SUCCESS;
     } else {
