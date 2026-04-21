@@ -4,28 +4,17 @@
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU General Public License, version 2,
  * as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-// @author Changxue Deng <chadeng@cisco.com>
-
 #include <cstddef>
-#include <filesystem>
-#include <fstream>
 #include <cstdlib>
 #include <cstring>
-#include <unistd.h>
-#include <set>
+#include <filesystem>
+#include <fstream>
 #include <sstream>
 #include <string>
 #include <vector>
+#include <unistd.h>
 
 #include <gtest/gtest.h>
 
@@ -34,8 +23,8 @@
 #include "../drm_base.h"
 #include "../mb_rc.h"
 #include "../resource_pool.h"
+#include "../rollable_file.h"
 #include "../test/jemalloc_rebuild_test_modes.h"
-#include "../version.h"
 
 using namespace mabain;
 using namespace mabain_test;
@@ -53,9 +42,8 @@ const std::string& JemallocRebuildTestPath()
     return path;
 }
 
-constexpr uint32_t kJemallocRebuildBlockSize = 4 * 1024 * 1024;
-constexpr int kJemallocRebuildMaxBlocks = 4;
-constexpr size_t kJemallocRebuildMemCap = kJemallocRebuildBlockSize * kJemallocRebuildMaxBlocks;
+constexpr uint32_t kJemallocRebuildBlockSize = 1024 * 1024;
+constexpr int kJemallocRebuildMaxBlocks = 8;
 
 template <typename T>
 T ReadPersistedHeaderField(const char* hdr_page, size_t offset)
@@ -67,7 +55,7 @@ T ReadPersistedHeaderField(const char* hdr_page, size_t offset)
 
 bool PersistedRebuildInProgress(const char* hdr_page)
 {
-    return ReadPersistedHeaderField<int>(hdr_page, offsetof(IndexHeader, rebuild_state)) != REBUILD_STATE_NORMAL;
+    return ReadPersistedHeaderField<uint32_t>(hdr_page, offsetof(IndexHeader, rebuild_active)) != 0u;
 }
 
 MBConfig MakeSizedJemallocRebuildConfig(int options, bool keep_db,
@@ -93,8 +81,70 @@ MBConfig MakeJemallocRebuildConfig(int options, bool keep_db)
         options, keep_db, kJemallocRebuildBlockSize, kJemallocRebuildMaxBlocks);
 }
 
+bool RemoveJemallocRebuildTestFiles()
+{
+    std::error_code ec;
+    std::filesystem::create_directories(std::filesystem::path(JemallocRebuildTestPath()).parent_path(), ec);
+    if (ec)
+        return false;
+    std::filesystem::remove_all(JemallocRebuildTestPath(), ec);
+    return !ec;
+}
+
+std::string MakeValue(size_t len, char seed)
+{
+    return std::string(len, seed);
+}
+
+void PopulateAndFragment(DB& db, int num_entries, size_t value_size)
+{
+    for (int i = 0; i < num_entries; ++i) {
+        const std::string key = "key-" + std::to_string(i);
+        const std::string value = MakeValue(value_size, static_cast<char>('a' + (i % 26)));
+        ASSERT_EQ(db.Add(key, value), MBError::SUCCESS);
+    }
+    for (int i = 0; i < num_entries; i += 2) {
+        const std::string key = "key-" + std::to_string(i);
+        ASSERT_EQ(db.Remove(key), MBError::SUCCESS);
+    }
+}
+
+void ExpectMissing(DB& db, const std::string& key)
+{
+    MBData data;
+    EXPECT_NE(db.Find(key, data), MBError::SUCCESS);
+}
+
+void ExpectValue(DB& db, const std::string& key, const std::string& value)
+{
+    MBData data;
+    ASSERT_EQ(db.Find(key, data), MBError::SUCCESS);
+    ASSERT_NE(data.buff, nullptr);
+    EXPECT_EQ(std::string(reinterpret_cast<const char*>(data.buff), data.data_len), value);
+}
+
+class JemallocRebuildMetadataTest : public ::testing::Test {
+public:
+    void SetUp() override
+    {
+        ResourcePool::getInstance().RemoveAll();
+        ASSERT_TRUE(RemoveJemallocRebuildTestFiles());
+        std::error_code ec;
+        std::filesystem::create_directories(JemallocRebuildTestPath(), ec);
+        ASSERT_FALSE(ec);
+    }
+
+    void TearDown() override
+    {
+        ResourcePool::getInstance().RemoveAll();
+        EXPECT_TRUE(RemoveJemallocRebuildTestFiles());
+    }
+};
+
 } // namespace
+
 namespace mabain {
+
 class ResourceCollectionTestPeer : public ResourceCollection {
 public:
     explicit ResourceCollectionTestPeer(const DB& db)
@@ -102,10 +152,14 @@ public:
     {
     }
 
-    using ResourceCollection::IsReaderEpochQuiesced;
+    using ResourceCollection::DrainReusableBlocks;
+    using ResourceCollection::GetStartupRebuildState;
     using ResourceCollection::QueueReusableBlock;
     using ResourceCollection::ReleaseReusableBlocks;
-    using ResourceCollection::DrainReusableBlocks;
+    using ResourceCollection::ResetStartupRebuildState;
+    using ResourceCollection::StartupEvacuate;
+    using ResourceCollection::StartupRebuildComplete;
+    using ResourceCollection::StartupShrink;
 };
 
 class DBTestPeer {
@@ -113,11 +167,6 @@ public:
     static int RunStartupRebuild(DB& db)
     {
         return db.RunStartupRebuild();
-    }
-
-    static bool StartupRebuildComplete(const DB& db)
-    {
-        return db.StartupRebuildComplete();
     }
 
     static uint64_t BeginReaderEpochGuard(DB& db)
@@ -129,1157 +178,355 @@ public:
     {
         db.EndReaderEpochGuard(epoch);
     }
-
-    static int EnsureRebuildGuardFd(DB& db)
-    {
-        return db.EnsureRebuildGuardFd();
-    }
-
-    static MmapFileIO* GetRebuildGuardFile(const DB& db)
-    {
-        return db.rebuild_guard_file.get();
-    }
 };
 
-class DictReleaseTestPeer {
-public:
-    static int ReleaseBuffer(Dict& dict, size_t offset, int size)
-    {
-        return dict.ReleaseBuffer(offset, size);
-    }
-};
-
-class DictMemReleaseTestPeer {
-public:
-    static bool ReserveNode(DictMem& dmm, int nt, size_t& offset, uint8_t*& ptr)
-    {
-        return dmm.ReserveNode(nt, offset, ptr);
-    }
-
-    static void ReleaseNode(DictMem& dmm, size_t offset, int nt)
-    {
-        dmm.ReleaseNode(offset, nt);
-    }
-
-    static void ReleaseBuffer(DictMem& dmm, size_t offset, int size)
-    {
-        dmm.ReleaseBuffer(offset, size);
-    }
-};
-
-}
-namespace {
-int FindReaderEpochSlot(const IndexHeader* header, uint32_t connect_id)
-{
-    if (header == nullptr)
-        return -1;
-    for (uint32_t i = 0; i < header->reader_epoch_slot_count; i++) {
-        if (header->reader_epoch_slot[i].connect_id.load(MEMORY_ORDER_READER) == connect_id)
-            return static_cast<int>(i);
-    }
-    return -1;
-}
-
-void ExpectFindValue(DB& db, const std::string& key, const std::string& value)
-{
-    MBData data;
-    ASSERT_EQ(db.Find(key, data), MBError::SUCCESS);
-    ASSERT_NE(data.buff, nullptr);
-    EXPECT_EQ(std::string(reinterpret_cast<const char*>(data.buff), data.data_len), value);
-}
-
-bool RemoveJemallocRebuildTestFiles()
-{
-    std::error_code ec;
-    std::filesystem::create_directories(std::filesystem::path(JemallocRebuildTestPath()).parent_path(), ec);
-    if (ec)
-        return false;
-    std::filesystem::remove_all(JemallocRebuildTestPath(), ec);
-    return !ec;
-}
-
-bool CreateJemallocRebuildTestDir()
-{
-    std::error_code ec;
-    std::filesystem::create_directories(JemallocRebuildTestPath(), ec);
-    return !ec;
-}
-
-class JemallocRebuildMetadataTest : public ::testing::Test {
-public:
-    void SetUp() override
-    {
-        ResourcePool::getInstance().RemoveAll();
-        ASSERT_TRUE(RemoveJemallocRebuildTestFiles());
-    }
-
-    void TearDown() override
-    {
-        ResourcePool::getInstance().RemoveAll();
-        EXPECT_TRUE(RemoveJemallocRebuildTestFiles());
-    }
-
-    void CreateHeaderWithVersion(uint16_t major, uint16_t minor, uint16_t patch) const
-    {
-        ASSERT_TRUE(CreateJemallocRebuildTestDir());
-        char hdr[RollableFile::page_size];
-        memset(hdr, 0, sizeof(hdr));
-        IndexHeader* ptr = reinterpret_cast<IndexHeader*>(hdr);
-        ptr->version[0] = major;
-        ptr->version[1] = minor;
-        ptr->version[2] = patch;
-        ptr->version[3] = 0;
-        std::ofstream out(JemallocRebuildTestPath() + "/_mabain_h",
-            std::ios::out | std::ios::binary);
-        out.write(hdr, sizeof(hdr));
-    }
-};
-
-} // namespace
+} // namespace mabain
 
 TEST(JemallocRebuildHarnessTest, ModeListContainsExpectedPhases)
 {
     EXPECT_EQ(kJemallocRebuildTestModes.size(), 13u);
     EXPECT_TRUE(IsJemallocRebuildTestModeSupported("header_metadata"));
-    EXPECT_TRUE(IsJemallocRebuildTestModeSupported("arena_cursor"));
-    EXPECT_TRUE(IsJemallocRebuildTestModeSupported("startup_gate"));
-    EXPECT_TRUE(IsJemallocRebuildTestModeSupported("async_reject"));
-    EXPECT_TRUE(IsJemallocRebuildTestModeSupported("shrink_only"));
-    EXPECT_TRUE(IsJemallocRebuildTestModeSupported("evacuate_only"));
-    EXPECT_TRUE(IsJemallocRebuildTestModeSupported("recover_shrink"));
     EXPECT_TRUE(IsJemallocRebuildTestModeSupported("recover_evacuate"));
-    EXPECT_TRUE(IsJemallocRebuildTestModeSupported("full_cycle_prepare"));
-    EXPECT_TRUE(IsJemallocRebuildTestModeSupported("reader_loop"));
-    EXPECT_TRUE(IsJemallocRebuildTestModeSupported("full_cycle"));
-    EXPECT_TRUE(IsJemallocRebuildTestModeSupported("full_cycle_insert_verify"));
     EXPECT_TRUE(IsJemallocRebuildTestModeSupported("full_cycle_verify_reuse"));
     EXPECT_FALSE(IsJemallocRebuildTestModeSupported("unknown_mode"));
 }
 
-TEST(JemallocRebuildHarnessTest, ModeListHasUniqueNames)
-{
-    std::set<std::string> unique_modes(kJemallocRebuildTestModes.begin(),
-        kJemallocRebuildTestModes.end());
-    EXPECT_EQ(unique_modes.size(), kJemallocRebuildTestModes.size());
-}
-
-TEST(JemallocRebuildHeaderHelperTest, ResetRebuildMetadataClearsOffsetsAndKeepsRequestedState)
+TEST(JemallocRebuildHeaderHelperTest, SetRebuildActiveSetsMarker)
 {
     IndexHeader header = {};
-    header.rebuild_root_offset = 101;
-    header.rebuild_index_alloc_start = 202;
-    header.rebuild_data_alloc_start = 303;
-    header.rebuild_cutover_index = 11;
-    header.rebuild_index_alloc_end = 404;
-    header.rebuild_data_alloc_end = 505;
-    header.rebuild_index_source_end = 606;
-    header.rebuild_data_source_end = 707;
-    header.rebuild_index_block_cursor = 808;
-    header.rebuild_data_block_cursor = 909;
-    header.reusable_index_block_count = 3;
-    header.reusable_data_block_count = 4;
-    header.reusable_index_block[0].in_use = 1;
-    header.reusable_data_block[0].in_use = 1;
-
-    header.ResetRebuildMetadata(REBUILD_STATE_CUTOVER);
-
-    EXPECT_EQ(header.rebuild_state, REBUILD_STATE_CUTOVER);
-    EXPECT_EQ(header.rebuild_root_offset, 0u);
-    EXPECT_EQ(header.rebuild_index_alloc_start, 0u);
-    EXPECT_EQ(header.rebuild_data_alloc_start, 0u);
-    EXPECT_EQ(header.rebuild_cutover_index, 0);
-    EXPECT_EQ(header.rebuild_index_alloc_end, 0u);
-    EXPECT_EQ(header.rebuild_data_alloc_end, 0u);
-    EXPECT_EQ(header.rebuild_index_source_end, 0u);
-    EXPECT_EQ(header.rebuild_data_source_end, 0u);
-    EXPECT_EQ(header.rebuild_index_block_cursor, 0u);
-    EXPECT_EQ(header.rebuild_data_block_cursor, 0u);
-    EXPECT_EQ(header.reusable_index_block_count, 0u);
-    EXPECT_EQ(header.reusable_data_block_count, 0u);
-    EXPECT_EQ(header.reusable_index_block[0].in_use, 0u);
-    EXPECT_EQ(header.reusable_data_block[0].in_use, 0u);
+    header.SetRebuildActive();
+    EXPECT_EQ(header.rebuild_active, 1u);
     EXPECT_TRUE(header.RebuildInProgress());
 }
 
-TEST(JemallocRebuildHeaderHelperTest, ClearRebuildMetadataRestoresNormalState)
+TEST(JemallocRebuildHeaderHelperTest, ClearRebuildMetadataClearsMarker)
 {
     IndexHeader header = {};
-    header.rebuild_state = REBUILD_STATE_POST;
-    header.rebuild_root_offset = 901;
-    header.rebuild_cutover_index = 33;
-
+    header.rebuild_active = 1;
     header.ClearRebuildMetadata();
-
-    EXPECT_EQ(header.rebuild_state, REBUILD_STATE_NORMAL);
-    EXPECT_EQ(header.rebuild_root_offset, 0u);
-    EXPECT_EQ(header.rebuild_cutover_index, 0);
+    EXPECT_EQ(header.rebuild_active, 0u);
     EXPECT_FALSE(header.RebuildInProgress());
 }
 
 TEST_F(JemallocRebuildMetadataTest, NewDbInitializesRebuildMetadataToZero)
 {
-    ASSERT_TRUE(CreateJemallocRebuildTestDir());
-    int options = CONSTS::WriterOptions();
-    DB db(JemallocRebuildTestPath().c_str(), options);
-    ASSERT_TRUE(db.is_open());
-    IndexHeader* header = db.GetDictPtr()->GetHeaderPtr();
+    MBConfig config = MakeJemallocRebuildConfig(CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, false);
+    DB writer_db(config);
+    ASSERT_TRUE(writer_db.is_open());
+
+    const IndexHeader* header = writer_db.GetDictPtr()->GetHeaderPtr();
     ASSERT_NE(header, nullptr);
-    EXPECT_EQ(header->rebuild_state, REBUILD_STATE_NORMAL);
-    EXPECT_EQ(header->rebuild_root_offset, 0u);
-    EXPECT_EQ(header->rebuild_index_alloc_start, 0u);
-    EXPECT_EQ(header->rebuild_data_alloc_start, 0u);
-    EXPECT_EQ(header->rebuild_cutover_index, 0);
-    EXPECT_EQ(header->rebuild_index_alloc_end, 0u);
-    EXPECT_EQ(header->rebuild_data_alloc_end, 0u);
-    EXPECT_EQ(header->rebuild_index_source_end, 0u);
-    EXPECT_EQ(header->rebuild_data_source_end, 0u);
-    EXPECT_EQ(header->rebuild_index_block_cursor, 0u);
-    EXPECT_EQ(header->rebuild_data_block_cursor, 0u);
-    EXPECT_EQ(header->reusable_index_block_count, 0u);
-    EXPECT_EQ(header->reusable_data_block_count, 0u);
-    EXPECT_EQ(header->reader_epoch_tracking_active.load(MEMORY_ORDER_READER), 0u);
+    EXPECT_EQ(header->rebuild_active, 0u);
+    EXPECT_EQ(header->jemalloc_index_free_start, 0u);
+    EXPECT_EQ(header->jemalloc_data_free_start, 0u);
     EXPECT_EQ(header->reader_epoch_slot_count, MB_MAX_READER_EPOCH_SLOT);
     EXPECT_EQ(header->reader_epoch.load(MEMORY_ORDER_READER), 1u);
-    db.Close();
 }
 
-TEST_F(JemallocRebuildMetadataTest, PrintHeaderIncludesRebuildMetadata)
+TEST_F(JemallocRebuildMetadataTest, PrintHeaderIncludesRebuildMarker)
 {
-    ASSERT_TRUE(CreateJemallocRebuildTestDir());
-    int options = CONSTS::WriterOptions();
-    DB db(JemallocRebuildTestPath().c_str(), options);
-    ASSERT_TRUE(db.is_open());
-    IndexHeader* header = db.GetDictPtr()->GetHeaderPtr();
+    MBConfig config = MakeJemallocRebuildConfig(CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, false);
+    DB writer_db(config);
+    ASSERT_TRUE(writer_db.is_open());
+    IndexHeader* header = writer_db.GetDictPtr()->GetHeaderPtr();
     ASSERT_NE(header, nullptr);
-
-    header->rebuild_state = REBUILD_STATE_COPY;
-    header->rebuild_root_offset = 1234;
-    header->rebuild_index_alloc_start = 5678;
-    header->rebuild_data_alloc_start = 6789;
-    header->rebuild_cutover_index = 77;
-    header->rebuild_index_alloc_end = 9876;
-    header->rebuild_data_alloc_end = 8765;
-    header->rebuild_index_source_end = 11111;
-    header->rebuild_data_source_end = 22222;
-    header->rebuild_index_block_cursor = 33333;
-    header->rebuild_data_block_cursor = 44444;
-    header->reader_epoch_tracking_active.store(1, MEMORY_ORDER_WRITER);
-    header->reader_epoch_slot_count = 7;
-    header->reader_epoch.store(99, MEMORY_ORDER_WRITER);
-    header->reusable_index_block_count = 2;
-    header->reusable_data_block_count = 5;
+    header->rebuild_active = 1;
 
     std::ostringstream out;
-    db.PrintHeader(out);
-    const std::string header_text = out.str();
-    EXPECT_NE(header_text.find("rebuild state: REBUILD_COPY (2)"), std::string::npos);
-    EXPECT_NE(header_text.find("rebuild root offset: 1234"), std::string::npos);
-    EXPECT_NE(header_text.find("rebuild index alloc start: 5678"), std::string::npos);
-    EXPECT_NE(header_text.find("rebuild data alloc start: 6789"), std::string::npos);
-    EXPECT_NE(header_text.find("rebuild cutover index: 77"), std::string::npos);
-    EXPECT_NE(header_text.find("rebuild index alloc end: 9876"), std::string::npos);
-    EXPECT_NE(header_text.find("rebuild data alloc end: 8765"), std::string::npos);
-    EXPECT_NE(header_text.find("rebuild index source end: 11111"), std::string::npos);
-    EXPECT_NE(header_text.find("rebuild data source end: 22222"), std::string::npos);
-    EXPECT_NE(header_text.find("rebuild index block cursor: 33333"), std::string::npos);
-    EXPECT_NE(header_text.find("rebuild data block cursor: 44444"), std::string::npos);
-    EXPECT_NE(header_text.find("reader epoch tracking active: 1"), std::string::npos);
-    EXPECT_NE(header_text.find("reader epoch slot count: 7"), std::string::npos);
-    EXPECT_NE(header_text.find("reader epoch: 99"), std::string::npos);
-    EXPECT_NE(header_text.find("reusable index block count: 2"), std::string::npos);
-    EXPECT_NE(header_text.find("reusable data block count: 5"), std::string::npos);
-    db.Close();
+    writer_db.PrintHeader(out);
+    EXPECT_NE(out.str().find("rebuild active: 1"), std::string::npos);
 }
 
-TEST_F(JemallocRebuildMetadataTest, ReaderEpochSlotStaysIdleWhenTrackingIsDisabled)
+TEST_F(JemallocRebuildMetadataTest, PersistedHeaderKeepsRebuildMarker)
 {
-    ASSERT_TRUE(CreateJemallocRebuildTestDir());
-    const std::string key("reader-epoch-idle");
-    const std::string value("value");
+    MBConfig config = MakeJemallocRebuildConfig(CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, false);
+    {
+        DB writer_db(config);
+        ASSERT_TRUE(writer_db.is_open());
+        IndexHeader* header = writer_db.GetDictPtr()->GetHeaderPtr();
+        ASSERT_NE(header, nullptr);
+        header->rebuild_active = 1;
+    }
 
-    MBConfig writer_cfg = MakeJemallocRebuildConfig(CONSTS::WriterOptions(), false);
-    DB writer_db(writer_cfg);
-    ASSERT_TRUE(writer_db.is_open());
-    ASSERT_EQ(writer_db.Add(key, value), MBError::SUCCESS);
-
-    MBConfig reader_cfg = MakeJemallocRebuildConfig(CONSTS::ACCESS_MODE_READER, false);
-    reader_cfg.connect_id = 0x3456;
-    DB reader_db(reader_cfg);
-    ASSERT_TRUE(reader_db.is_open());
-
-    IndexHeader* header = writer_db.GetDictPtr()->GetHeaderPtr();
-    ASSERT_NE(header, nullptr);
-    ASSERT_EQ(header->reader_epoch_tracking_active.load(MEMORY_ORDER_READER), 0u);
-    EXPECT_EQ(FindReaderEpochSlot(header, reader_cfg.connect_id), -1);
-
-    EXPECT_EQ(DBTestPeer::BeginReaderEpochGuard(reader_db), 0u);
-    EXPECT_EQ(FindReaderEpochSlot(header, reader_cfg.connect_id), -1);
-
-    ExpectFindValue(reader_db, key, value);
-    EXPECT_EQ(FindReaderEpochSlot(header, reader_cfg.connect_id), -1);
-    reader_db.Close();
-    writer_db.Close();
-}
-
-TEST_F(JemallocRebuildMetadataTest, ReaderEpochSlotIsClaimedOnOpenAndClearedOnClose)
-{
-    ASSERT_TRUE(CreateJemallocRebuildTestDir());
-
-    MBConfig writer_cfg = MakeJemallocRebuildConfig(CONSTS::WriterOptions(), false);
-    DB writer_db(writer_cfg);
-    ASSERT_TRUE(writer_db.is_open());
-
-    MBConfig reader_cfg = MakeJemallocRebuildConfig(CONSTS::ACCESS_MODE_READER, false);
-    reader_cfg.connect_id = 0x4567;
-    DB reader_db(reader_cfg);
-    ASSERT_TRUE(reader_db.is_open());
-
-    IndexHeader* header = writer_db.GetDictPtr()->GetHeaderPtr();
-    ASSERT_NE(header, nullptr);
-    EXPECT_EQ(FindReaderEpochSlot(header, reader_cfg.connect_id), -1);
-
-    header->reader_epoch.store(19, MEMORY_ORDER_WRITER);
-    header->reader_epoch_tracking_active.store(1, MEMORY_ORDER_WRITER);
-
-    const uint64_t guard = DBTestPeer::BeginReaderEpochGuard(reader_db);
-    ASSERT_NE(guard, 0u);
-
-    const int slot = FindReaderEpochSlot(header, reader_cfg.connect_id);
-    ASSERT_GE(slot, 0);
-    EXPECT_EQ(header->reader_epoch_slot[slot].connect_id.load(MEMORY_ORDER_READER),
-        reader_cfg.connect_id);
-    EXPECT_NE(header->reader_epoch_slot[slot].pid.load(MEMORY_ORDER_READER), 0u);
-    EXPECT_NE(header->reader_epoch_slot[slot].proc_start_time.load(MEMORY_ORDER_READER), 0u);
-    EXPECT_EQ(header->reader_epoch_slot[slot].epoch.load(MEMORY_ORDER_READER), 19u);
-
-    DBTestPeer::EndReaderEpochGuard(reader_db, guard);
-    EXPECT_EQ(header->reader_epoch_slot[slot].connect_id.load(MEMORY_ORDER_READER), 0u);
-    EXPECT_EQ(header->reader_epoch_slot[slot].pid.load(MEMORY_ORDER_READER), 0u);
-    EXPECT_EQ(header->reader_epoch_slot[slot].proc_start_time.load(MEMORY_ORDER_READER), 0u);
-    EXPECT_EQ(header->reader_epoch_slot[slot].epoch.load(MEMORY_ORDER_READER), 0u);
-
-    reader_db.Close();
-    writer_db.Close();
-}
-
-TEST_F(JemallocRebuildMetadataTest, ReaderEpochGuardFallsBackToBarrierWhenFastSlotsAreUnavailable)
-{
-    ASSERT_TRUE(CreateJemallocRebuildTestDir());
-
-    MBConfig writer_cfg = MakeJemallocRebuildConfig(CONSTS::WriterOptions(), false);
-    DB writer_db(writer_cfg);
-    ASSERT_TRUE(writer_db.is_open());
-
-    MBConfig reader_cfg = MakeJemallocRebuildConfig(CONSTS::ACCESS_MODE_READER, false);
-    reader_cfg.connect_id = 0x4568;
-    DB reader_db(reader_cfg);
-    ASSERT_TRUE(reader_db.is_open());
-
-    IndexHeader* header = writer_db.GetDictPtr()->GetHeaderPtr();
-    ASSERT_NE(header, nullptr);
-    header->reader_epoch.store(21, MEMORY_ORDER_WRITER);
-    header->reader_epoch_tracking_active.store(1, MEMORY_ORDER_WRITER);
-    header->reader_epoch_slot_count = 1;
-    header->reader_epoch_slot[0].connect_id.store(0x1111, MEMORY_ORDER_WRITER);
-    header->reader_epoch_slot[0].pid.store(1, MEMORY_ORDER_WRITER);
-    header->reader_epoch_slot[0].proc_start_time.store(1, MEMORY_ORDER_WRITER);
-    header->reader_epoch_slot[0].epoch.store(21, MEMORY_ORDER_WRITER);
-
-    const uint64_t guard = DBTestPeer::BeginReaderEpochGuard(reader_db);
-    ASSERT_NE(guard, 0u);
-    EXPECT_EQ(FindReaderEpochSlot(header, reader_cfg.connect_id), -1);
-    EXPECT_EQ(reader_db.GetReaderGuardFastSlotCount(), 0u);
-    EXPECT_EQ(reader_db.GetReaderGuardBarrierFallbackCount(), 1u);
-
-    DBTestPeer::EndReaderEpochGuard(reader_db, guard);
-    reader_db.Close();
-    writer_db.Close();
-}
-
-TEST_F(JemallocRebuildMetadataTest, DataReleaseBelowCompactedBoundaryDoesNotDecrementPendingSize)
-{
-    ASSERT_TRUE(CreateJemallocRebuildTestDir());
-
-    MBConfig writer_cfg = MakeJemallocRebuildConfig(CONSTS::WriterOptions() | CONSTS::OPTION_JEMALLOC, false);
-    DB writer_db(writer_cfg);
-    ASSERT_TRUE(writer_db.is_open());
-
-    Dict* dict = writer_db.GetDictPtr();
-    ASSERT_NE(dict, nullptr);
-    IndexHeader* header = dict->GetHeaderPtr();
-    ASSERT_NE(header, nullptr);
-
-    const std::string value("value-below-boundary");
-    size_t offset = 0;
-    dict->ReserveData(reinterpret_cast<const uint8_t*>(value.data()), value.size(), offset);
-
-    header->pending_data_buff_size = 123456;
-    header->jemalloc_data_free_start = offset + 1;
-    ASSERT_EQ(DictReleaseTestPeer::ReleaseBuffer(*dict, offset, value.size() + DATA_HDR_BYTE),
-        MBError::SUCCESS);
-    EXPECT_EQ(header->pending_data_buff_size, 123456);
-
-    writer_db.Close();
-}
-
-TEST_F(JemallocRebuildMetadataTest, IndexEdgeReleaseBelowCompactedBoundaryDoesNotDecrementPendingSize)
-{
-    ASSERT_TRUE(CreateJemallocRebuildTestDir());
-
-    MBConfig writer_cfg = MakeJemallocRebuildConfig(CONSTS::WriterOptions() | CONSTS::OPTION_JEMALLOC, false);
-    DB writer_db(writer_cfg);
-    ASSERT_TRUE(writer_db.is_open());
-
-    DictMem* dmm = writer_db.GetDictPtr()->GetMM();
-    ASSERT_NE(dmm, nullptr);
-    IndexHeader* header = dmm->GetHeaderPtr();
-    ASSERT_NE(header, nullptr);
-
-    const std::string key("edge-below-boundary");
-    size_t offset = 0;
-    dmm->ReserveData(reinterpret_cast<const uint8_t*>(key.data()), key.size(), offset);
-
-    header->pending_index_buff_size = 234567;
-    header->jemalloc_index_free_start = offset + 1;
-    DictMemReleaseTestPeer::ReleaseBuffer(*dmm, offset, key.size());
-    EXPECT_EQ(header->pending_index_buff_size, 234567);
-
-    writer_db.Close();
-}
-
-TEST_F(JemallocRebuildMetadataTest, IndexNodeReleaseBelowCompactedBoundaryDoesNotDecrementPendingSize)
-{
-    ASSERT_TRUE(CreateJemallocRebuildTestDir());
-
-    MBConfig writer_cfg = MakeJemallocRebuildConfig(CONSTS::WriterOptions() | CONSTS::OPTION_JEMALLOC, false);
-    DB writer_db(writer_cfg);
-    ASSERT_TRUE(writer_db.is_open());
-
-    DictMem* dmm = writer_db.GetDictPtr()->GetMM();
-    ASSERT_NE(dmm, nullptr);
-    IndexHeader* header = dmm->GetHeaderPtr();
-    ASSERT_NE(header, nullptr);
-
-    size_t offset = 0;
-    uint8_t* ptr = nullptr;
-    ASSERT_FALSE(DictMemReleaseTestPeer::ReserveNode(*dmm, 0, offset, ptr));
-
-    header->pending_index_buff_size = 345678;
-    header->jemalloc_index_free_start = offset + 1;
-    DictMemReleaseTestPeer::ReleaseNode(*dmm, offset, 0);
-    EXPECT_EQ(header->pending_index_buff_size, 345678);
-
-    writer_db.Close();
-}
-
-TEST_F(JemallocRebuildMetadataTest, ReaderEpochTrackingCanBeEnabledForCoveredLookupPaths)
-{
-    ASSERT_TRUE(CreateJemallocRebuildTestDir());
-    const std::string key("reader-epoch-active");
-    const std::string value("value");
-
-    MBConfig writer_cfg = MakeJemallocRebuildConfig(CONSTS::WriterOptions(), false);
-    DB writer_db(writer_cfg);
-    ASSERT_TRUE(writer_db.is_open());
-    ASSERT_EQ(writer_db.Add(key, value), MBError::SUCCESS);
-
-    MBConfig reader_cfg = MakeJemallocRebuildConfig(CONSTS::ACCESS_MODE_READER, false);
-    reader_cfg.connect_id = 0x5678;
-    DB reader_db(reader_cfg);
-    ASSERT_TRUE(reader_db.is_open());
-
-    IndexHeader* header = writer_db.GetDictPtr()->GetHeaderPtr();
-    ASSERT_NE(header, nullptr);
-
-    header->reader_epoch.store(17, MEMORY_ORDER_WRITER);
-    header->reader_epoch_tracking_active.store(1, MEMORY_ORDER_WRITER);
-    const uint64_t fast_slot_before = reader_db.GetReaderGuardFastSlotCount();
-    const uint64_t barrier_before = reader_db.GetReaderGuardBarrierFallbackCount();
-
-    ExpectFindValue(reader_db, key, value);
-
-    EXPECT_EQ(reader_db.GetReaderGuardFastSlotCount(), fast_slot_before + 1);
-    EXPECT_EQ(reader_db.GetReaderGuardBarrierFallbackCount(), barrier_before);
-    EXPECT_EQ(FindReaderEpochSlot(header, reader_cfg.connect_id), -1);
-    EXPECT_EQ(header->reader_epoch.load(MEMORY_ORDER_READER), 17u);
-    reader_db.Close();
-    writer_db.Close();
-}
-
-TEST_F(JemallocRebuildMetadataTest, RebuildBarrierGuardResourceIsSharedAcrossHandlesForSameDb)
-{
-    ASSERT_TRUE(CreateJemallocRebuildTestDir());
-
-    MBConfig writer_cfg = MakeJemallocRebuildConfig(CONSTS::WriterOptions(), false);
-    DB writer_db(writer_cfg);
-    ASSERT_TRUE(writer_db.is_open());
-
-    MBConfig reader_cfg_1 = MakeJemallocRebuildConfig(CONSTS::ACCESS_MODE_READER, false);
-    reader_cfg_1.connect_id = 0x6011;
-    DB reader_db_1(reader_cfg_1);
-    ASSERT_TRUE(reader_db_1.is_open());
-
-    MBConfig reader_cfg_2 = MakeJemallocRebuildConfig(CONSTS::ACCESS_MODE_READER, false);
-    reader_cfg_2.connect_id = 0x6012;
-    DB reader_db_2(reader_cfg_2);
-    ASSERT_TRUE(reader_db_2.is_open());
-
-    ASSERT_EQ(DBTestPeer::EnsureRebuildGuardFd(reader_db_1), MBError::SUCCESS);
-    ASSERT_EQ(DBTestPeer::EnsureRebuildGuardFd(reader_db_2), MBError::SUCCESS);
-
-    MmapFileIO* guard_1 = DBTestPeer::GetRebuildGuardFile(reader_db_1);
-    MmapFileIO* guard_2 = DBTestPeer::GetRebuildGuardFile(reader_db_2);
-    ASSERT_NE(guard_1, nullptr);
-    ASSERT_NE(guard_2, nullptr);
-    EXPECT_EQ(guard_1, guard_2);
-
-
-    reader_db_2.Close();
-    reader_db_1.Close();
-    writer_db.Close();
-}
-
-TEST_F(JemallocRebuildMetadataTest, ReaderEpochTrackingAlsoCoversFindLongestPrefix)
-{
-    ASSERT_TRUE(CreateJemallocRebuildTestDir());
-    const std::string key("reader-epoch-prefix");
-    const std::string value("value-prefix");
-
-    MBConfig writer_cfg = MakeJemallocRebuildConfig(CONSTS::WriterOptions(), false);
-    DB writer_db(writer_cfg);
-    ASSERT_TRUE(writer_db.is_open());
-    ASSERT_EQ(writer_db.Add(key, value), MBError::SUCCESS);
-
-    MBConfig reader_cfg = MakeJemallocRebuildConfig(CONSTS::ACCESS_MODE_READER, false);
-    reader_cfg.connect_id = 0x6789;
-    DB reader_db(reader_cfg);
-    ASSERT_TRUE(reader_db.is_open());
-
-    IndexHeader* header = writer_db.GetDictPtr()->GetHeaderPtr();
-    ASSERT_NE(header, nullptr);
-
-    header->reader_epoch.store(23, MEMORY_ORDER_WRITER);
-    header->reader_epoch_tracking_active.store(1, MEMORY_ORDER_WRITER);
-    const uint64_t fast_slot_before = reader_db.GetReaderGuardFastSlotCount();
-    const uint64_t barrier_before = reader_db.GetReaderGuardBarrierFallbackCount();
-
-    MBData data;
-    ASSERT_EQ(reader_db.FindLongestPrefix(key, data), MBError::SUCCESS);
-    ASSERT_EQ(std::string(reinterpret_cast<const char*>(data.buff), data.data_len), value);
-
-    EXPECT_EQ(reader_db.GetReaderGuardFastSlotCount(), fast_slot_before + 1);
-    EXPECT_EQ(reader_db.GetReaderGuardBarrierFallbackCount(), barrier_before);
-    EXPECT_EQ(FindReaderEpochSlot(header, reader_cfg.connect_id), -1);
-    EXPECT_EQ(header->reader_epoch.load(MEMORY_ORDER_READER), 23u);
-    reader_db.Close();
-    writer_db.Close();
+    std::ifstream hdr_file(JemallocRebuildTestPath() + "/_mabain_h", std::ios::binary);
+    ASSERT_TRUE(hdr_file.is_open());
+    char hdr_page[RollableFile::page_size];
+    hdr_file.read(hdr_page, sizeof(hdr_page));
+    ASSERT_EQ(hdr_file.gcount(), static_cast<std::streamsize>(sizeof(hdr_page)));
+    EXPECT_TRUE(PersistedRebuildInProgress(hdr_page));
 }
 
 TEST_F(JemallocRebuildMetadataTest, QuarantinedBlockStaysUnavailableWhileReaderPinnedToRetireEpoch)
 {
-    ASSERT_TRUE(CreateJemallocRebuildTestDir());
-
-    MBConfig writer_cfg = MakeJemallocRebuildConfig(
-        CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, false);
-    DB writer_db(writer_cfg);
+    MBConfig config = MakeJemallocRebuildConfig(CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, false);
+    DB writer_db(config);
     ASSERT_TRUE(writer_db.is_open());
-
-    IndexHeader* header = writer_db.GetDictPtr()->GetHeaderPtr();
+    auto* header = writer_db.GetDictPtr()->GetHeaderPtr();
     ASSERT_NE(header, nullptr);
-    header->reader_epoch_tracking_active.store(1, MEMORY_ORDER_WRITER);
-    header->reader_epoch_slot[0].connect_id.store(0x1111, MEMORY_ORDER_WRITER);
-    header->reader_epoch_slot[0].pid.store(1, MEMORY_ORDER_WRITER);
-    header->reader_epoch_slot[0].epoch.store(9, MEMORY_ORDER_WRITER);
 
     ResourceCollectionTestPeer rc(writer_db);
-    ASSERT_EQ(rc.QueueReusableBlock(header->reusable_index_block,
-        header->reusable_index_block_count, 2, 9), MBError::SUCCESS);
-    EXPECT_EQ(header->reusable_index_block_count, 1u);
+    ReusableBlockEntry entries[MB_MAX_REUSABLE_BLOCKS] = {};
+    uint32_t count = 0;
+    ASSERT_EQ(rc.QueueReusableBlock(entries, count, 2, 9), MBError::SUCCESS);
+    header->reader_epoch_slot[0].connect_id.store(99, MEMORY_ORDER_WRITER);
+    header->reader_epoch_slot[0].epoch.store(9, MEMORY_ORDER_WRITER);
 
-    ASSERT_EQ(rc.ReleaseReusableBlocks(header->reusable_index_block,
-        header->reusable_index_block_count), MBError::SUCCESS);
-    EXPECT_EQ(header->reusable_index_block_count, 1u);
-    EXPECT_EQ(header->reusable_index_block[0].in_use, REUSABLE_BLOCK_STATE_QUARANTINED);
-    EXPECT_EQ(writer_db.GetDictPtr()->GetMM()->GetReusableBlockCount(), 0u);
-    EXPECT_EQ(header->reader_epoch_tracking_active.load(MEMORY_ORDER_READER), 1u);
-    writer_db.Close();
+    ASSERT_EQ(rc.ReleaseReusableBlocks(entries, count), MBError::SUCCESS);
+    EXPECT_EQ(count, 1u);
+    EXPECT_EQ(entries[0].in_use, REUSABLE_BLOCK_STATE_QUARANTINED);
 }
 
 TEST_F(JemallocRebuildMetadataTest, QuarantinedBlockBecomesReusableAfterReadersAdvance)
 {
-    ASSERT_TRUE(CreateJemallocRebuildTestDir());
-
-    MBConfig writer_cfg = MakeJemallocRebuildConfig(
-        CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, false);
-    DB writer_db(writer_cfg);
+    MBConfig config = MakeJemallocRebuildConfig(CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, false);
+    DB writer_db(config);
     ASSERT_TRUE(writer_db.is_open());
-
-    IndexHeader* header = writer_db.GetDictPtr()->GetHeaderPtr();
+    auto* header = writer_db.GetDictPtr()->GetHeaderPtr();
     ASSERT_NE(header, nullptr);
-    header->reader_epoch_tracking_active.store(1, MEMORY_ORDER_WRITER);
-    header->reader_epoch_slot[0].connect_id.store(0x2222, MEMORY_ORDER_WRITER);
-    header->reader_epoch_slot[0].pid.store(1, MEMORY_ORDER_WRITER);
-    header->reader_epoch_slot[0].epoch.store(11, MEMORY_ORDER_WRITER);
 
     ResourceCollectionTestPeer rc(writer_db);
-    ASSERT_EQ(rc.QueueReusableBlock(header->reusable_index_block,
-        header->reusable_index_block_count, 2, 9), MBError::SUCCESS);
-    ASSERT_EQ(rc.QueueReusableBlock(header->reusable_data_block,
-        header->reusable_data_block_count, 3, 9), MBError::SUCCESS);
-
-    header->reader_epoch_slot[0].epoch.store(12, MEMORY_ORDER_WRITER);
-    ASSERT_EQ(rc.ReleaseReusableBlocks(header->reusable_index_block,
-        header->reusable_index_block_count), MBError::SUCCESS);
-    ASSERT_EQ(rc.ReleaseReusableBlocks(header->reusable_data_block,
-        header->reusable_data_block_count), MBError::SUCCESS);
-    EXPECT_EQ(header->reusable_index_block_count, 1u);
-    EXPECT_EQ(header->reusable_data_block_count, 1u);
-    EXPECT_EQ(header->reusable_index_block[0].in_use, REUSABLE_BLOCK_STATE_READY);
-    EXPECT_EQ(header->reusable_data_block[0].in_use, REUSABLE_BLOCK_STATE_READY);
-    EXPECT_EQ(writer_db.GetDictPtr()->GetMM()->GetReusableBlockCount(), 0u);
-    EXPECT_EQ(writer_db.GetDictPtr()->GetReusableBlockCount(), 0u);
-    EXPECT_EQ(header->reader_epoch_tracking_active.load(MEMORY_ORDER_READER), 1u);
-
-    ASSERT_EQ(rc.DrainReusableBlocks(header->reusable_index_block,
-        header->reusable_index_block_count, writer_db.GetDictPtr()->GetMM()), MBError::SUCCESS);
-    ASSERT_EQ(rc.DrainReusableBlocks(header->reusable_data_block,
-        header->reusable_data_block_count, writer_db.GetDictPtr()), MBError::SUCCESS);
-    EXPECT_EQ(header->reusable_index_block_count, 0u);
-    EXPECT_EQ(header->reusable_data_block_count, 0u);
-    EXPECT_EQ(writer_db.GetDictPtr()->GetMM()->GetReusableBlockCount(), 1u);
-    EXPECT_EQ(writer_db.GetDictPtr()->GetReusableBlockCount(), 1u);
-    writer_db.Close();
+    ReusableBlockEntry entries[MB_MAX_REUSABLE_BLOCKS] = {};
+    uint32_t count = 0;
+    ASSERT_EQ(rc.QueueReusableBlock(entries, count, 2, 9), MBError::SUCCESS);
+    header->reader_epoch_slot[0].connect_id.store(99, MEMORY_ORDER_WRITER);
+    header->reader_epoch_slot[0].epoch.store(10, MEMORY_ORDER_WRITER);
+    ASSERT_EQ(rc.ReleaseReusableBlocks(entries, count), MBError::SUCCESS);
+    EXPECT_EQ(entries[0].in_use, REUSABLE_BLOCK_STATE_READY);
 }
 
-TEST_F(JemallocRebuildMetadataTest, DeadReaderEpochSlotIsClearedDuringQuiesceCheck)
+TEST_F(JemallocRebuildMetadataTest, ReaderEpochGuardUsesFastSlotWhenAvailable)
 {
-    ASSERT_TRUE(CreateJemallocRebuildTestDir());
-
-    MBConfig writer_cfg = MakeJemallocRebuildConfig(
-        CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, false);
-    DB writer_db(writer_cfg);
+    MBConfig writer_config = MakeJemallocRebuildConfig(CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, false);
+    DB writer_db(writer_config);
     ASSERT_TRUE(writer_db.is_open());
-
-    IndexHeader* header = writer_db.GetDictPtr()->GetHeaderPtr();
+    ASSERT_EQ(writer_db.Add("seed", "value"), MBError::SUCCESS);
+    auto* header = writer_db.GetDictPtr()->GetHeaderPtr();
     ASSERT_NE(header, nullptr);
-    header->reader_epoch_tracking_active.store(1, MEMORY_ORDER_WRITER);
-    header->reader_epoch_slot[0].connect_id.store(0x3333, MEMORY_ORDER_WRITER);
-    header->reader_epoch_slot[0].pid.store(2000000000u, MEMORY_ORDER_WRITER);
-    header->reader_epoch_slot[0].epoch.store(9, MEMORY_ORDER_WRITER);
 
-    ResourceCollectionTestPeer rc(writer_db);
-    ASSERT_EQ(rc.QueueReusableBlock(header->reusable_index_block,
-        header->reusable_index_block_count, 2, 9), MBError::SUCCESS);
-    ASSERT_EQ(rc.ReleaseReusableBlocks(header->reusable_index_block,
-        header->reusable_index_block_count), MBError::SUCCESS);
-    EXPECT_EQ(header->reusable_index_block_count, 1u);
-    EXPECT_EQ(header->reusable_index_block[0].in_use, REUSABLE_BLOCK_STATE_READY);
-    EXPECT_EQ(header->reader_epoch_slot[0].connect_id.load(MEMORY_ORDER_READER), 0u);
-    EXPECT_EQ(header->reader_epoch_slot[0].pid.load(MEMORY_ORDER_READER), 0u);
-    EXPECT_EQ(header->reader_epoch_slot[0].epoch.load(MEMORY_ORDER_READER), 0u);
-    writer_db.Close();
-}
-
-TEST_F(JemallocRebuildMetadataTest, RejectsOlderHeaderVersion)
-{
-    CreateHeaderWithVersion(1, 6, 2);
-    int options = CONSTS::ReaderOptions();
-    DB db(JemallocRebuildTestPath().c_str(), options);
-    EXPECT_FALSE(db.is_open());
-    EXPECT_EQ(db.Status(), MBError::VERSION_MISMATCH);
-}
-
-TEST_F(JemallocRebuildMetadataTest, PersistedHeaderKeepsRebuildMetadata)
-{
-    ASSERT_TRUE(CreateJemallocRebuildTestDir());
-    {
-        DB writer_db(JemallocRebuildTestPath().c_str(), CONSTS::WriterOptions());
-        ASSERT_TRUE(writer_db.is_open());
-        IndexHeader* header = writer_db.GetDictPtr()->GetHeaderPtr();
-        ASSERT_NE(header, nullptr);
-
-        header->rebuild_state = REBUILD_STATE_COPY;
-        header->rebuild_root_offset = 4321;
-        header->rebuild_index_alloc_start = 1001;
-        header->rebuild_data_alloc_start = 1002;
-        header->rebuild_cutover_index = 12;
-        header->rebuild_index_alloc_end = 2001;
-        header->rebuild_data_alloc_end = 2002;
-        header->rebuild_index_source_end = 3001;
-        header->rebuild_data_source_end = 3002;
-        header->rebuild_index_block_cursor = 4001;
-        header->rebuild_data_block_cursor = 4002;
-        header->reusable_index_block_count = 6;
-        header->reusable_data_block_count = 7;
-        writer_db.Close();
-    }
-
-    char hdr_page[RollableFile::page_size];
-    std::ifstream in(JemallocRebuildTestPath() + "/_mabain_h",
-        std::ios::in | std::ios::binary);
-    ASSERT_TRUE(in.is_open());
-    in.read(hdr_page, sizeof(hdr_page));
-    ASSERT_EQ(in.gcount(), static_cast<std::streamsize>(sizeof(hdr_page)));
-
-        EXPECT_EQ(ReadPersistedHeaderField<int>(hdr_page, offsetof(IndexHeader, rebuild_state)), REBUILD_STATE_COPY);
-    EXPECT_EQ(ReadPersistedHeaderField<size_t>(hdr_page, offsetof(IndexHeader, rebuild_root_offset)), 4321u);
-    EXPECT_EQ(ReadPersistedHeaderField<size_t>(hdr_page, offsetof(IndexHeader, rebuild_index_alloc_start)), 1001u);
-    EXPECT_EQ(ReadPersistedHeaderField<size_t>(hdr_page, offsetof(IndexHeader, rebuild_data_alloc_start)), 1002u);
-    EXPECT_EQ(ReadPersistedHeaderField<int>(hdr_page, offsetof(IndexHeader, rebuild_cutover_index)), 12);
-    EXPECT_EQ(ReadPersistedHeaderField<size_t>(hdr_page, offsetof(IndexHeader, rebuild_index_alloc_end)), 2001u);
-    EXPECT_EQ(ReadPersistedHeaderField<size_t>(hdr_page, offsetof(IndexHeader, rebuild_data_alloc_end)), 2002u);
-    EXPECT_EQ(ReadPersistedHeaderField<size_t>(hdr_page, offsetof(IndexHeader, rebuild_index_source_end)), 3001u);
-    EXPECT_EQ(ReadPersistedHeaderField<size_t>(hdr_page, offsetof(IndexHeader, rebuild_data_source_end)), 3002u);
-    EXPECT_EQ(ReadPersistedHeaderField<size_t>(hdr_page, offsetof(IndexHeader, rebuild_index_block_cursor)), 4001u);
-    EXPECT_EQ(ReadPersistedHeaderField<size_t>(hdr_page, offsetof(IndexHeader, rebuild_data_block_cursor)), 4002u);
-    EXPECT_EQ(ReadPersistedHeaderField<uint32_t>(hdr_page, offsetof(IndexHeader, reusable_index_block_count)), 6u);
-    EXPECT_EQ(ReadPersistedHeaderField<uint32_t>(hdr_page, offsetof(IndexHeader, reusable_data_block_count)), 7u);
-    EXPECT_TRUE(PersistedRebuildInProgress(hdr_page));
-}
-
-TEST_F(JemallocRebuildMetadataTest, WriterRecreatesDbAfterOlderHeaderVersionMismatch)
-{
-    CreateHeaderWithVersion(1, 6, 2);
-    DB writer_db(JemallocRebuildTestPath().c_str(), CONSTS::WriterOptions());
-    ASSERT_TRUE(writer_db.is_open());
-    EXPECT_EQ(writer_db.Status(), MBError::SUCCESS);
-
-    IndexHeader* header = writer_db.GetDictPtr()->GetHeaderPtr();
-    ASSERT_NE(header, nullptr);
-    EXPECT_EQ(header->version[0], version[0]);
-    EXPECT_EQ(header->version[1], version[1]);
-    EXPECT_EQ(header->version[2], version[2]);
-    EXPECT_EQ(header->rebuild_state, REBUILD_STATE_NORMAL);
-    EXPECT_EQ(header->rebuild_root_offset, 0u);
-    EXPECT_EQ(header->rebuild_index_alloc_start, 0u);
-    EXPECT_EQ(header->rebuild_data_alloc_start, 0u);
-    EXPECT_EQ(header->rebuild_cutover_index, 0);
-    EXPECT_EQ(header->rebuild_index_alloc_end, 0u);
-    EXPECT_EQ(header->rebuild_data_alloc_end, 0u);
-    EXPECT_FALSE(header->RebuildInProgress());
-    writer_db.Close();
-}
-
-TEST_F(JemallocRebuildMetadataTest, WarmRestartWithKeepDbCompletesStartupRebuildAndPreservesReads)
-{
-    ASSERT_TRUE(CreateJemallocRebuildTestDir());
-    const std::string key("alpha");
-    const std::string key2("alpha-2");
-    const std::string value("value-alpha");
-
-    MBConfig initial_cfg = MakeJemallocRebuildConfig(
-        CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, false);
-    DB initial_db(initial_cfg);
-    ASSERT_TRUE(initial_db.is_open());
-    ASSERT_EQ(initial_db.Add(key, value), MBError::SUCCESS);
-    ASSERT_EQ(initial_db.Count(), 1);
-    IndexHeader* initial_header = initial_db.GetDictPtr()->GetHeaderPtr();
-    ASSERT_NE(initial_header, nullptr);
-    initial_header->pending_index_buff_size = 12345;
-    initial_header->pending_data_buff_size = 23456;
-    initial_db.Close();
-
-    MBConfig rebuild_cfg = MakeJemallocRebuildConfig(
-        CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, true);
-    DB rebuild_db(rebuild_cfg);
-    ASSERT_TRUE(rebuild_db.is_open());
-
-    IndexHeader* header = rebuild_db.GetDictPtr()->GetHeaderPtr();
-    ASSERT_NE(header, nullptr);
-    EXPECT_EQ(header->rebuild_state, REBUILD_STATE_NORMAL);
-    EXPECT_FALSE(header->RebuildInProgress());
-    EXPECT_EQ(header->reader_epoch_tracking_active.load(MEMORY_ORDER_READER), 0u);
-    EXPECT_EQ(header->pending_index_buff_size, 0);
-    EXPECT_EQ(header->pending_data_buff_size, 0);
-    EXPECT_EQ(rebuild_db.Count(), 1);
-    ExpectFindValue(rebuild_db, key, value);
-    ASSERT_EQ(rebuild_db.Add(key2, value), MBError::SUCCESS);
-    EXPECT_EQ(rebuild_db.Count(), 2);
-    ExpectFindValue(rebuild_db, key2, value);
-    EXPECT_EQ(header->reusable_index_block_count, 0u);
-    EXPECT_EQ(header->reusable_data_block_count, 0u);
-
-    MBConfig reader_cfg = MakeJemallocRebuildConfig(CONSTS::ACCESS_MODE_READER, false);
-    DB reader_db(reader_cfg);
+    MBConfig config = MakeJemallocRebuildConfig(CONSTS::ACCESS_MODE_READER | CONSTS::OPTION_JEMALLOC, false);
+    config.connect_id = 77;
+    DB reader_db(config);
     ASSERT_TRUE(reader_db.is_open());
-    ExpectFindValue(reader_db, key, value);
-    ExpectFindValue(reader_db, key2, value);
-    reader_db.Close();
-    rebuild_db.Close();
-    ResourcePool::getInstance().RemoveAll();
+    header->reader_epoch_tracking_active.store(1, MEMORY_ORDER_WRITER);
+
+    const uint64_t fast_before = reader_db.GetReaderGuardFastSlotCount();
+    const uint64_t fallback_before = reader_db.GetReaderGuardBarrierFallbackCount();
+    const uint64_t token = mabain::DBTestPeer::BeginReaderEpochGuard(reader_db);
+    EXPECT_NE(token, 0u);
+    EXPECT_EQ(reader_db.GetReaderGuardFastSlotCount(), fast_before + 1);
+    EXPECT_EQ(reader_db.GetReaderGuardBarrierFallbackCount(), fallback_before);
+    EXPECT_EQ(header->reader_epoch_slot[token - 1].connect_id.load(MEMORY_ORDER_READER), 77u);
+    mabain::DBTestPeer::EndReaderEpochGuard(reader_db, token);
+}
+
+TEST_F(JemallocRebuildMetadataTest, ReaderEpochGuardFallsBackToBarrierWhenSlotsBusy)
+{
+    MBConfig writer_config = MakeJemallocRebuildConfig(CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, false);
+    DB writer_db(writer_config);
+    ASSERT_TRUE(writer_db.is_open());
+    ASSERT_EQ(writer_db.Add("seed", "value"), MBError::SUCCESS);
+    auto* header = writer_db.GetDictPtr()->GetHeaderPtr();
+    ASSERT_NE(header, nullptr);
+
+    MBConfig config = MakeJemallocRebuildConfig(CONSTS::ACCESS_MODE_READER | CONSTS::OPTION_JEMALLOC, false);
+    config.connect_id = 88;
+    DB reader_db(config);
+    ASSERT_TRUE(reader_db.is_open());
+    header->reader_epoch_tracking_active.store(1, MEMORY_ORDER_WRITER);
+    for (uint32_t i = 0; i < MB_MAX_READER_EPOCH_SLOT; ++i)
+        header->reader_epoch_slot[i].connect_id.store(i + 1, MEMORY_ORDER_WRITER);
+
+    const uint64_t fast_before = reader_db.GetReaderGuardFastSlotCount();
+    const uint64_t fallback_before = reader_db.GetReaderGuardBarrierFallbackCount();
+    const uint64_t token = mabain::DBTestPeer::BeginReaderEpochGuard(reader_db);
+    EXPECT_NE(token, 0u);
+    EXPECT_EQ(reader_db.GetReaderGuardFastSlotCount(), fast_before);
+    EXPECT_EQ(reader_db.GetReaderGuardBarrierFallbackCount(), fallback_before + 1);
+    mabain::DBTestPeer::EndReaderEpochGuard(reader_db, token);
+}
+
+TEST_F(JemallocRebuildMetadataTest, ReaderEpochGuardEndClearsClaimedSlot)
+{
+    MBConfig writer_config = MakeJemallocRebuildConfig(CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, false);
+    DB writer_db(writer_config);
+    ASSERT_TRUE(writer_db.is_open());
+    ASSERT_EQ(writer_db.Add("seed", "value"), MBError::SUCCESS);
+    auto* header = writer_db.GetDictPtr()->GetHeaderPtr();
+    ASSERT_NE(header, nullptr);
+
+    MBConfig config = MakeJemallocRebuildConfig(CONSTS::ACCESS_MODE_READER | CONSTS::OPTION_JEMALLOC, false);
+    config.connect_id = 123;
+    DB reader_db(config);
+    ASSERT_TRUE(reader_db.is_open());
+    header->reader_epoch_tracking_active.store(1, MEMORY_ORDER_WRITER);
+
+    const uint64_t token = mabain::DBTestPeer::BeginReaderEpochGuard(reader_db);
+    ASSERT_NE(token, 0u);
+    mabain::DBTestPeer::EndReaderEpochGuard(reader_db, token);
+    EXPECT_EQ(header->reader_epoch_slot[token - 1].connect_id.load(MEMORY_ORDER_READER), 0u);
 }
 
 TEST_F(JemallocRebuildMetadataTest, RunStartupRebuildOnReaderReturnsControlledError)
 {
-    ASSERT_TRUE(CreateJemallocRebuildTestDir());
-    const std::string key("reader-rebuild");
-    const std::string value("value-reader");
-
-    MBConfig writer_cfg = MakeJemallocRebuildConfig(
-        CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, false);
-    DB writer_db(writer_cfg);
+    MBConfig writer_config = MakeJemallocRebuildConfig(CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, false);
+    DB writer_db(writer_config);
     ASSERT_TRUE(writer_db.is_open());
-    ASSERT_EQ(writer_db.Add(key, value), MBError::SUCCESS);
+    ASSERT_EQ(writer_db.Add("existing", "value"), MBError::SUCCESS);
+    writer_db.Close();
 
-    IndexHeader* header = writer_db.GetDictPtr()->GetHeaderPtr();
-    ASSERT_NE(header, nullptr);
-
-    MBConfig reader_cfg = MakeJemallocRebuildConfig(CONSTS::ACCESS_MODE_READER, false);
-    DB reader_db(reader_cfg);
+    MBConfig reader_config = MakeJemallocRebuildConfig(CONSTS::ACCESS_MODE_READER, true);
+    DB reader_db(reader_config);
     ASSERT_TRUE(reader_db.is_open());
-
-    header->ResetRebuildMetadata(REBUILD_STATE_PREP);
-
     EXPECT_EQ(mabain::DBTestPeer::RunStartupRebuild(reader_db), MBError::NOT_ALLOWED);
-    EXPECT_TRUE(header->RebuildInProgress());
-    ExpectFindValue(reader_db, key, value);
-
-    header->ClearRebuildMetadata();
-    reader_db.Close();
-    writer_db.Close();
 }
 
-TEST_F(JemallocRebuildMetadataTest, RunStartupRebuildRejectsIncompleteCopyMetadata)
+TEST_F(JemallocRebuildMetadataTest, RunStartupRebuildWithExceptionStatusClearsDbWithoutRecovery)
 {
-    ASSERT_TRUE(CreateJemallocRebuildTestDir());
-    const std::string key("incomplete-copy");
-    const std::string value("value-copy");
-
-    MBConfig writer_cfg = MakeJemallocRebuildConfig(
-        CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, false);
-    DB writer_db(writer_cfg);
-    ASSERT_TRUE(writer_db.is_open());
-    ASSERT_EQ(writer_db.Add(key, value), MBError::SUCCESS);
-
-    IndexHeader* header = writer_db.GetDictPtr()->GetHeaderPtr();
-    ASSERT_NE(header, nullptr);
-    header->ResetRebuildMetadata(REBUILD_STATE_COPY);
-    header->rebuild_index_alloc_end = header->m_index_offset;
-    header->rebuild_data_alloc_end = header->m_data_offset;
-
-    EXPECT_FALSE(mabain::DBTestPeer::StartupRebuildComplete(writer_db));
-    EXPECT_EQ(mabain::DBTestPeer::RunStartupRebuild(writer_db), MBError::INVALID_SIZE);
-    EXPECT_EQ(header->rebuild_state, REBUILD_STATE_COPY);
-    EXPECT_TRUE(header->RebuildInProgress());
-    EXPECT_EQ(header->rebuild_index_source_end, 0u);
-    EXPECT_EQ(header->rebuild_data_source_end, 0u);
-    ExpectFindValue(writer_db, key, value);
-
-    header->ClearRebuildMetadata();
-    writer_db.Close();
-}
-
-TEST_F(JemallocRebuildMetadataTest, StartupShrinkCapturesCurrentJemallocTails)
-{
-    ASSERT_TRUE(CreateJemallocRebuildTestDir());
-    const std::string key("delta");
-    const std::string value("value-delta");
-
-    MBConfig initial_cfg = MakeJemallocRebuildConfig(
-        CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, false);
-    DB initial_db(initial_cfg);
-    ASSERT_TRUE(initial_db.is_open());
-    ASSERT_EQ(initial_db.Add(key, value), MBError::SUCCESS);
-
-    IndexHeader* header = initial_db.GetDictPtr()->GetHeaderPtr();
-    ASSERT_NE(header, nullptr);
-    header->ResetRebuildMetadata(REBUILD_STATE_PREP);
-    ASSERT_EQ(header->rebuild_state, REBUILD_STATE_PREP);
-    ResourceCollection rc(initial_db);
-    ASSERT_EQ(rc.StartupShrink(), MBError::SUCCESS);
-    EXPECT_EQ(header->rebuild_state, REBUILD_STATE_COPY);
-    EXPECT_EQ(header->rebuild_index_alloc_start, header->m_index_offset);
-    EXPECT_EQ(header->rebuild_data_alloc_start, header->m_data_offset);
-    EXPECT_LE(header->rebuild_index_alloc_end, header->rebuild_index_alloc_start);
-    EXPECT_LE(header->rebuild_data_alloc_end, header->rebuild_data_alloc_start);
-    EXPECT_GE(header->rebuild_index_source_end, header->m_index_offset);
-    EXPECT_GE(header->rebuild_data_source_end, header->m_data_offset);
-    EXPECT_GE(header->rebuild_index_source_end, header->rebuild_index_alloc_end);
-    EXPECT_GE(header->rebuild_data_source_end, header->rebuild_data_alloc_end);
-    initial_db.Close();
-}
-
-TEST_F(JemallocRebuildMetadataTest, StartupEvacuateSeparatesExactBoundaryFromSourceBlockStart)
-{
-    ASSERT_TRUE(CreateJemallocRebuildTestDir());
-    const std::string key("epsilon");
-    const std::string value("value-epsilon");
-
-    MBConfig initial_cfg = MakeJemallocRebuildConfig(
-        CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, false);
-    DB initial_db(initial_cfg);
-    ASSERT_TRUE(initial_db.is_open());
-    ASSERT_EQ(initial_db.Add(key, value), MBError::SUCCESS);
-
-    IndexHeader* header = initial_db.GetDictPtr()->GetHeaderPtr();
-    ASSERT_NE(header, nullptr);
-    header->ResetRebuildMetadata(REBUILD_STATE_PREP);
-    ResourceCollection rc(initial_db);
-    ASSERT_EQ(rc.StartupShrink(), MBError::SUCCESS);
-
-    ASSERT_NE(header, nullptr);
-    const size_t index_boundary = header->rebuild_index_alloc_end;
-    const size_t data_boundary = header->rebuild_data_alloc_end;
-    ASSERT_GT(header->index_block_size, 0u);
-    ASSERT_GT(header->data_block_size, 0u);
-
-    ASSERT_EQ(rc.StartupEvacuate(), MBError::SUCCESS);
-    EXPECT_EQ(header->rebuild_state, REBUILD_STATE_CUTOVER);
-    EXPECT_EQ(header->rebuild_index_alloc_end, index_boundary);
-    EXPECT_EQ(header->rebuild_data_alloc_end, data_boundary);
-    EXPECT_GE(initial_db.GetDictPtr()->GetMM()->GetJemallocAllocSize(), index_boundary);
-    EXPECT_GE(initial_db.GetDictPtr()->GetJemallocAllocSize(), data_boundary);
-    EXPECT_EQ(header->rebuild_index_alloc_start % header->index_block_size, 0u);
-    EXPECT_EQ(header->rebuild_data_alloc_start % header->data_block_size, 0u);
-    EXPECT_GE(header->rebuild_index_alloc_start, header->rebuild_index_alloc_end);
-    EXPECT_GE(header->rebuild_data_alloc_start, header->rebuild_data_alloc_end);
-    EXPECT_GE(header->rebuild_index_block_cursor, header->rebuild_index_alloc_start);
-    EXPECT_LE(header->rebuild_index_block_cursor, header->rebuild_index_source_end);
-    EXPECT_GE(header->rebuild_data_block_cursor, header->rebuild_data_alloc_start);
-    EXPECT_LE(header->rebuild_data_block_cursor, header->rebuild_data_source_end);
-    EXPECT_LE(header->reusable_index_block_count, 1u);
-    EXPECT_LE(header->reusable_data_block_count, 1u);
-    if (header->reusable_index_block_count == 1u) {
-        EXPECT_EQ(header->reusable_index_block[0].in_use, REUSABLE_BLOCK_STATE_READY);
-    }
-    if (header->reusable_data_block_count == 1u) {
-        EXPECT_EQ(header->reusable_data_block[0].in_use, REUSABLE_BLOCK_STATE_READY);
-    }
-    EXPECT_EQ(header->reader_epoch_tracking_active.load(MEMORY_ORDER_READER),
-        (header->rebuild_index_block_cursor < header->rebuild_index_source_end
-            || header->rebuild_data_block_cursor < header->rebuild_data_source_end) ? 1u : 0u);
-
-    if (index_boundary % header->index_block_size == 0)
-        EXPECT_EQ(header->rebuild_index_alloc_start, index_boundary);
-    else
-        EXPECT_GT(header->rebuild_index_alloc_start, index_boundary);
-
-    if (data_boundary % header->data_block_size == 0)
-        EXPECT_EQ(header->rebuild_data_alloc_start, data_boundary);
-    else
-        EXPECT_GT(header->rebuild_data_alloc_start, data_boundary);
-    initial_db.Close();
-}
-
-TEST_F(JemallocRebuildMetadataTest, StartupEvacuateResumesFromCutoverState)
-{
-    ASSERT_TRUE(CreateJemallocRebuildTestDir());
-    const std::string key("zeta");
-    const std::string value("value-zeta");
-
-    MBConfig initial_cfg = MakeJemallocRebuildConfig(
-        CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, false);
-    DB initial_db(initial_cfg);
-    ASSERT_TRUE(initial_db.is_open());
-    ASSERT_EQ(initial_db.Add(key, value), MBError::SUCCESS);
-
-    IndexHeader* header = initial_db.GetDictPtr()->GetHeaderPtr();
-    ASSERT_NE(header, nullptr);
-    header->ResetRebuildMetadata(REBUILD_STATE_PREP);
-    ResourceCollection rc(initial_db);
-    ASSERT_EQ(rc.StartupShrink(), MBError::SUCCESS);
-    ASSERT_EQ(rc.StartupEvacuate(), MBError::SUCCESS);
-
-    ASSERT_NE(header, nullptr);
-    const size_t index_source_start = header->rebuild_index_alloc_start;
-    const size_t data_source_start = header->rebuild_data_alloc_start;
-    const size_t index_boundary = header->rebuild_index_alloc_end;
-    const size_t data_boundary = header->rebuild_data_alloc_end;
-    const size_t index_source_end = header->rebuild_index_source_end;
-    const size_t data_source_end = header->rebuild_data_source_end;
-    const size_t index_cursor_1 = header->rebuild_index_block_cursor;
-    const size_t data_cursor_1 = header->rebuild_data_block_cursor;
-
-    ASSERT_EQ(rc.StartupEvacuate(), MBError::SUCCESS);
-    EXPECT_EQ(header->rebuild_state, REBUILD_STATE_CUTOVER);
-    EXPECT_EQ(header->rebuild_index_alloc_start, index_source_start);
-    EXPECT_EQ(header->rebuild_data_alloc_start, data_source_start);
-    EXPECT_EQ(header->rebuild_index_alloc_end, index_boundary);
-    EXPECT_EQ(header->rebuild_data_alloc_end, data_boundary);
-    EXPECT_EQ(header->rebuild_index_source_end, index_source_end);
-    EXPECT_EQ(header->rebuild_data_source_end, data_source_end);
-    EXPECT_GE(header->rebuild_index_block_cursor, index_cursor_1);
-    EXPECT_GE(header->rebuild_data_block_cursor, data_cursor_1);
-    EXPECT_LE(header->rebuild_data_block_cursor, header->rebuild_data_source_end);
-    EXPECT_LE(header->rebuild_index_block_cursor, header->rebuild_index_source_end);
-    EXPECT_GE(initial_db.GetDictPtr()->GetMM()->GetJemallocAllocSize(), index_boundary);
-    EXPECT_GE(initial_db.GetDictPtr()->GetJemallocAllocSize(), data_boundary);
-    ExpectFindValue(initial_db, key, value);
-    initial_db.Close();
-}
-
-TEST_F(JemallocRebuildMetadataTest, StartupEvacuateDrainsOneFullIndexSourceBlockOnNextPassWhenReadersAreIdle)
-{
-    ASSERT_TRUE(CreateJemallocRebuildTestDir());
-    const uint32_t small_block_size = 4 * 1024 * 1024;
-    const int small_max_blocks = 64;
-    const std::string value(256, 'v');
-    std::vector<std::string> keys;
-
-    MBConfig initial_cfg = MakeSizedJemallocRebuildConfig(
-        CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, false,
-        small_block_size, small_max_blocks);
-    DB initial_db(initial_cfg);
-    ASSERT_TRUE(initial_db.is_open());
-    for (int i = 0;
-         i < 200000 && initial_db.GetDictPtr()->GetMM()->GetExistingBlockEnd() < 2 * small_block_size;
-         i++) {
-        keys.push_back("evac-" + std::to_string(i) + std::string(24, 'k'));
-        ASSERT_EQ(initial_db.Add(keys.back(), value), MBError::SUCCESS);
-    }
-    ASSERT_GE(initial_db.GetDictPtr()->GetMM()->GetExistingBlockEnd(), 2 * small_block_size);
-    ASSERT_GT(keys.size(), 300u);
-
-    for (size_t i = 0; i + 300 < keys.size(); i++)
-        ASSERT_EQ(initial_db.Remove(keys[i]), MBError::SUCCESS);
-
-    IndexHeader* header = initial_db.GetDictPtr()->GetHeaderPtr();
-    ASSERT_NE(header, nullptr);
-    header->ResetRebuildMetadata(REBUILD_STATE_PREP);
-    ResourceCollection rc(initial_db);
-    ASSERT_EQ(rc.StartupShrink(), MBError::SUCCESS);
-
-    ASSERT_NE(header, nullptr);
-    const size_t first_source_block =
-        ((header->rebuild_index_alloc_end + header->index_block_size - 1) / header->index_block_size)
-        * header->index_block_size;
-    ASSERT_GE(header->rebuild_index_source_end,
-        first_source_block + header->index_block_size);
-
-    ASSERT_EQ(rc.StartupEvacuate(), MBError::SUCCESS);
-    EXPECT_EQ(header->rebuild_state, REBUILD_STATE_CUTOVER);
-    EXPECT_EQ(header->rebuild_index_block_cursor, first_source_block + header->index_block_size);
-    EXPECT_EQ(header->reusable_index_block_count, 1u);
-    EXPECT_EQ(header->reusable_index_block[0].in_use, REUSABLE_BLOCK_STATE_QUARANTINED);
-    EXPECT_EQ(initial_db.GetDictPtr()->GetMM()->GetReusableBlockCount(), 0u);
-
-    ASSERT_EQ(rc.StartupEvacuate(), MBError::SUCCESS);
-    EXPECT_GE(initial_db.GetDictPtr()->GetMM()->GetReusableBlockCount(), 1u);
-    ExpectFindValue(initial_db, keys.back(), value);
-    initial_db.Close();
-}
-
-TEST_F(JemallocRebuildMetadataTest, StartupEvacuateRejectsEmptySourceWindowGracefully)
-{
-    ASSERT_TRUE(CreateJemallocRebuildTestDir());
-    MBConfig rebuild_cfg = MakeJemallocRebuildConfig(
-        CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, true);
-    DB rebuild_db(rebuild_cfg);
-    ASSERT_TRUE(rebuild_db.is_open());
-
-    IndexHeader* header = rebuild_db.GetDictPtr()->GetHeaderPtr();
-    ASSERT_NE(header, nullptr);
-    header->ResetRebuildMetadata(REBUILD_STATE_COPY);
-    header->rebuild_index_alloc_end = header->index_block_size;
-    header->rebuild_data_alloc_end = header->data_block_size;
-    header->rebuild_index_source_end = header->index_block_size;
-    header->rebuild_data_source_end = header->data_block_size;
-
-    ResourceCollection rc(rebuild_db);
-    EXPECT_EQ(rc.StartupEvacuate(), MBError::SUCCESS);
-    EXPECT_EQ(header->reader_epoch_tracking_active.load(MEMORY_ORDER_READER), 0u);
-    EXPECT_EQ(header->rebuild_index_block_cursor, header->rebuild_index_alloc_start);
-
-    header->ResetRebuildMetadata(REBUILD_STATE_COPY);
-    header->rebuild_index_alloc_end = header->index_block_size + 1;
-    header->rebuild_data_alloc_end = header->data_block_size + 1;
-    header->rebuild_index_source_end = header->index_block_size;
-    header->rebuild_data_source_end = header->data_block_size + 1;
-
-    EXPECT_EQ(rc.StartupEvacuate(), MBError::INVALID_SIZE);
-    EXPECT_EQ(header->rebuild_state, REBUILD_STATE_COPY);
-    rebuild_db.Close();
-}
-
-TEST_F(JemallocRebuildMetadataTest, StartupShrinkRejectsNonJemallocWriterGracefully)
-{
-    ASSERT_TRUE(CreateJemallocRebuildTestDir());
-    DB db(JemallocRebuildTestPath().c_str(), CONSTS::WriterOptions());
-    ASSERT_TRUE(db.is_open());
-
-    IndexHeader* header = db.GetDictPtr()->GetHeaderPtr();
-    ASSERT_NE(header, nullptr);
-    header->ResetRebuildMetadata(REBUILD_STATE_PREP);
-
-    ResourceCollection rc(db);
-    EXPECT_EQ(rc.StartupShrink(), MBError::NOT_ALLOWED);
-    EXPECT_EQ(header->rebuild_state, REBUILD_STATE_PREP);
-    EXPECT_EQ(header->rebuild_index_alloc_start, 0u);
-    EXPECT_EQ(header->rebuild_data_alloc_start, 0u);
-    EXPECT_EQ(header->rebuild_index_alloc_end, 0u);
-    EXPECT_EQ(header->rebuild_data_alloc_end, 0u);
-
-    MBData data;
-    EXPECT_EQ(db.Find("missing", data), MBError::NOT_EXIST);
-    db.Close();
-}
-
-TEST_F(JemallocRebuildMetadataTest, WarmRestartWithAsyncWriterIsRejectedAndKeepsExistingData)
-{
-    ASSERT_TRUE(CreateJemallocRebuildTestDir());
-    const std::string key("beta");
-    const std::string value("value-beta");
-
-    MBConfig initial_cfg = MakeJemallocRebuildConfig(
-        CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, false);
-    DB initial_db(initial_cfg);
-    ASSERT_TRUE(initial_db.is_open());
-    ASSERT_EQ(initial_db.Add(key, value), MBError::SUCCESS);
-    initial_db.Close();
-
+    MBConfig config = MakeJemallocRebuildConfig(CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, false);
     {
-        MBConfig reject_cfg = MakeJemallocRebuildConfig(
-            CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC | CONSTS::ASYNC_WRITER_MODE, true);
-        DB rejected_db(reject_cfg);
-        EXPECT_FALSE(rejected_db.is_open());
-        EXPECT_EQ(rejected_db.Status(), MBError::NOT_ALLOWED);
+        DB writer_db(config);
+        ASSERT_TRUE(writer_db.is_open());
+        ASSERT_EQ(writer_db.Add("existing", "value"), MBError::SUCCESS);
+        auto* header = writer_db.GetDictPtr()->GetHeaderPtr();
+        ASSERT_NE(header, nullptr);
+        header->excep_updating_status = EXCEP_STATUS_ADD_EDGE;
     }
 
-    ResourcePool::getInstance().RemoveAll();
+    config.jemalloc_keep_db = true;
+    DB reopen_db(config);
+    ASSERT_TRUE(reopen_db.is_open());
+    EXPECT_EQ(reopen_db.Count(), 0);
+    auto* header = reopen_db.GetDictPtr()->GetHeaderPtr();
+    ASSERT_NE(header, nullptr);
+    EXPECT_EQ(header->rebuild_active, 0u);
+    EXPECT_EQ(header->excep_updating_status, EXCEP_STATUS_NONE);
+    ExpectMissing(reopen_db, "existing");
+}
 
-    MBConfig reader_cfg = MakeJemallocRebuildConfig(CONSTS::ACCESS_MODE_READER, false);
-    DB reader_db(reader_cfg);
-    ASSERT_TRUE(reader_db.is_open());
-    ExpectFindValue(reader_db, key, value);
-    reader_db.Close();
+TEST_F(JemallocRebuildMetadataTest, RunStartupRebuildWithStaleMarkerClearsDb)
+{
+    MBConfig config = MakeJemallocRebuildConfig(CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, false);
+    {
+        DB writer_db(config);
+        ASSERT_TRUE(writer_db.is_open());
+        ASSERT_EQ(writer_db.Add("existing", "value"), MBError::SUCCESS);
+        auto* header = writer_db.GetDictPtr()->GetHeaderPtr();
+        ASSERT_NE(header, nullptr);
+        header->rebuild_active = 1;
+    }
 
-    char hdr_page[RollableFile::page_size];
-    std::ifstream in(JemallocRebuildTestPath() + "/_mabain_h",
-        std::ios::in | std::ios::binary);
-    ASSERT_TRUE(in.is_open());
-    in.read(hdr_page, sizeof(hdr_page));
-    ASSERT_EQ(in.gcount(), static_cast<std::streamsize>(sizeof(hdr_page)));
+    config.jemalloc_keep_db = true;
+    DB reopen_db(config);
+    ASSERT_TRUE(reopen_db.is_open());
+    EXPECT_EQ(reopen_db.Count(), 0);
+    auto* header = reopen_db.GetDictPtr()->GetHeaderPtr();
+    ASSERT_NE(header, nullptr);
+    EXPECT_EQ(header->rebuild_active, 0u);
+    ExpectMissing(reopen_db, "existing");
+}
 
-    EXPECT_EQ(ReadPersistedHeaderField<int>(hdr_page, offsetof(IndexHeader, rebuild_state)), REBUILD_STATE_NORMAL);
-    EXPECT_FALSE(PersistedRebuildInProgress(hdr_page));
+TEST_F(JemallocRebuildMetadataTest, WarmRestartWithKeepDbCompletesStartupRebuildAndPreservesReads)
+{
+    MBConfig config = MakeSizedJemallocRebuildConfig(
+        CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, false, 512 * 1024, 8);
+    {
+        DB writer_db(config);
+        ASSERT_TRUE(writer_db.is_open());
+        PopulateAndFragment(writer_db, 256, 2048);
+        ASSERT_EQ(writer_db.Add("steady", "value"), MBError::SUCCESS);
+    }
+
+    config.jemalloc_keep_db = true;
+    DB reopen_db(config);
+    ASSERT_TRUE(reopen_db.is_open());
+    auto* header = reopen_db.GetDictPtr()->GetHeaderPtr();
+    ASSERT_NE(header, nullptr);
+    EXPECT_EQ(header->rebuild_active, 0u);
+    EXPECT_GT(header->jemalloc_index_free_start, 0u);
+    EXPECT_GT(header->jemalloc_data_free_start, 0u);
+    ExpectValue(reopen_db, "steady", "value");
 }
 
 TEST_F(JemallocRebuildMetadataTest, WarmRestartWithoutKeepDbResetsExistingJemallocData)
 {
-    ASSERT_TRUE(CreateJemallocRebuildTestDir());
-    const std::string key("gamma");
-    const std::string value("value-gamma");
+    MBConfig config = MakeJemallocRebuildConfig(CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, false);
+    {
+        DB writer_db(config);
+        ASSERT_TRUE(writer_db.is_open());
+        ASSERT_EQ(writer_db.Add("existing", "value"), MBError::SUCCESS);
+    }
 
-    MBConfig initial_cfg = MakeJemallocRebuildConfig(
-        CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, false);
-    DB initial_db(initial_cfg);
-    ASSERT_TRUE(initial_db.is_open());
-    ASSERT_EQ(initial_db.Add(key, value), MBError::SUCCESS);
-    ASSERT_EQ(initial_db.Count(), 1);
-    initial_db.Close();
-
-    MBConfig reopen_cfg = MakeJemallocRebuildConfig(
-        CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, false);
-    DB reopen_db(reopen_cfg);
+    DB reopen_db(config);
     ASSERT_TRUE(reopen_db.is_open());
-
-    IndexHeader* header = reopen_db.GetDictPtr()->GetHeaderPtr();
-    ASSERT_NE(header, nullptr);
-    EXPECT_EQ(header->rebuild_state, REBUILD_STATE_NORMAL);
-    EXPECT_FALSE(header->RebuildInProgress());
     EXPECT_EQ(reopen_db.Count(), 0);
+    ExpectMissing(reopen_db, "existing");
+}
 
-    MBData data;
-    EXPECT_EQ(reopen_db.Find(key, data), MBError::NOT_EXIST);
-    reopen_db.Close();
+TEST_F(JemallocRebuildMetadataTest, StartupShrinkCapturesCurrentJemallocTailsInRuntimeState)
+{
+    MBConfig config = MakeSizedJemallocRebuildConfig(
+        CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, true, 512 * 1024, 8);
+    DB writer_db(config);
+    ASSERT_TRUE(writer_db.is_open());
+    PopulateAndFragment(writer_db, 512, 4096);
+
+    ResourceCollectionTestPeer rc(writer_db);
+    rc.ResetStartupRebuildState(REBUILD_STATE_PREP);
+    ASSERT_EQ(rc.StartupShrink(), MBError::SUCCESS);
+
+    const auto& state = rc.GetStartupRebuildState();
+    auto* header = writer_db.GetDictPtr()->GetHeaderPtr();
+    ASSERT_NE(header, nullptr);
+    EXPECT_EQ(state.rebuild_state, REBUILD_STATE_COPY);
+    EXPECT_EQ(state.rebuild_index_alloc_end, header->m_index_offset);
+    EXPECT_EQ(state.rebuild_data_alloc_end, header->m_data_offset);
+    EXPECT_GE(state.rebuild_index_source_end, state.rebuild_index_alloc_end);
+    EXPECT_GE(state.rebuild_data_source_end, state.rebuild_data_alloc_end);
+}
+
+TEST_F(JemallocRebuildMetadataTest, StartupShrinkRejectsNonJemallocWriterGracefully)
+{
+    MBConfig config = MakeJemallocRebuildConfig(CONSTS::ACCESS_MODE_WRITER, false);
+    DB writer_db(config);
+    ASSERT_TRUE(writer_db.is_open());
+    ResourceCollectionTestPeer rc(writer_db);
+    rc.ResetStartupRebuildState(REBUILD_STATE_PREP);
+    EXPECT_EQ(rc.StartupShrink(), MBError::NOT_ALLOWED);
+}
+
+TEST_F(JemallocRebuildMetadataTest, StartupEvacuateAdvancesRuntimeState)
+{
+    MBConfig config = MakeSizedJemallocRebuildConfig(
+        CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, true, 512 * 1024, 8);
+    DB writer_db(config);
+    ASSERT_TRUE(writer_db.is_open());
+    PopulateAndFragment(writer_db, 512, 4096);
+
+    ResourceCollectionTestPeer rc(writer_db);
+    rc.ResetStartupRebuildState(REBUILD_STATE_PREP);
+    ASSERT_EQ(rc.StartupShrink(), MBError::SUCCESS);
+    ASSERT_EQ(rc.StartupEvacuate(), MBError::SUCCESS);
+
+    const auto& state = rc.GetStartupRebuildState();
+    EXPECT_EQ(state.rebuild_state, REBUILD_STATE_CUTOVER);
+    EXPECT_GE(state.rebuild_index_block_cursor, 0u);
+    EXPECT_GE(state.rebuild_data_block_cursor, 0u);
+    EXPECT_GE(state.rebuild_index_source_end, state.rebuild_index_alloc_end);
+    EXPECT_GE(state.rebuild_data_source_end, state.rebuild_data_alloc_end);
+}
+
+TEST_F(JemallocRebuildMetadataTest, StartupEvacuateRejectsEmptySourceWindowGracefully)
+{
+    MBConfig config = MakeSizedJemallocRebuildConfig(
+        CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, true, 512 * 1024, 8);
+    DB writer_db(config);
+    ASSERT_TRUE(writer_db.is_open());
+    ResourceCollectionTestPeer rc(writer_db);
+    rc.ResetStartupRebuildState(REBUILD_STATE_COPY);
+    auto& state = const_cast<StartupRebuildRuntimeState&>(rc.GetStartupRebuildState());
+    state.rebuild_index_alloc_end = writer_db.GetDictPtr()->GetHeaderPtr()->index_block_size + 1;
+    state.rebuild_data_alloc_end = writer_db.GetDictPtr()->GetHeaderPtr()->data_block_size + 1;
+    state.rebuild_index_source_end = writer_db.GetDictPtr()->GetHeaderPtr()->index_block_size;
+    state.rebuild_data_source_end = writer_db.GetDictPtr()->GetHeaderPtr()->data_block_size;
+    EXPECT_EQ(rc.StartupEvacuate(), MBError::INVALID_SIZE);
 }

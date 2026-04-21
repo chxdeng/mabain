@@ -88,6 +88,7 @@ ResourceCollection::ResourceCollection(const DB& db, int rct)
     evacuate_data_block_start = 0;
     evacuate_data_block_end = 0;
     async_writer_ptr = NULL;
+    startup_rebuild_.Clear();
 }
 
 ResourceCollection::~ResourceCollection()
@@ -224,11 +225,11 @@ int ResourceCollection::StartupShrink()
         return MBError::NOT_ALLOWED;
     if (header == NULL)
         return MBError::NOT_INITIALIZED;
-    if (header->rebuild_state != REBUILD_STATE_PREP
-        && header->rebuild_state != REBUILD_STATE_COPY) {
+    if (startup_rebuild_.rebuild_state != REBUILD_STATE_PREP
+        && startup_rebuild_.rebuild_state != REBUILD_STATE_COPY) {
         Logger::Log(LOG_LEVEL_WARN,
             "startup shrink requires PREP/COPY state, current state=%d",
-            header->rebuild_state);
+            startup_rebuild_.rebuild_state);
         return MBError::NOT_ALLOWED;
     }
 
@@ -248,11 +249,9 @@ int ResourceCollection::StartupShrink()
         return MBError::INVALID_SIZE;
     }
 
-    header->ResetRebuildMetadata(REBUILD_STATE_COPY);
-    header->rebuild_index_alloc_start = index_tail;
-    header->rebuild_data_alloc_start = data_tail;
-    header->rebuild_index_alloc_end = index_tail;
-    header->rebuild_data_alloc_end = data_tail;
+    startup_rebuild_.Reset(REBUILD_STATE_COPY);
+    startup_rebuild_.rebuild_index_alloc_end = index_tail;
+    startup_rebuild_.rebuild_data_alloc_end = data_tail;
 
     // In jemalloc mode, normal live offsets are not reliable reopen tails.
     // Reorder must use a non-overlapping workspace beyond the existing block end.
@@ -278,18 +277,16 @@ int ResourceCollection::StartupShrink()
     CollectBuffers();
     Finish();
 
-    header->rebuild_index_alloc_start = header->m_index_offset;
-    header->rebuild_index_source_end = std::max(index_block_end, header->m_index_offset);
-    header->rebuild_data_alloc_start = header->m_data_offset;
-    header->rebuild_data_source_end = std::max(data_block_end, header->m_data_offset);
-    header->rebuild_index_alloc_end = header->m_index_offset;
-    header->rebuild_data_alloc_end = header->m_data_offset;
+    startup_rebuild_.rebuild_index_source_end = std::max(index_block_end, header->m_index_offset);
+    startup_rebuild_.rebuild_data_source_end = std::max(data_block_end, header->m_data_offset);
+    startup_rebuild_.rebuild_index_alloc_end = header->m_index_offset;
+    startup_rebuild_.rebuild_data_alloc_end = header->m_data_offset;
     Logger::Log(LOG_LEVEL_INFO,
         "startup shrink completed compacted boundaries index=%llu data=%llu with source block ends index=%llu data=%llu",
-        static_cast<unsigned long long>(header->rebuild_index_alloc_end),
-        static_cast<unsigned long long>(header->rebuild_data_alloc_end),
-        static_cast<unsigned long long>(header->rebuild_index_source_end),
-        static_cast<unsigned long long>(header->rebuild_data_source_end));
+        static_cast<unsigned long long>(startup_rebuild_.rebuild_index_alloc_end),
+        static_cast<unsigned long long>(startup_rebuild_.rebuild_data_alloc_end),
+        static_cast<unsigned long long>(startup_rebuild_.rebuild_index_source_end),
+        static_cast<unsigned long long>(startup_rebuild_.rebuild_data_source_end));
     return MBError::SUCCESS;
 }
 
@@ -303,18 +300,18 @@ int ResourceCollection::StartupEvacuate()
         return MBError::NOT_ALLOWED;
     if (header == NULL)
         return MBError::NOT_INITIALIZED;
-    if (header->rebuild_state != REBUILD_STATE_COPY
-        && header->rebuild_state != REBUILD_STATE_CUTOVER) {
+    if (startup_rebuild_.rebuild_state != REBUILD_STATE_COPY
+        && startup_rebuild_.rebuild_state != REBUILD_STATE_CUTOVER) {
         Logger::Log(LOG_LEVEL_WARN,
             "startup evacuate requires COPY/CUTOVER state, current state=%d",
-            header->rebuild_state);
+            startup_rebuild_.rebuild_state);
         return MBError::NOT_ALLOWED;
     }
 
-    const size_t index_boundary = header->rebuild_index_alloc_end;
-    const size_t data_boundary = header->rebuild_data_alloc_end;
-    const size_t index_source_end = header->rebuild_index_source_end;
-    const size_t data_source_end = header->rebuild_data_source_end;
+    const size_t index_boundary = startup_rebuild_.rebuild_index_alloc_end;
+    const size_t data_boundary = startup_rebuild_.rebuild_data_alloc_end;
+    const size_t index_source_end = startup_rebuild_.rebuild_index_source_end;
+    const size_t data_source_end = startup_rebuild_.rebuild_data_source_end;
     if (index_boundary == 0 || data_boundary == 0
         || index_source_end == 0 || data_source_end == 0)
         return MBError::NOT_INITIALIZED;
@@ -329,7 +326,7 @@ int ResourceCollection::StartupEvacuate()
         return MBError::INVALID_SIZE;
 
     int rval = MBError::SUCCESS;
-    if (header->rebuild_state == REBUILD_STATE_COPY) {
+    if (startup_rebuild_.rebuild_state == REBUILD_STATE_COPY) {
         rval = dmm->ResetJemalloc();
         if (rval != MBError::SUCCESS)
             return rval;
@@ -343,63 +340,61 @@ int ResourceCollection::StartupEvacuate()
         if (rval != MBError::SUCCESS)
             return rval;
 
-        header->rebuild_index_alloc_start = index_source_start;
-        header->rebuild_data_alloc_start = data_source_start;
-        header->rebuild_index_block_cursor = index_source_start;
-        header->rebuild_data_block_cursor = data_source_start;
-        header->reusable_index_block_count = 0;
-        header->reusable_data_block_count = 0;
+        startup_rebuild_.rebuild_index_block_cursor = index_source_start;
+        startup_rebuild_.rebuild_data_block_cursor = data_source_start;
+        startup_rebuild_.reusable_index_block_count = 0;
+        startup_rebuild_.reusable_data_block_count = 0;
         for (int i = 0; i < MB_MAX_REUSABLE_BLOCKS; i++) {
-            header->reusable_index_block[i].Clear();
-            header->reusable_data_block[i].Clear();
+            startup_rebuild_.reusable_index_block[i].Clear();
+            startup_rebuild_.reusable_data_block[i].Clear();
         }
         header->reader_epoch.store(1, MEMORY_ORDER_WRITER);
-        header->rebuild_state = REBUILD_STATE_CUTOVER;
+        startup_rebuild_.rebuild_state = REBUILD_STATE_CUTOVER;
     }
 
     const bool tracking_needed_before =
-        (header->rebuild_index_block_cursor < header->rebuild_index_source_end)
-        || (header->rebuild_data_block_cursor < header->rebuild_data_source_end)
-        || HasPendingReusableBlocks(header->reusable_index_block,
-            header->reusable_index_block_count)
-        || HasPendingReusableBlocks(header->reusable_data_block,
-            header->reusable_data_block_count);
+        (startup_rebuild_.rebuild_index_block_cursor < startup_rebuild_.rebuild_index_source_end)
+        || (startup_rebuild_.rebuild_data_block_cursor < startup_rebuild_.rebuild_data_source_end)
+        || HasPendingReusableBlocks(startup_rebuild_.reusable_index_block,
+            startup_rebuild_.reusable_index_block_count)
+        || HasPendingReusableBlocks(startup_rebuild_.reusable_data_block,
+            startup_rebuild_.reusable_data_block_count);
     header->reader_epoch_tracking_active.store(tracking_needed_before ? 1 : 0, MEMORY_ORDER_WRITER);
 
     const bool has_quarantined_blocks =
-        HasPendingReusableBlocks(header->reusable_index_block,
-            header->reusable_index_block_count)
-        || HasPendingReusableBlocks(header->reusable_data_block,
-            header->reusable_data_block_count);
+        HasPendingReusableBlocks(startup_rebuild_.reusable_index_block,
+            startup_rebuild_.reusable_index_block_count)
+        || HasPendingReusableBlocks(startup_rebuild_.reusable_data_block,
+            startup_rebuild_.reusable_data_block_count);
     if (has_quarantined_blocks) {
         rval = db_ref.AcquireRebuildBarrierExclusive();
         if (rval != MBError::SUCCESS)
             return rval;
 
-        rval = ReleaseReusableBlocks(header->reusable_index_block,
-            header->reusable_index_block_count);
+        rval = ReleaseReusableBlocks(startup_rebuild_.reusable_index_block,
+            startup_rebuild_.reusable_index_block_count);
         if (rval == MBError::SUCCESS) {
-            rval = ReleaseReusableBlocks(header->reusable_data_block,
-                header->reusable_data_block_count);
+            rval = ReleaseReusableBlocks(startup_rebuild_.reusable_data_block,
+                startup_rebuild_.reusable_data_block_count);
         }
         if (rval == MBError::SUCCESS) {
-            rval = DrainReusableBlocks(header->reusable_index_block,
-                header->reusable_index_block_count, dmm);
+            rval = DrainReusableBlocks(startup_rebuild_.reusable_index_block,
+                startup_rebuild_.reusable_index_block_count, dmm);
         }
         if (rval == MBError::SUCCESS) {
-            rval = DrainReusableBlocks(header->reusable_data_block,
-                header->reusable_data_block_count, dict);
+            rval = DrainReusableBlocks(startup_rebuild_.reusable_data_block,
+                startup_rebuild_.reusable_data_block_count, dict);
         }
         db_ref.ReleaseRebuildBarrierExclusive();
         if (rval != MBError::SUCCESS)
             return rval;
     } else {
-        rval = DrainReusableBlocks(header->reusable_index_block,
-            header->reusable_index_block_count, dmm);
+        rval = DrainReusableBlocks(startup_rebuild_.reusable_index_block,
+            startup_rebuild_.reusable_index_block_count, dmm);
         if (rval != MBError::SUCCESS)
             return rval;
-        rval = DrainReusableBlocks(header->reusable_data_block,
-            header->reusable_data_block_count, dict);
+        rval = DrainReusableBlocks(startup_rebuild_.reusable_data_block,
+            startup_rebuild_.reusable_data_block_count, dict);
         if (rval != MBError::SUCCESS)
             return rval;
     }
@@ -412,15 +407,42 @@ int ResourceCollection::StartupEvacuate()
         return rval;
 
     const bool tracking_needed =
-        (header->rebuild_index_block_cursor < header->rebuild_index_source_end)
-        || (header->rebuild_data_block_cursor < header->rebuild_data_source_end)
-        || HasPendingReusableBlocks(header->reusable_index_block,
-            header->reusable_index_block_count)
-        || HasPendingReusableBlocks(header->reusable_data_block,
-            header->reusable_data_block_count);
+        (startup_rebuild_.rebuild_index_block_cursor < startup_rebuild_.rebuild_index_source_end)
+        || (startup_rebuild_.rebuild_data_block_cursor < startup_rebuild_.rebuild_data_source_end)
+        || HasPendingReusableBlocks(startup_rebuild_.reusable_index_block,
+            startup_rebuild_.reusable_index_block_count)
+        || HasPendingReusableBlocks(startup_rebuild_.reusable_data_block,
+            startup_rebuild_.reusable_data_block_count);
     header->reader_epoch_tracking_active.store(tracking_needed ? 1 : 0, MEMORY_ORDER_WRITER);
 
     return MBError::SUCCESS;
+}
+
+void ResourceCollection::ResetStartupRebuildState(int state)
+{
+    startup_rebuild_.Reset(state);
+}
+
+bool ResourceCollection::StartupRebuildComplete() const
+{
+    return startup_rebuild_.rebuild_index_block_cursor >= startup_rebuild_.rebuild_index_source_end
+        && startup_rebuild_.rebuild_data_block_cursor >= startup_rebuild_.rebuild_data_source_end
+        && startup_rebuild_.reusable_index_block_count == 0
+        && startup_rebuild_.reusable_data_block_count == 0;
+}
+
+void ResourceCollection::GetStartupRebuildProgress(size_t& index_cursor, size_t& data_cursor,
+    uint32_t& index_reusable, uint32_t& data_reusable) const
+{
+    index_cursor = startup_rebuild_.rebuild_index_block_cursor;
+    data_cursor = startup_rebuild_.rebuild_data_block_cursor;
+    index_reusable = startup_rebuild_.reusable_index_block_count;
+    data_reusable = startup_rebuild_.reusable_data_block_count;
+}
+
+const StartupRebuildRuntimeState& ResourceCollection::GetStartupRebuildState() const
+{
+    return startup_rebuild_;
 }
 
 bool ResourceCollection::MoveIndexBufferEvacuate(size_t& offset_src, int size)
@@ -565,25 +587,25 @@ int ResourceCollection::DrainReusableBlocks(ReusableBlockEntry* entries, uint32_
 
 int ResourceCollection::EvacuateOneIndexBlock()
 {
-    if (header->rebuild_index_block_cursor >= header->rebuild_index_source_end)
+    if (startup_rebuild_.rebuild_index_block_cursor >= startup_rebuild_.rebuild_index_source_end)
         return MBError::RC_SKIPPED;
 
-    evacuate_index_block_start = header->rebuild_index_block_cursor;
+    evacuate_index_block_start = startup_rebuild_.rebuild_index_block_cursor;
     evacuate_index_block_end = evacuate_index_block_start + header->index_block_size;
-    if (evacuate_index_block_end > header->rebuild_index_source_end)
+    if (evacuate_index_block_end > startup_rebuild_.rebuild_index_source_end)
         return MBError::RC_SKIPPED;
 
     TraverseDB(RESOURCE_COLLECTION_PHASE_EVACUATE_INDEX);
 
     uint64_t retire_epoch = header->reader_epoch.fetch_add(1, MEMORY_ORDER_WRITER);
-    int rval = QueueReusableBlock(header->reusable_index_block,
-        header->reusable_index_block_count,
+    int rval = QueueReusableBlock(startup_rebuild_.reusable_index_block,
+        startup_rebuild_.reusable_index_block_count,
         evacuate_index_block_start / header->index_block_size,
         retire_epoch);
     if (rval != MBError::SUCCESS)
         return rval;
 
-    header->rebuild_index_block_cursor = evacuate_index_block_end;
+    startup_rebuild_.rebuild_index_block_cursor = evacuate_index_block_end;
     evacuate_index_block_start = 0;
     evacuate_index_block_end = 0;
     return MBError::SUCCESS;
@@ -591,25 +613,25 @@ int ResourceCollection::EvacuateOneIndexBlock()
 
 int ResourceCollection::EvacuateOneDataBlock()
 {
-    if (header->rebuild_data_block_cursor >= header->rebuild_data_source_end)
+    if (startup_rebuild_.rebuild_data_block_cursor >= startup_rebuild_.rebuild_data_source_end)
         return MBError::RC_SKIPPED;
 
-    evacuate_data_block_start = header->rebuild_data_block_cursor;
+    evacuate_data_block_start = startup_rebuild_.rebuild_data_block_cursor;
     evacuate_data_block_end = evacuate_data_block_start + header->data_block_size;
-    if (evacuate_data_block_end > header->rebuild_data_source_end)
+    if (evacuate_data_block_end > startup_rebuild_.rebuild_data_source_end)
         return MBError::RC_SKIPPED;
 
     TraverseDB(RESOURCE_COLLECTION_PHASE_EVACUATE_DATA);
 
     uint64_t retire_epoch = header->reader_epoch.fetch_add(1, MEMORY_ORDER_WRITER);
-    int rval = QueueReusableBlock(header->reusable_data_block,
-        header->reusable_data_block_count,
+    int rval = QueueReusableBlock(startup_rebuild_.reusable_data_block,
+        startup_rebuild_.reusable_data_block_count,
         evacuate_data_block_start / header->data_block_size,
         retire_epoch);
     if (rval != MBError::SUCCESS)
         return rval;
 
-    header->rebuild_data_block_cursor = evacuate_data_block_end;
+    startup_rebuild_.rebuild_data_block_cursor = evacuate_data_block_end;
     evacuate_data_block_start = 0;
     evacuate_data_block_end = 0;
     return MBError::SUCCESS;

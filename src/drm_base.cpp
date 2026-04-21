@@ -33,24 +33,6 @@ bool HeaderVersionMatchesCurrent(const uint16_t hdr_ver[4])
         && hdr_ver[2] == version[2];
 }
 
-const char* RebuildStateToString(int state)
-{
-    switch (state) {
-    case REBUILD_STATE_NORMAL:
-        return "NORMAL";
-    case REBUILD_STATE_PREP:
-        return "REBUILD_PREP";
-    case REBUILD_STATE_COPY:
-        return "REBUILD_COPY";
-    case REBUILD_STATE_CUTOVER:
-        return "REBUILD_CUTOVER";
-    case REBUILD_STATE_POST:
-        return "REBUILD_POST";
-    default:
-        return "UNKNOWN";
-    }
-}
-
 } // namespace
 
 void DRMBase::ReadHeaderVersion(const std::string& header_path, uint16_t ver[4])
@@ -158,23 +140,10 @@ void DRMBase::PrintHeader(std::ostream& out_stream) const
     out_stream << "max data offset before rc: " << header->rc_m_data_off_pre << std::endl;
     out_stream << "rc root offset: " << header->rc_root_offset << std::endl;
     out_stream << "rc count: " << header->rc_count << std::endl;
-    out_stream << "rebuild state: " << RebuildStateToString(header->rebuild_state)
-               << " (" << header->rebuild_state << ")" << std::endl;
-    out_stream << "rebuild root offset: " << header->rebuild_root_offset << std::endl;
-    out_stream << "rebuild index alloc start: " << header->rebuild_index_alloc_start << std::endl;
-    out_stream << "rebuild data alloc start: " << header->rebuild_data_alloc_start << std::endl;
-    out_stream << "rebuild cutover index: " << header->rebuild_cutover_index << std::endl;
-    out_stream << "rebuild index alloc end: " << header->rebuild_index_alloc_end << std::endl;
-    out_stream << "rebuild data alloc end: " << header->rebuild_data_alloc_end << std::endl;
-    out_stream << "rebuild index source end: " << header->rebuild_index_source_end << std::endl;
-    out_stream << "rebuild data source end: " << header->rebuild_data_source_end << std::endl;
-    out_stream << "rebuild index block cursor: " << header->rebuild_index_block_cursor << std::endl;
-    out_stream << "rebuild data block cursor: " << header->rebuild_data_block_cursor << std::endl;
+    out_stream << "rebuild active: " << header->rebuild_active << std::endl;
     out_stream << "reader epoch tracking active: " << header->reader_epoch_tracking_active << std::endl;
     out_stream << "reader epoch slot count: " << header->reader_epoch_slot_count << std::endl;
     out_stream << "reader epoch: " << header->reader_epoch << std::endl;
-    out_stream << "reusable index block count: " << header->reusable_index_block_count << std::endl;
-    out_stream << "reusable data block count: " << header->reusable_data_block_count << std::endl;
     out_stream << "shared memory queue size: " << header->async_queue_size << std::endl;
     out_stream << "shared memory queue index: " << header->queue_index << std::endl;
     out_stream << "shared memory writer index: " << header->writer_index << std::endl;

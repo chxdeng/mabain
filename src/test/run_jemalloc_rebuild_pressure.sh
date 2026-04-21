@@ -93,6 +93,11 @@ reader_pids=()
 
 print_reader_metrics
 
+echo "== full_cycle insert verify =="
+if ! "$BIN" full_cycle_insert_verify; then
+    overall_rc=1
+fi
+
 echo "== full_cycle verify reuse =="
 if ! "$BIN" full_cycle_verify_reuse; then
     overall_rc=1

@@ -36,6 +36,42 @@ namespace mabain {
 
 class ResourceCollectionTestPeer;
 
+typedef struct _StartupRebuildRuntimeState {
+    int rebuild_state;
+    size_t rebuild_index_alloc_end;
+    size_t rebuild_data_alloc_end;
+    size_t rebuild_index_source_end;
+    size_t rebuild_data_source_end;
+    size_t rebuild_index_block_cursor;
+    size_t rebuild_data_block_cursor;
+    uint32_t reusable_index_block_count;
+    uint32_t reusable_data_block_count;
+    ReusableBlockEntry reusable_index_block[MB_MAX_REUSABLE_BLOCKS];
+    ReusableBlockEntry reusable_data_block[MB_MAX_REUSABLE_BLOCKS];
+
+    void Reset(int state)
+    {
+        rebuild_state = state;
+        rebuild_index_alloc_end = 0;
+        rebuild_data_alloc_end = 0;
+        rebuild_index_source_end = 0;
+        rebuild_data_source_end = 0;
+        rebuild_index_block_cursor = 0;
+        rebuild_data_block_cursor = 0;
+        reusable_index_block_count = 0;
+        reusable_data_block_count = 0;
+        for (int i = 0; i < MB_MAX_REUSABLE_BLOCKS; i++) {
+            reusable_index_block[i].Clear();
+            reusable_data_block[i].Clear();
+        }
+    }
+
+    void Clear()
+    {
+        Reset(REBUILD_STATE_NORMAL);
+    }
+} StartupRebuildRuntimeState;
+
 // A garbage collector class
 class ResourceCollection : public DBTraverseBase {
 public:
@@ -54,6 +90,11 @@ public:
     // Startup-only allocator handoff after dense shrink.
     // Returns MBError and keeps the live root unchanged.
     int StartupEvacuate();
+    void ResetStartupRebuildState(int state);
+    bool StartupRebuildComplete() const;
+    void GetStartupRebuildProgress(size_t& index_cursor, size_t& data_cursor,
+        uint32_t& index_reusable, uint32_t& data_reusable) const;
+    const StartupRebuildRuntimeState& GetStartupRebuildState() const;
 
     // This function should be called when writer starts up.
     int ExceptionRecovery();
@@ -108,6 +149,7 @@ private:
     size_t evacuate_index_block_end;
     size_t evacuate_data_block_start;
     size_t evacuate_data_block_end;
+    StartupRebuildRuntimeState startup_rebuild_;
 };
 
 }

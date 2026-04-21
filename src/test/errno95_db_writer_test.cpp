@@ -1,5 +1,6 @@
 #include <cstring>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -13,7 +14,8 @@ using namespace mabain;
 int main(int argc, char* argv[])
 {
     const int64_t mb = 1024LL * 1024;
-    const char* db_dir = (argc > 1) ? argv[1] : "/tmp/mabain_errno95_db";
+    static const char kDefaultDbDir[] = "/tmp/mabain_errno95_db";
+    const char* db_dir = (argc > 1) ? argv[1] : kDefaultDbDir;
     int num_entries = (argc > 2) ? atoi(argv[2]) : 128;
     if (num_entries <= 0)
         num_entries = 1;
@@ -37,6 +39,15 @@ int main(int argc, char* argv[])
         block_index_mb = 64;
     if (block_data_mb > 64)
         block_data_mb = 64;
+    try {
+        if (argc <= 1)
+            std::filesystem::remove_all(db_dir);
+        std::filesystem::create_directories(db_dir);
+    } catch (const std::filesystem::filesystem_error& ex) {
+        std::cerr << "Failed to prepare db dir " << db_dir << ": " << ex.what() << std::endl;
+        return 1;
+    }
+
 
     DB::SetLogFile(std::string(db_dir) + "/mabain.log");
     {

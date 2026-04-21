@@ -303,7 +303,7 @@ int main(int argc, char* argv[])
     clean_db_dir();
     SetTestStatus(false);
 
-    std::string test_list_file = "./test_list";
+    std::string test_list_file = "./jemalloc_test_list";
     if (argc > 2) {
         test_list_file = argv[2];
     }
