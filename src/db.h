@@ -258,6 +258,8 @@ private:
     uint64_t process_start_time;
     mutable uint64_t reader_guard_fast_slot_count;
     mutable uint64_t reader_guard_barrier_fallback_count;
+    bool startup_rebuild_prepared = false;
+    bool startup_rebuild_reset_only = false;
 
     // db lock
     MBLock lock;

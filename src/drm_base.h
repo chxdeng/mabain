@@ -189,18 +189,10 @@ typedef struct _IndexHeader {
     std::atomic<size_t> rc_root_offset;
     int64_t rc_count;
 
-    // startup rebuild metadata (jemalloc keep-db path)
-    int rebuild_state;
-    size_t rebuild_root_offset;
-    size_t rebuild_index_alloc_start;
-    size_t rebuild_data_alloc_start;
-    int rebuild_cutover_index;
-    size_t rebuild_index_alloc_end;
-    size_t rebuild_data_alloc_end;
-    size_t rebuild_index_source_end;
-    size_t rebuild_data_source_end;
-    size_t rebuild_index_block_cursor;
-    size_t rebuild_data_block_cursor;
+    // Best-effort startup rebuild marker for jemalloc keep-db mode.
+    // If set on open, the previous rebuild did not finish and the DB is reset
+    // to a fresh state instead of attempting resume.
+    uint32_t rebuild_active;
 
     // Offsets below these boundaries were compacted into place by startup rebuild
     // and must not be returned to the current jemalloc arena via dallocx().
@@ -212,12 +204,6 @@ typedef struct _IndexHeader {
     uint32_t reader_epoch_slot_count;
     std::atomic<uint64_t> reader_epoch;
     ReaderEpochSlot reader_epoch_slot[MB_MAX_READER_EPOCH_SLOT];
-
-    // Quarantined whole blocks that can later become reusable.
-    uint32_t reusable_index_block_count;
-    uint32_t reusable_data_block_count;
-    ReusableBlockEntry reusable_index_block[MB_MAX_REUSABLE_BLOCKS];
-    ReusableBlockEntry reusable_data_block[MB_MAX_REUSABLE_BLOCKS];
 
     // multi-process async queue
     int async_queue_size;
@@ -233,30 +219,14 @@ typedef struct _IndexHeader {
     uint32_t pfx_cap3;      // number of slots in 3-byte table
     uint32_t pfx_cap4;      // number of slots in 4-byte table
 
-    void ResetRebuildMetadata(int state)
+    void SetRebuildActive()
     {
-        rebuild_state = state;
-        rebuild_root_offset = 0;
-        rebuild_index_alloc_start = 0;
-        rebuild_data_alloc_start = 0;
-        rebuild_cutover_index = 0;
-        rebuild_index_alloc_end = 0;
-        rebuild_data_alloc_end = 0;
-        rebuild_index_source_end = 0;
-        rebuild_data_source_end = 0;
-        rebuild_index_block_cursor = 0;
-        rebuild_data_block_cursor = 0;
-        reusable_index_block_count = 0;
-        reusable_data_block_count = 0;
-        for (int i = 0; i < MB_MAX_REUSABLE_BLOCKS; i++) {
-            reusable_index_block[i].Clear();
-            reusable_data_block[i].Clear();
-        }
+        rebuild_active = 1u;
     }
 
     void ClearRebuildMetadata()
     {
-        ResetRebuildMetadata(REBUILD_STATE_NORMAL);
+        rebuild_active = 0;
     }
 
     void ResetReaderEpochState()
@@ -270,7 +240,7 @@ typedef struct _IndexHeader {
 
     bool RebuildInProgress() const
     {
-        return rebuild_state != REBUILD_STATE_NORMAL;
+        return rebuild_active != 0;
     }
 } IndexHeader;
 

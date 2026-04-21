@@ -571,6 +571,9 @@ bool DB::StartupRebuildRequested(const MBConfig& config, bool init_header) const
 
 int DB::PrepareStartupRebuild(const MBConfig& config, bool init_header)
 {
+    startup_rebuild_prepared = false;
+    startup_rebuild_reset_only = false;
+
     if (!StartupRebuildRequested(config, init_header))
         return MBError::SUCCESS;
 
@@ -584,51 +587,66 @@ int DB::PrepareStartupRebuild(const MBConfig& config, bool init_header)
     if (header == NULL)
         return MBError::NOT_INITIALIZED;
 
-    if (!header->RebuildInProgress()) {
-        header->ResetRebuildMetadata(REBUILD_STATE_PREP);
-        Logger::Log(LOG_LEVEL_INFO, "jemalloc startup rebuild entering PREP for %s",
+    if (header->rebuild_active != 0) {
+        startup_rebuild_reset_only = true;
+        Logger::Log(LOG_LEVEL_WARN,
+            "stale startup rebuild marker detected for %s; next startup will clear DB to fresh state",
             mb_dir.c_str());
-    } else {
-        Logger::Log(LOG_LEVEL_INFO, "jemalloc startup rebuild resuming state %u for %s",
-            header->rebuild_state, mb_dir.c_str());
+        return MBError::SUCCESS;
     }
 
+    if (header->excep_updating_status != EXCEP_STATUS_NONE) {
+        startup_rebuild_reset_only = true;
+        Logger::Log(LOG_LEVEL_WARN,
+            "jemalloc startup found exception update status %d for %s; next startup will clear DB to fresh state without recovery",
+            header->excep_updating_status, mb_dir.c_str());
+        return MBError::SUCCESS;
+    }
+
+    startup_rebuild_prepared = true;
+    Logger::Log(LOG_LEVEL_INFO, "jemalloc startup rebuild requested for %s",
+        mb_dir.c_str());
     return MBError::SUCCESS;
 }
 
 bool DB::StartupRebuildMetadataReady() const
 {
     IndexHeader* header = dict == NULL ? NULL : dict->GetHeaderPtr();
-    if (header == NULL)
-        return false;
-    if (header->rebuild_state == REBUILD_STATE_PREP)
-        return false;
-    if (header->rebuild_state != REBUILD_STATE_COPY
-        && header->rebuild_state != REBUILD_STATE_CUTOVER)
-        return false;
-    if (header->rebuild_index_alloc_end == 0 || header->rebuild_data_alloc_end == 0
-        || header->rebuild_index_source_end == 0 || header->rebuild_data_source_end == 0)
-        return false;
-    if (header->rebuild_index_source_end < header->rebuild_index_alloc_end
-        || header->rebuild_data_source_end < header->rebuild_data_alloc_end)
-        return false;
-    return true;
+    return header != NULL && header->rebuild_active != 0;
 }
 
 bool DB::StartupRebuildComplete() const
 {
     IndexHeader* header = dict == NULL ? NULL : dict->GetHeaderPtr();
-    if (header == NULL || !StartupRebuildMetadataReady())
-        return false;
-
-    return header->rebuild_index_block_cursor >= header->rebuild_index_source_end
-        && header->rebuild_data_block_cursor >= header->rebuild_data_source_end
-        && header->reusable_index_block_count == 0
-        && header->reusable_data_block_count == 0;
+    return header != NULL && header->rebuild_active == 0;
 }
 
 int DB::RunStartupRebuild()
 {
+    auto reset_to_fresh_state = [&]() -> int {
+        startup_rebuild_prepared = false;
+        startup_rebuild_reset_only = false;
+        if (dict == NULL)
+            return MBError::NOT_INITIALIZED;
+        int rval = dict->RemoveAll();
+        if (rval != MBError::SUCCESS)
+            return rval;
+        IndexHeader* reset_header = dict->GetHeaderPtr();
+        if (reset_header != NULL) {
+            reset_header->ClearRebuildMetadata();
+            reset_header->ResetReaderEpochState();
+            reset_header->pending_index_buff_size = 0;
+            reset_header->pending_data_buff_size = 0;
+            reset_header->jemalloc_index_free_start = 0;
+            reset_header->jemalloc_data_free_start = 0;
+            reset_header->excep_updating_status = EXCEP_STATUS_NONE;
+            reset_header->excep_offset = 0;
+            reset_header->excep_lf_offset = 0;
+            memset(reset_header->excep_buff, 0, sizeof(reset_header->excep_buff));
+        }
+        return MBError::SUCCESS;
+    };
+
     try {
         if (!(options & CONSTS::ACCESS_MODE_WRITER)
             || !(options & CONSTS::OPTION_JEMALLOC))
@@ -638,54 +656,57 @@ int DB::RunStartupRebuild()
         IndexHeader* header = dict->GetHeaderPtr();
         if (header == NULL)
             return MBError::NOT_INITIALIZED;
-        if (!header->RebuildInProgress())
+
+        if (startup_rebuild_reset_only)
+            return reset_to_fresh_state();
+        if (!startup_rebuild_prepared)
             return MBError::SUCCESS;
 
-        if (header->excep_updating_status != EXCEP_STATUS_NONE) {
-            int rval = dict->ExceptionRecovery();
-            if (rval != MBError::SUCCESS)
-                return rval;
-            header->excep_lf_offset = 0;
-            header->excep_offset = 0;
-        }
+        header->SetRebuildActive();
+        header->ResetReaderEpochState();
 
         ResourceCollection rc(*this);
-        if (header->rebuild_state == REBUILD_STATE_PREP) {
-            int rval = rc.StartupShrink();
-            if (rval != MBError::SUCCESS)
-                return rval;
-        } else if (!StartupRebuildMetadataReady()) {
-            Logger::Log(LOG_LEVEL_ERROR,
-                "startup rebuild metadata incomplete for resumed state %u", header->rebuild_state);
-            return MBError::INVALID_SIZE;
+        rc.ResetStartupRebuildState(REBUILD_STATE_PREP);
+        int rval = rc.StartupShrink();
+        if (rval != MBError::SUCCESS) {
+            Logger::Log(LOG_LEVEL_WARN, "startup rebuild shrink failed for %s: %s",
+                mb_dir.c_str(), MBError::get_error_str(rval));
+            return reset_to_fresh_state();
         }
 
         uint32_t stalled_retry_count = 0;
         const uint32_t startup_rebuild_stall_retry_limit = 60000;
-        while (!StartupRebuildComplete()) {
-            const size_t index_cursor = header->rebuild_index_block_cursor;
-            const size_t data_cursor = header->rebuild_data_block_cursor;
-            const uint32_t index_reusable = header->reusable_index_block_count;
-            const uint32_t data_reusable = header->reusable_data_block_count;
+        while (!rc.StartupRebuildComplete()) {
+            size_t index_cursor = 0;
+            size_t data_cursor = 0;
+            uint32_t index_reusable = 0;
+            uint32_t data_reusable = 0;
+            rc.GetStartupRebuildProgress(index_cursor, data_cursor,
+                index_reusable, data_reusable);
 
-            int rval = rc.StartupEvacuate();
-            if (rval != MBError::SUCCESS)
-                return rval;
-            if (!StartupRebuildComplete()
-                && index_cursor == header->rebuild_index_block_cursor
-                && data_cursor == header->rebuild_data_block_cursor
-                && index_reusable == header->reusable_index_block_count
-                && data_reusable == header->reusable_data_block_count) {
+            rval = rc.StartupEvacuate();
+            if (rval != MBError::SUCCESS) {
+                Logger::Log(LOG_LEVEL_WARN, "startup rebuild evacuate failed for %s: %s",
+                    mb_dir.c_str(), MBError::get_error_str(rval));
+                return reset_to_fresh_state();
+            }
+
+            size_t next_index_cursor = 0;
+            size_t next_data_cursor = 0;
+            uint32_t next_index_reusable = 0;
+            uint32_t next_data_reusable = 0;
+            rc.GetStartupRebuildProgress(next_index_cursor, next_data_cursor,
+                next_index_reusable, next_data_reusable);
+            if (!rc.StartupRebuildComplete()
+                && index_cursor == next_index_cursor
+                && data_cursor == next_data_cursor
+                && index_reusable == next_index_reusable
+                && data_reusable == next_data_reusable) {
                 if (++stalled_retry_count > startup_rebuild_stall_retry_limit) {
-                    Logger::Log(LOG_LEVEL_ERROR,
-                        "startup rebuild timed out waiting for progress index_cursor=%llu/%llu data_cursor=%llu/%llu reusable=%u/%u",
-                        static_cast<unsigned long long>(header->rebuild_index_block_cursor),
-                        static_cast<unsigned long long>(header->rebuild_index_source_end),
-                        static_cast<unsigned long long>(header->rebuild_data_block_cursor),
-                        static_cast<unsigned long long>(header->rebuild_data_source_end),
-                        header->reusable_index_block_count,
-                        header->reusable_data_block_count);
-                    return MBError::TIMEOUT;
+                    Logger::Log(LOG_LEVEL_WARN,
+                        "startup rebuild timed out waiting for progress for %s; clearing DB to fresh state",
+                        mb_dir.c_str());
+                    return reset_to_fresh_state();
                 }
                 usleep(1000);
             } else {
@@ -696,18 +717,21 @@ int DB::RunStartupRebuild()
         header->pending_index_buff_size = 0;
         header->pending_data_buff_size = 0;
         header->reader_epoch_tracking_active.store(0, MEMORY_ORDER_WRITER);
-        header->jemalloc_index_free_start = header->rebuild_index_alloc_end;
-        header->jemalloc_data_free_start = header->rebuild_data_alloc_end;
+        header->jemalloc_index_free_start = rc.GetStartupRebuildState().rebuild_index_alloc_end;
+        header->jemalloc_data_free_start = rc.GetStartupRebuildState().rebuild_data_alloc_end;
         header->ClearRebuildMetadata();
+        startup_rebuild_prepared = false;
+        startup_rebuild_reset_only = false;
         Logger::Log(LOG_LEVEL_INFO, "jemalloc startup rebuild completed for %s", mb_dir.c_str());
         return MBError::SUCCESS;
     } catch (int err) {
-        Logger::Log(LOG_LEVEL_ERROR, "startup rebuild failed with exception: %s",
-            MBError::get_error_str(err));
-        return err;
+        Logger::Log(LOG_LEVEL_WARN, "startup rebuild failed with exception for %s: %s; clearing DB to fresh state",
+            mb_dir.c_str(), MBError::get_error_str(err));
+        return reset_to_fresh_state();
     } catch (...) {
-        Logger::Log(LOG_LEVEL_ERROR, "startup rebuild failed with unknown exception");
-        return MBError::UNKNOWN_ERROR;
+        Logger::Log(LOG_LEVEL_WARN, "startup rebuild failed with unknown exception for %s; clearing DB to fresh state",
+            mb_dir.c_str());
+        return reset_to_fresh_state();
     }
 }
 
