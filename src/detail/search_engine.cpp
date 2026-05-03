@@ -134,6 +134,7 @@ namespace {
         int rval;
         EdgePtrs& edge_ptrs = data.edge_ptrs;
         EdgePtrs bound_edge_ptrs;
+        ReaderLFGuard lf_guard(dict.lfree, data);
         bound_edge_ptrs.curr_edge_index = -1;
 
         BoundSearchState bound_state {
@@ -146,12 +147,17 @@ namespace {
         };
 
         int root_key = key[0];
-        rval = lowerBoundCore(key, len, data, bound_key, bound_edge_ptrs, bound_state, root_key);
+        rval = lowerBoundCore(key, len, data, bound_key, bound_edge_ptrs, bound_state, root_key, lf_guard);
 
         if (rval == MBError::NOT_EXIST) {
+            if (bound_state.has_candidate_parent) {
+                int lf_result = lf_guard.stop(bound_state.candidate_parent_offset);
+                if (lf_result != MBError::SUCCESS)
+                    return lf_result;
+            }
             if (bound_state.use_curr_edge) {
                 data.options &= ~CONSTS::OPTION_INTERNAL_NODE_BOUND;
-                rval = readLowerBound(edge_ptrs, data, bound_key, -1);
+                rval = readLowerBound(edge_ptrs, data, bound_key, -1, lf_guard);
             } else {
                 if (bound_key != nullptr) {
                     bound_key->append((char*)key, bound_state.le_match_len);
@@ -161,9 +167,9 @@ namespace {
                 }
                 if (bound_edge_ptrs.curr_edge_index >= 0) {
                     InitTempEdgePtrs(bound_edge_ptrs);
-                    rval = readLowerBound(bound_edge_ptrs, data, bound_key, bound_state.le_edge_key);
+                    rval = readLowerBound(bound_edge_ptrs, data, bound_key, bound_state.le_edge_key, lf_guard);
                 } else {
-                    rval = readBoundFromRootEdge(edge_ptrs, data, root_key, bound_key);
+                    rval = readBoundFromRootEdge(edge_ptrs, data, root_key, bound_key, lf_guard);
                 }
             }
         } else if (rval == MBError::SUCCESS && bound_key) {
@@ -174,10 +180,9 @@ namespace {
     }
 
     int SearchEngine::lowerBoundCore(const uint8_t* key, int len, MBData& data, std::string* bound_key,
-        EdgePtrs& bound_edge_ptrs, BoundSearchState& bound_state, int root_key) const
+        EdgePtrs& bound_edge_ptrs, BoundSearchState& bound_state, int root_key, ReaderLFGuard& lf_guard) const
     {
         EdgePtrs& edge_ptrs = data.edge_ptrs;
-        ReaderLFGuard lf_guard(dict.lfree, data);
 
         // Always operate on the main root (no rc_root_offset diversion)
         int ret = dict.mm.GetRootEdge(0, root_key, edge_ptrs);
@@ -185,7 +190,7 @@ namespace {
             return ret;
         if (edge_ptrs.len_ptr[0] == 0) {
             size_t root_edge_offset = edge_ptrs.offset;
-            ret = readBoundFromRootEdge(edge_ptrs, data, root_key, bound_key);
+            ret = readBoundFromRootEdge(edge_ptrs, data, root_key, bound_key, lf_guard);
             return lf_guard.stopOrReturn(root_edge_offset, ret);
         }
 
@@ -216,7 +221,7 @@ namespace {
                         bound_key->append(reinterpret_cast<const char*>(edge_label_ptr), edge_label_len);
                     }
                 }
-                rval = readBoundFromRootEdge(edge_ptrs, data, root_key, bound_key);
+                rval = readBoundFromRootEdge(edge_ptrs, data, root_key, bound_key, lf_guard);
                 return lf_guard.stopOrReturn(root_edge_offset, rval);
             }
 
@@ -226,7 +231,7 @@ namespace {
             ret = lf_guard.stop(edge_ptrs.offset);
             if (ret != MBError::SUCCESS)
                 return ret;
-            return traverseToLowerBound(key_cursor, len, edge_ptrs, data, bound_edge_ptrs, bound_state);
+            return traverseToLowerBound(key_cursor, len, edge_ptrs, data, bound_edge_ptrs, bound_state, lf_guard);
         } else if (edge_len == len) {
             int label_cmp = len > 1 ? memcmp(edge_label_ptr, key + 1, len - 1) : 0;
             if (label_cmp != 0) {
@@ -649,9 +654,9 @@ namespace {
         }
     }
 
-    int SearchEngine::readLowerBound(EdgePtrs& edge_ptrs, MBData& data, std::string* bound_key, int le_edge_key) const
+    int SearchEngine::readLowerBound(EdgePtrs& edge_ptrs, MBData& data, std::string* bound_key,
+        int le_edge_key, ReaderLFGuard& lf_guard) const
     {
-        ReaderLFGuard lf_guard(dict.lfree, data);
         int rval;
         rval = dict.mm.ReadData(edge_ptrs.edge_buff, EDGE_SIZE, edge_ptrs.offset);
         if (rval != EDGE_SIZE)
@@ -693,9 +698,8 @@ namespace {
     }
 
     int SearchEngine::readBoundFromRootEdge(EdgePtrs& edge_ptrs, MBData& data,
-        int root_key, std::string* bound_key) const
+        int root_key, std::string* bound_key, ReaderLFGuard& lf_guard) const
     {
-        ReaderLFGuard lf_guard(dict.lfree, data);
         int rval = MBError::NOT_EXIST;
         int ret;
         for (int i = root_key - 1; i >= 0; i--) {
@@ -703,7 +707,7 @@ namespace {
             if (ret != MBError::SUCCESS)
                 return ret;
             if (edge_ptrs.len_ptr[0] != 0) {
-                rval = readLowerBound(edge_ptrs, data, bound_key, i);
+                rval = readLowerBound(edge_ptrs, data, bound_key, i, lf_guard);
                 break;
             }
             ret = lf_guard.stop(edge_ptrs.offset);
@@ -732,10 +736,9 @@ namespace {
     //   current subtree; otherwise we return and the caller uses the saved candidate.
     // - If we fully consume the input, or reach a data edge, we read and return.
     int SearchEngine::traverseToLowerBound(const uint8_t* key, int len, EdgePtrs& edge_ptrs,
-        MBData& data, EdgePtrs& bound_edge_ptrs, BoundSearchState& state) const
+        MBData& data, EdgePtrs& bound_edge_ptrs, BoundSearchState& state, ReaderLFGuard& lf_guard) const
     {
         const uint8_t* edge_label_ptr = nullptr;
-        ReaderLFGuard lf_guard(dict.lfree, data);
 
         int steps = 0;
         while (true) {
@@ -751,6 +754,11 @@ namespace {
             int lf_result = lf_guard.stop(parent_edge_offset);
             if (lf_result != MBError::SUCCESS)
                 return lf_result;
+
+            if (candidate_le_key >= 0) {
+                state.has_candidate_parent = true;
+                state.candidate_parent_offset = parent_edge_offset;
+            }
 
             // Record candidate metadata (depth/key) for bound_key reconstruction.
             if (state.bound_key && candidate_le_key >= 0) {

@@ -1,8 +1,10 @@
 #include <atomic>
 #include <cstdio>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <iomanip>
 #include <iostream>
 #include <new>
 #include <signal.h>
@@ -31,10 +33,17 @@ struct SharedState {
 
 struct TestConfig {
     std::string db_dir = "/tmp/mabain_find_lower_bound_concurrency";
-    int reader_count = 4;
-    int key_count = 2048;
-    int writer_ops = 50000;
+    int reader_count = 24;
+    int key_count = 200000;
+    int writer_ops = 5000000;
     int anchor_count = 16;
+};
+
+struct ReturnStats {
+    uint64_t success = 0;
+    uint64_t not_exist = 0;
+    uint64_t try_again = 0;
+    uint64_t other = 0;
 };
 
 std::string HotKey(int i)
@@ -163,6 +172,34 @@ void ValidateLowerBoundResult(const std::string& query, const std::string& bound
     }
 }
 
+void CountReturnValue(ReturnStats& stats, int rc)
+{
+    if (rc == MBError::SUCCESS)
+        stats.success++;
+    else if (rc == MBError::NOT_EXIST)
+        stats.not_exist++;
+    else if (rc == MBError::TRY_AGAIN)
+        stats.try_again++;
+    else
+        stats.other++;
+}
+
+void PrintReturnStats(int reader_index, const ReturnStats& stats)
+{
+    uint64_t total = stats.success + stats.not_exist + stats.try_again + stats.other;
+    double success_pct = total == 0 ? 0.0 : (100.0 * stats.success) / total;
+
+    std::cout << "reader " << reader_index << " FindLowerBound return stats:"
+              << " total=" << total
+              << " success=" << stats.success
+              << " not_exist=" << stats.not_exist
+              << " try_again=" << stats.try_again
+              << " other=" << stats.other
+              << " success_pct=" << std::fixed << std::setprecision(2)
+              << success_pct << "%"
+              << std::endl;
+}
+
 int ReaderMain(const TestConfig& cfg, const std::vector<std::string>& queries, SharedState* state, int reader_index)
 {
     WaitForStart(state);
@@ -175,10 +212,12 @@ int ReaderMain(const TestConfig& cfg, const std::vector<std::string>& queries, S
 
     MBData data;
     size_t pos = static_cast<size_t>(reader_index) % queries.size();
+    ReturnStats stats;
     while (!state->stop.load(std::memory_order_acquire)) {
         const std::string& query = queries[pos];
         std::string bound_key;
         int rc = db.FindLowerBound(query, data, &bound_key);
+        CountReturnValue(stats, rc);
         if (rc == MBError::SUCCESS) {
             ValidateLowerBoundResult(query, bound_key, data);
         } else if (rc != MBError::NOT_EXIST && rc != MBError::TRY_AGAIN) {
@@ -189,6 +228,9 @@ int ReaderMain(const TestConfig& cfg, const std::vector<std::string>& queries, S
         if (pos == queries.size())
             pos = 0;
     }
+
+    if (reader_index == 0)
+        PrintReturnStats(reader_index, stats);
 
     db.Close();
     return 0;
