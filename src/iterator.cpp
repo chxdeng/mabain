@@ -212,7 +212,7 @@ int DB::iterator::get_node_offset(const std::string& node_key,
             static_cast<int>(node_key.size()), value);
         if (rval != MBError::TRY_AGAIN)
             break;
-        nanosleep((const struct timespec[]) { { 0, 10L } }, NULL);
+        detail::PauseLockFreeRetry();
     }
 
     if (rval == MBError::IN_DICT) {

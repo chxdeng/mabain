@@ -937,8 +937,11 @@ int DB::FindLowerBound(const char* key, int len, MBData& data, std::string* boun
     data.options = 0;
     if (bound_key != nullptr)
         bound_key->reserve(CONSTS::MAX_KEY_LENGHTH);
+    uint64_t reader_epoch = BeginReaderEpochGuard();
     detail::SearchEngine engine(*dict);
-    return engine.lowerBound(reinterpret_cast<const uint8_t*>(key), len, data, bound_key);
+    int rval = engine.lowerBound(reinterpret_cast<const uint8_t*>(key), len, data, bound_key);
+    EndReaderEpochGuard(reader_epoch);
+    return rval;
 }
 
 // Find the longest prefix match
