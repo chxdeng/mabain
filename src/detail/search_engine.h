@@ -26,11 +26,18 @@ struct BoundSearchState {
     int le_match_len = 0;
     int le_edge_key = -1;
     bool use_curr_edge = false;
+    bool has_candidate_parent = false;
+    size_t candidate_parent_offset = 0;
 };
 
 namespace detail {
 
-    // Removed obsolete profiling hooks
+    // Shared pause for lock-free lookup retry loops.
+    inline void PauseLockFreeRetry()
+    {
+        const struct timespec retry_pause = { 0, 10L };
+        nanosleep(&retry_pause, nullptr);
+    }
 
     class SearchEngine {
     public:
@@ -81,16 +88,20 @@ namespace detail {
         // declared once above
 
         // Lower-bound internals
+        int lowerBoundAttempt(const uint8_t* key, int len, MBData& data, std::string* bound_key);
         void appendEdgeKey(std::string* key, int edge_key, const EdgePtrs& edge_ptrs) const;
-        int readLowerBound(EdgePtrs& edge_ptrs, MBData& data, std::string* bound_key, int le_edge_key) const;
-        int readBoundFromRootEdge(EdgePtrs& edge_ptrs, MBData& data, int root_key, std::string* bound_key) const;
+        int readLowerBound(EdgePtrs& edge_ptrs, MBData& data, std::string* bound_key,
+            int le_edge_key, ReaderLFGuard& lf_guard) const;
+        int readBoundFromRootEdge(EdgePtrs& edge_ptrs, MBData& data,
+            int root_key, std::string* bound_key, ReaderLFGuard& lf_guard) const;
         // Core lower-bound traversal from root-key edge until first resolution point.
         // Returns SUCCESS when value is read, NOT_EXIST when caller should pivot to
         // saved candidate (bound_edge_ptrs/use_curr_edge), or READ_ERROR on IO error.
         int lowerBoundCore(const uint8_t* key, int len, MBData& data, std::string* bound_key,
-            EdgePtrs& bound_edge_ptrs, BoundSearchState& bound_state, int root_key) const;
+            EdgePtrs& bound_edge_ptrs, BoundSearchState& bound_state,
+            int root_key, ReaderLFGuard& lf_guard) const;
         int traverseToLowerBound(const uint8_t* key, int len, EdgePtrs& edge_ptrs, MBData& data,
-            EdgePtrs& bound_edge_ptrs, BoundSearchState& state) const;
+            EdgePtrs& bound_edge_ptrs, BoundSearchState& state, ReaderLFGuard& lf_guard) const;
     };
 
 } // namespace detail
@@ -105,8 +116,9 @@ namespace detail {
         int r = findInternal(root_off, key, len, data);
 #ifdef __LOCK_FREE__
         int attempts = 0;
-        while (r == MBError::TRY_AGAIN && attempts++ < CONSTS::LOCK_FREE_RETRY_LIMIT) {
-            nanosleep((const struct timespec[]) { { 0, 10L } }, NULL);
+        while (r == MBError::TRY_AGAIN && attempts < CONSTS::LOCK_FREE_RETRY_LIMIT) {
+            ++attempts;
+            PauseLockFreeRetry();
             r = findInternal(root_off, key, len, data);
         }
 #endif
