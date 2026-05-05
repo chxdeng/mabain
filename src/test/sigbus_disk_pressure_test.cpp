@@ -25,9 +25,11 @@
 
 #include "../db.h"
 #include "../mabain_consts.h"
+#include <cerrno>
 #include <chrono>
 #include <cstring>
 #include <fcntl.h>
+#include <glob.h>
 #include <iomanip>
 #include <iostream>
 #include <random>
@@ -46,10 +48,54 @@ using namespace mabain;
 // This flag is only set by our custom SIGBUS handler, not by the disk-filling process
 volatile sig_atomic_t bus_error_occurred = 0;
 volatile int bus_error_count = 0;
+volatile sig_atomic_t disk_pressure_stop_requested = 0;
 
 // Global pointer to database for SIGBUS handler access
 // Allows emergency database diagnostics when SIGBUS occurs
 DB* global_db_ptr = nullptr;
+
+void disk_pressure_stop_handler(int)
+{
+    disk_pressure_stop_requested = 1;
+}
+
+void install_disk_pressure_stop_handlers()
+{
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = disk_pressure_stop_handler;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGTERM, &sa, nullptr);
+    sigaction(SIGINT, &sa, nullptr);
+}
+
+bool disk_pressure_stop_requested_now()
+{
+    return disk_pressure_stop_requested != 0;
+}
+
+void unlink_disk_pressure_files(pid_t pressure_pid)
+{
+    const char* prefixes[] = {
+        "/tmp/disk_pressure_",
+        "/tmp/disk_final_",
+        "/tmp/disk_micro_",
+    };
+
+    for (const char* prefix : prefixes) {
+        std::stringstream pattern;
+        pattern << prefix << pressure_pid << "_*.tmp";
+
+        glob_t matches;
+        memset(&matches, 0, sizeof(matches));
+        if (glob(pattern.str().c_str(), 0, nullptr, &matches) == 0) {
+            for (size_t i = 0; i < matches.gl_pathc; ++i) {
+                unlink(matches.gl_pathv[i]);
+            }
+            globfree(&matches);
+        }
+    }
+}
 
 void sigbus_handler(int sig, siginfo_t* si, void* unused)
 {
@@ -189,6 +235,8 @@ pid_t create_disk_pressure_process()
         // CRITICAL: This prevents the disk-filling process from triggering our SIGBUS handler
         // Only the parent process (running Mabain operations) should catch SIGBUS
         signal(SIGBUS, SIG_DFL);
+        disk_pressure_stop_requested = 0;
+        install_disk_pressure_stop_handlers();
 
         // Child process: fill disk space to 100% capacity
         // GOAL: Create true disk pressure to trigger SIGBUS on sparse file access
@@ -208,7 +256,7 @@ pid_t create_disk_pressure_process()
 
         // Phase 1: Fill most of the space with large files
         // Use predictable file sizes for precise disk pressure control
-        for (size_t i = 0; i < files_needed; i++) {
+        for (size_t i = 0; i < files_needed && !disk_pressure_stop_requested_now(); i++) {
             std::stringstream ss;
             ss << "/tmp/disk_pressure_" << getpid() << "_" << i << ".tmp";
             std::string filename = ss.str();
@@ -256,7 +304,7 @@ pid_t create_disk_pressure_process()
 
             // Fill remaining space in 100KB chunks
             size_t chunk_count = 0;
-            while (remaining_kb > 100) {
+            while (remaining_kb > 100 && !disk_pressure_stop_requested_now()) {
                 std::stringstream ss;
                 ss << "/tmp/disk_final_" << getpid() << "_" << chunk_count << ".tmp";
                 std::string filename = ss.str();
@@ -292,7 +340,7 @@ pid_t create_disk_pressure_process()
             // Phase 3: Fill the very last bits in 1KB chunks
             std::cout << "[DISK FILLER] Phase 3: Filling final " << remaining_kb << " KB..." << std::endl;
             size_t final_count = 0;
-            while (remaining_kb > 1) {
+            while (remaining_kb > 1 && !disk_pressure_stop_requested_now()) {
                 std::stringstream ss;
                 ss << "/tmp/disk_micro_" << getpid() << "_" << final_count << ".tmp";
                 std::string filename = ss.str();
@@ -351,9 +399,11 @@ pid_t create_disk_pressure_process()
 
         // Keep the files around and wait for parent signal
         std::cout << "[DISK FILLER] Disk pressure created. Waiting for parent..." << std::endl;
-        pause(); // Wait for signal from parent
+        while (!disk_pressure_stop_requested_now()) {
+            pause(); // Wait for signal from parent
+        }
 
-        // Clean up when signaled
+        // Clean up after SIGTERM/SIGINT asks the child to stop.
         std::cout << "[DISK FILLER] Cleaning up pressure files..." << std::endl;
         for (const std::string& file : temp_files) {
             unlink(file.c_str());
@@ -398,9 +448,19 @@ void cleanup_disk_pressure_process(pid_t pressure_pid)
     if (pressure_pid > 0) {
         std::cout << "Signaling disk pressure process to clean up..." << std::endl;
         kill(pressure_pid, SIGTERM);
+
         int status;
-        waitpid(pressure_pid, &status, 0);
-        std::cout << "Disk pressure process cleaned up." << std::endl;
+        while (waitpid(pressure_pid, &status, 0) < 0 && errno == EINTR) {
+        }
+
+        // Parent-side fallback covers child crashes or signal paths that bypass cleanup.
+        unlink_disk_pressure_files(pressure_pid);
+
+        struct statvfs stat;
+        if (statvfs("/tmp", &stat) == 0) {
+            size_t free_mb = (stat.f_bavail * stat.f_frsize) / (1024 * 1024);
+            std::cout << "Disk pressure process cleaned up. Available space: " << free_mb << " MB" << std::endl;
+        }
     }
 }
 
