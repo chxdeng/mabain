@@ -31,14 +31,17 @@ namespace mabain {
 //
 // - 3-byte table (tab3/tag3):
 //   - Capacity is a power-of-two (possibly zero) selected from the requested
-//     capacity remainder. The index uses `p3 & mask3` and the tag stores `p3+1`.
+//     capacity remainder. The index folds the high prefix byte into the low
+//     index bits and the tag stores `p3+1`.
 //   - Because of masking there can be aliasing; the `+1` tag scheme allows us to
 //     safely differentiate empty from a legitimate `p3 == 0` and validate hits.
 //   - This table provides higher specificity than 2-byte, reducing false positives
 //     under aliasing while remaining compact.
 //
 // - 4-byte sparse table (tab4/tag4/valid4):
-//   - Capacity is also a power-of-two and indexing uses `p4 & mask4`.
+//   - Capacity is also a power-of-two. Indexing folds the upper 16 bits into
+//     the lower bits, preserving collision-free indexing for 16-bit integer
+//     values while using all four bytes for common fixed-leading-byte keys.
 //   - We store the exact 32-bit prefix in `tag4` and keep a separate `valid4`
 //     bitmap (0 = empty, 1 = populated). Readers check `valid4[idx] != 0` and
 //     then compare `tag4[idx] == p4` to validate. Writers clear `valid4` first,
@@ -59,6 +62,9 @@ namespace mabain {
 // - The low two `lf_counter` bits are carried over on overwrites to preserve
 //   origin flags when the same slot is reused (e.g., due to aliasing). The
 //   remaining bits are reserved for optimistic update validation.
+// - Each entry snapshots a hierarchical cache epoch. Remove invalidates the
+//   narrowest safe two-byte or first-byte partition in O(1), while RemoveAll
+//   advances the global epoch in O(1). Stale entries become cache misses.
 // - All pointers reference a single shared-memory mapping; there is no
 //   process-local fallback.
 
@@ -68,11 +74,17 @@ struct PrefixCacheEntry {
     // Number of bytes already consumed within the current edge label
     // when this entry is used (1..edge_len). 0 means start-of-edge.
     uint8_t edge_skip;
-    uint8_t reserved_[3];
+    uint8_t reserved_[2];
+    // Sum of global, first-byte, and two-byte invalidation generations when
+    // this entry was published. It occupies existing structure padding.
+    uint32_t cache_epoch;
     // Low two bits record origin. The cache uses the remaining bits as a
     // per-slot generation/active marker for optimistic read validation.
     uint32_t lf_counter;
 };
+
+static_assert(sizeof(PrefixCacheEntry) == 32,
+    "PrefixCacheEntry layout must remain compact");
 
 class PrefixCacheTestPeer;
 
@@ -88,6 +100,10 @@ public:
     // slot changed while it was copied. Callers should retry on UNSTABLE.
     static constexpr int UNSTABLE = -1;
     int GetDepth(const uint8_t* key, int len, PrefixCacheEntry& out) const;
+    // Logically invalidate cache entries without scanning cache tables.
+    void InvalidatePrefix2(const uint8_t* key, int len);
+    void InvalidateRoot(uint8_t first_byte);
+    void InvalidateAll();
     // Report the maximum prefix length this cache can seed from (3 bytes reported for compatibility)
     int PrefixLen() const { return 3; }
     bool IsShared() const { return true; }
@@ -121,6 +137,7 @@ private:
     inline bool build2(const uint8_t* key, int len, uint16_t& p2) const;
     inline bool build3(const uint8_t* key, int len, uint32_t& p3) const;
     inline bool build4(const uint8_t* key, int len, uint32_t& p4) const;
+    uint32_t CurrentEpoch(const uint8_t* key, int len) const;
 
     const size_t cap2;
     const size_t cap3;
@@ -140,6 +157,16 @@ private:
     PrefixCacheEntry* tab4 = nullptr;
     std::atomic<uint32_t>* tag4 = nullptr; // stores exact 32-bit prefix
     std::atomic<uint32_t>* valid4 = nullptr; // 0 = empty, 1 = valid
+
+    // Hierarchical invalidation generations stored in the shared mapping.
+    // `global_epoch` handles RemoveAll, `root_epoch` handles shallow trie
+    // restructuring, and `prefix2_epoch` handles the normal removal case.
+    uint32_t* global_epoch = nullptr;
+    uint32_t* root_epoch = nullptr;
+    uint32_t* prefix2_epoch = nullptr;
+
+    static constexpr size_t ROOT_EPOCH_COUNT = 256;
+    static constexpr size_t PREFIX2_EPOCH_COUNT = 65536;
 
     // Hit/miss counters removed; keep only put_count for write diagnostics
     mutable uint64_t put_count = 0;

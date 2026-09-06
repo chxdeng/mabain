@@ -98,7 +98,8 @@ static std::vector<std::string> generate_keys(int n)
 
 static void reader_thread_fn(const TestConfig& cfg, const std::vector<std::string>& keys, Metrics& m, const std::atomic<int>* last_added)
 {
-    DB rdb(cfg.dbdir.c_str(), CONSTS::ReaderOptions());
+    DB rdb(cfg.dbdir.c_str(),
+        CONSTS::ReaderOptions() | CONSTS::OPTION_PREFIX_CACHE);
     if (!rdb.is_open()) {
         std::cerr << "reader open failed" << std::endl;
         return;

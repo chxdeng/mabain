@@ -1,4 +1,5 @@
 tags
+/build/
 doc/*
 **/*.o
 src/*.so
@@ -10,5 +11,20 @@ data/*
 src/test/key_list*
 src/test/mb_test*
 src/test/jemalloc_restart_rebuild_test_local
+/src/test/errno95_db_writer_test
+/src/test/find_lower_bound_concurrency_test
+/src/test/hashmap_lookup_bench
+/src/test/jemalloc_restart_rebuild_test
+/src/test/jemalloc_test
+/src/test/mb_bound_test
+/src/test/mb_header_test
+/src/test/mb_mm_prune_test
+/src/test/mb_mm_test
+/src/test/multi_writer_bug_test
+/src/test/prefix_cache_snapshot_concurrency_test
+/src/test/shared_prefix_cache_concurrency_test
+/src/test/shmq_queue_full_stress_test
+/src/test/shmq_reservation_timeout_test
+/src/test/sigbus_disk_pressure_test
 src/test/run_test*
 tmp/*

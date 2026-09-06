@@ -137,14 +137,12 @@ Dict::Dict(const std::string& mbdir, bool init_header, int datasize,
     }
     // Instantiate the prefix cache only if the DB has an embedded cache region
     // and the caller requested prefix cache via OPTION_PREFIX_CACHE.
-    if (!(options & CONSTS::ASYNC_WRITER_MODE)) {
-        bool want_cache = (header->pfxcache_size > 0) && (options & CONSTS::OPTION_PREFIX_CACHE);
-        if (want_cache) {
-            try {
-                prefix_cache = std::unique_ptr<PrefixCache>(new PrefixCache(mbdir_, header, /*capacity hint*/65536));
-            } catch (...) {
-                // Leave cache disabled on failure; DB remains operational.
-            }
+    bool want_cache = (header->pfxcache_size > 0) && (options & CONSTS::OPTION_PREFIX_CACHE);
+    if (want_cache) {
+        try {
+            prefix_cache = std::unique_ptr<PrefixCache>(new PrefixCache(mbdir_, header, /*capacity hint*/65536));
+        } catch (...) {
+            // Leave cache disabled on failure; DB remains operational.
         }
     }
     if (mm.IsValid())
@@ -183,8 +181,11 @@ void Dict::InitEmbeddedPrefixCacheLayout()
         size_t t4 = sizeof(PrefixCacheEntry) * (c4 ? c4 : 1);
         size_t g4 = sizeof(uint32_t) * (c4 ? c4 : 1);
         size_t v4 = sizeof(uint32_t) * (c4 ? c4 : 1);
-        // PCShmHeader: magic(u32) + version(u16) + reserved(u16) + 6*u32(caps/masks)
-        return sizeof(uint32_t) + sizeof(uint16_t) + sizeof(uint16_t) + 6 * sizeof(uint32_t)
+        // PCShmHeader plus O(1) invalidation epochs for global, first-byte,
+        // and two-byte scopes. The first global epoch lives in the header.
+        size_t epoch_bytes = (NUM_ALPHABET + (1u << 16)) * sizeof(uint32_t);
+        return sizeof(uint32_t) + sizeof(uint16_t) + sizeof(uint16_t) + 8 * sizeof(uint32_t)
+            + epoch_bytes
             + g2 + t2 + g3 + t3 + v4 + g4 + t4;
     };
 
@@ -309,6 +310,8 @@ int Dict::Add(const uint8_t* key, int len, MBData& data, bool overwrite)
             header->count++;
             header->num_update++;
         }
+        if (prefix_cache)
+            SeedCanonicalBoundariesAfterAdd(key, len);
         return MBError::SUCCESS;
     }
 
@@ -394,12 +397,12 @@ int Dict::Add(const uint8_t* key, int len, MBData& data, bool overwrite)
     }
     // After a successful add, seed prefix cache at canonical 2/3-byte boundaries.
     if (rval == MBError::SUCCESS && prefix_cache) {
-        SeedCanonicalBoundariesAfterAdd(key, orig_len, /*from_add=*/true);
+        SeedCanonicalBoundariesAfterAdd(key, orig_len);
     }
     return rval;
 }
 
-void Dict::SeedCanonicalBoundariesAfterAdd(const uint8_t* key, int len, bool from_add) const
+void Dict::SeedCanonicalBoundariesAfterAdd(const uint8_t* key, int len) const
 {
     if (!prefix_cache)
         return;
@@ -417,6 +420,25 @@ void Dict::SeedCanonicalBoundariesAfterAdd(const uint8_t* key, int len, bool fro
     int remain = len;
     int consumed = 0;
     uint8_t tmp_key_buff[NUM_ALPHABET];
+
+    // Seed every canonical boundary crossed by a compressed edge. Previously
+    // only the 4-byte mid-edge case was handled, so long edges could leave the
+    // 2/3-byte tables empty even though the writer had a complete path.
+    auto seed_crossed_depths = [&](int before, int matched_edge_len,
+                                   const EdgePtrs& matched_edge, int max_depth) {
+        const int after = before + matched_edge_len;
+        for (int depth = 2; depth <= max_depth; ++depth) {
+            if (len < depth || before >= depth || after < depth)
+                continue;
+            PrefixCacheEntry entry {};
+            entry.edge_offset = matched_edge.offset;
+            entry.edge_skip = static_cast<uint8_t>(
+                depth == after ? 0 : depth - before);
+            entry.lf_counter = 1;
+            memcpy(entry.edge_buff, matched_edge.edge_buff, EDGE_SIZE);
+            prefix_cache->PutAtDepth(key, depth, entry);
+        }
+    };
 
     // Step 1: handle root edge like findInternal
     int edge_len = edge_ptrs.len_ptr[0];
@@ -438,78 +460,21 @@ void Dict::SeedCanonicalBoundariesAfterAdd(const uint8_t* key, int len, bool fro
 
     if (edge_len < remain) {
         if (edge_len_m1 <= 0 || memcmp(key_buff, key_cursor + 1, edge_len_m1) == 0) {
-            // If 4-byte boundary falls inside this edge and prefix matches, seed a mid-edge entry.
-            if (from_add && len >= 4 && consumed < 4 && consumed + edge_len >= 4) {
-                uint8_t skip = static_cast<uint8_t>(4 - consumed);
-                PrefixCacheEntry e {};
-                e.edge_offset = edge_ptrs.offset;
-                e.edge_skip = skip;
-                e.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
-                memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
-                prefix_cache->PutAtDepth(key, 4, e);
-            }
+            seed_crossed_depths(consumed, edge_len, edge_ptrs, 4);
             key_cursor += edge_len;
             consumed += edge_len;
             remain -= edge_len;
-            if (remain <= 0) {
-                // final match at root: seed at consumed depth
-                if (consumed == 4) {
-                    PrefixCacheEntry e {};
-                    e.edge_offset = edge_ptrs.offset;
-                    e.edge_skip = 0;
-                    e.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
-                    memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
-                    prefix_cache->PutAtDepth(key, 4, e);
-                } else if (consumed == 3) {
-                    PrefixCacheEntry e {};
-                    e.edge_offset = edge_ptrs.offset;
-                    e.edge_skip = 0;
-                    e.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
-                    memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
-                    prefix_cache->PutAtDepth(key, 3, e);
-                } else if (consumed == 2) {
-                    PrefixCacheEntry e2 {};
-                    e2.edge_offset = edge_ptrs.offset;
-                    e2.edge_skip = 0;
-                    e2.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
-                    memcpy(e2.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
-                    prefix_cache->PutAtDepth(key, 2, e2);
-                }
+            if (remain <= 0)
                 return;
-            }
             if (edge_ptrs.flag_ptr[0] & EDGE_FLAG_DATA_OFF)
                 return; // leaf
-            // Defer seeding at this consumed depth until we've loaded the
-            // next edge (so cache stores the correct traversal state).
         } else {
             return;
         }
     } else if (edge_len == remain) {
         if (edge_len_m1 <= 0 || memcmp(key_buff, key_cursor + 1, edge_len_m1) == 0) {
-            // mirror find: seed at final depth (consumed + edge_len)
-            int c = consumed + edge_len;
-            if (c == 4) {
-                PrefixCacheEntry e {};
-                e.edge_offset = edge_ptrs.offset;
-                e.edge_skip = 0;
-                e.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
-                memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
-                prefix_cache->PutAtDepth(key, 4, e);
-            } else if (c == 3) {
-                PrefixCacheEntry e {};
-                e.edge_offset = edge_ptrs.offset;
-                e.edge_skip = 0;
-                e.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
-                memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
-                prefix_cache->PutAtDepth(key, 3, e);
-            } else if (c == 2) {
-                PrefixCacheEntry e2 {};
-                e2.edge_offset = edge_ptrs.offset;
-                e2.edge_skip = 0;
-                e2.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
-                memcpy(e2.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
-                prefix_cache->PutAtDepth(key, 2, e2);
-            }
+            // This may be a long final root edge, so seed every crossed depth.
+            seed_crossed_depths(consumed, edge_len, edge_ptrs, 4);
         }
         return;
     } else {
@@ -542,94 +507,15 @@ void Dict::SeedCanonicalBoundariesAfterAdd(const uint8_t* key, int len, bool fro
         if (edge_len_m1 > 0 && memcmp(key_buff, key_cursor + 1, edge_len_m1) != 0) {
             break;
         }
-        // If 4-byte boundary falls inside this edge and prefix matches, seed mid-edge entry.
-        if (from_add && len >= 4 && consumed < 4 && consumed + edge_len >= 4) {
-            uint8_t skip = static_cast<uint8_t>(4 - consumed);
-            PrefixCacheEntry e {};
-            e.edge_offset = edge_ptrs.offset;
-            e.edge_skip = skip;
-            e.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
-            memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
-            prefix_cache->PutAtDepth(key, 4, e);
-        }
+        seed_crossed_depths(consumed, edge_len, edge_ptrs, 4);
         // advance
         remain -= edge_len;
-        if (remain <= 0) {
-            int c = consumed + edge_len;
-            if (c == 4) {
-                PrefixCacheEntry e {};
-                e.edge_offset = edge_ptrs.offset;
-                e.edge_skip = 0;
-                e.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
-                memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
-                prefix_cache->PutAtDepth(key, 4, e);
-            } else if (c == 3) {
-                PrefixCacheEntry e {};
-                e.edge_offset = edge_ptrs.offset;
-                e.edge_skip = 0;
-                e.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
-                memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
-                prefix_cache->PutAtDepth(key, 3, e);
-            } else if (c == 2) {
-                PrefixCacheEntry e2 {};
-                e2.edge_offset = edge_ptrs.offset;
-                e2.edge_skip = 0;
-                e2.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
-                memcpy(e2.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
-                prefix_cache->PutAtDepth(key, 2, e2);
-            }
+        if (remain <= 0)
             break;
-        }
-        if (edge_ptrs.flag_ptr[0] & EDGE_FLAG_DATA_OFF) {
-            int c = consumed + edge_len;
-            if (c == 4) {
-                PrefixCacheEntry e {};
-                e.edge_offset = edge_ptrs.offset;
-                e.edge_skip = 0;
-                e.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
-                memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
-                prefix_cache->PutAtDepth(key, 4, e);
-            } else if (c == 3) {
-                PrefixCacheEntry e {};
-                e.edge_offset = edge_ptrs.offset;
-                e.edge_skip = 0;
-                e.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
-                memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
-                prefix_cache->PutAtDepth(key, 3, e);
-            } else if (c == 2) {
-                PrefixCacheEntry e2 {};
-                e2.edge_offset = edge_ptrs.offset;
-                e2.edge_skip = 0;
-                e2.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
-                memcpy(e2.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
-                prefix_cache->PutAtDepth(key, 2, e2);
-            }
+        if (edge_ptrs.flag_ptr[0] & EDGE_FLAG_DATA_OFF)
             break;
-        }
         key_cursor += edge_len;
         consumed += edge_len;
-        if (consumed == 4) {
-            PrefixCacheEntry e {};
-            e.edge_offset = edge_ptrs.offset;
-            e.edge_skip = 0;
-            e.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
-            memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
-            prefix_cache->PutAtDepth(key, 4, e);
-        } else if (consumed == 3) {
-            PrefixCacheEntry e {};
-            e.edge_offset = edge_ptrs.offset;
-            e.edge_skip = 0;
-            e.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
-            memcpy(e.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
-            prefix_cache->PutAtDepth(key, 3, e);
-        } else if (consumed == 2) {
-            PrefixCacheEntry e2 {};
-            e2.edge_offset = edge_ptrs.offset;
-            e2.edge_skip = 0;
-            e2.lf_counter = static_cast<uint32_t>(from_add ? 1 : 2);
-            memcpy(e2.edge_buff, edge_ptrs.edge_buff, EDGE_SIZE);
-            prefix_cache->PutAtDepth(key, 2, e2);
-        }
     }
 }
 
@@ -938,6 +824,38 @@ int Dict::Remove(const uint8_t* key, int len)
     return Remove(key, len, data);
 }
 
+bool Dict::RemovalChangesMultiplePrefix2(uint8_t first_byte,
+    const EdgePtrs& edge_ptrs) const
+{
+    EdgePtrs root_edge;
+    if (mm.GetRootEdge(0, first_byte, root_edge) != MBError::SUCCESS)
+        return true; // Conservatively invalidate the first-byte scope.
+
+    // The first byte selects a fixed root slot. Only a one-byte, non-leaf root
+    // edge can lead directly to a node whose children have different second
+    // bytes. Rebuilding that node moves sibling edges across prefix2 groups.
+    if (root_edge.len_ptr[0] != 1
+        || (root_edge.flag_ptr[0] & EDGE_FLAG_DATA_OFF))
+        return false;
+
+    return edge_ptrs.curr_node_offset
+        == Get6BInteger(root_edge.offset_ptr);
+}
+
+void Dict::InvalidatePrefixCacheForRemove(const uint8_t* key, int len,
+    const EdgePtrs& edge_ptrs, bool structural_change) const
+{
+    if (!prefix_cache || key == nullptr || len < 2)
+        return;
+
+    if (structural_change
+        && RemovalChangesMultiplePrefix2(key[0], edge_ptrs)) {
+        prefix_cache->InvalidateRoot(key[0]);
+    } else {
+        prefix_cache->InvalidatePrefix2(key, len);
+    }
+}
+
 int Dict::Remove(const uint8_t* key, int len, MBData& data)
 {
     if (!(options & CONSTS::ACCESS_MODE_WRITER)) {
@@ -952,12 +870,15 @@ int Dict::Remove(const uint8_t* key, int len, MBData& data)
     if (!(data.options & CONSTS::OPTION_FIND_AND_STORE_PARENT))
         return MBError::INVALID_ARG;
 
+    const int orig_len = len;
     int rval;
     {
         detail::SearchEngine engine(*this);
         rval = engine.find(key, len, data);
     }
     if (rval == MBError::IN_DICT) {
+        InvalidatePrefixCacheForRemove(key, orig_len, data.edge_ptrs,
+            (data.edge_ptrs.flag_ptr[0] & EDGE_FLAG_DATA_OFF) != 0);
         rval = DeleteDataFromEdge(data, data.edge_ptrs);
         while (rval == MBError::TRY_AGAIN) {
             data.Clear();
@@ -970,6 +891,8 @@ int Dict::Remove(const uint8_t* key, int len, MBData& data)
                 rval = engine.find(key, len, data);
             }
             if (MBError::IN_DICT == rval) {
+                InvalidatePrefixCacheForRemove(key, orig_len, data.edge_ptrs,
+                    true);
                 rval = mm.RemoveEdgeByIndex(data.edge_ptrs, data);
             }
         }
@@ -986,10 +909,23 @@ int Dict::RemoveAll()
 {
     int rval = MBError::SUCCESS;
 
+    if (prefix_cache)
+        prefix_cache->InvalidateAll();
+
     mm.ClearMem(); // clear memory will re-initialize jemalloc
     if (options & CONSTS::OPTION_JEMALLOC) {
         mm.InitRootNode();
-        kv_file->ResetJemalloc();
+        const int reset_rval = kv_file->ResetJemalloc();
+        if (reset_rval == MBError::SUCCESS && header->pfxcache_size > 0) {
+            // The embedded cache occupies the beginning of data block 0. A
+            // successful reset rewinds jemalloc's cursor, so restore the
+            // user-data allocation floor before any post-RemoveAll Add can
+            // reuse cache storage. Preserve the existing behavior when this
+            // handle does not own the arena and ResetJemalloc is not allowed.
+            rval = kv_file->ReseedJemalloc(GetStartDataOffset());
+            if (rval != MBError::SUCCESS)
+                return rval;
+        }
         for (int c = 0; c < NUM_ALPHABET; c++) {
             rval = mm.ClearRootEdge(c);
             if (rval != MBError::SUCCESS)
