@@ -6,13 +6,16 @@
  * as published by the Free Software Foundation.
  */
 
+#include <cerrno>
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
+#include <fcntl.h>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <sys/file.h>
 #include <vector>
 #include <unistd.h>
 
@@ -177,6 +180,16 @@ public:
     static void EndReaderEpochGuard(DB& db, uint64_t epoch)
     {
         db.EndReaderEpochGuard(epoch);
+    }
+
+    static int AcquireRebuildBarrierShared(DB& db)
+    {
+        return db.AcquireRebuildBarrierShared();
+    }
+
+    static void ReleaseRebuildBarrierShared(DB& db)
+    {
+        db.ReleaseRebuildBarrierShared();
     }
 };
 
@@ -364,6 +377,81 @@ TEST_F(JemallocRebuildMetadataTest, ReaderEpochGuardEndClearsClaimedSlot)
     ASSERT_NE(token, 0u);
     mabain::DBTestPeer::EndReaderEpochGuard(reader_db, token);
     EXPECT_EQ(header->reader_epoch_slot[token - 1].connect_id.load(MEMORY_ORDER_READER), 0u);
+    EXPECT_EQ(header->reader_epoch_slot[token - 1].pid.load(MEMORY_ORDER_READER), 0u);
+    EXPECT_EQ(header->reader_epoch_slot[token - 1].proc_start_time.load(MEMORY_ORDER_READER), 0u);
+    EXPECT_EQ(header->reader_epoch_slot[token - 1].epoch.load(MEMORY_ORDER_READER), 0u);
+}
+
+TEST_F(JemallocRebuildMetadataTest, StaleReaderClearRejectsReusedProcessIdentity)
+{
+    ReaderEpochSlot slot {};
+    slot.connect_id.store(17, MEMORY_ORDER_WRITER);
+    slot.pid.store(101, MEMORY_ORDER_WRITER);
+    slot.proc_start_time.store(1001, MEMORY_ORDER_WRITER);
+    slot.epoch.store(9, MEMORY_ORDER_WRITER);
+
+    // Simulate PID/connect-id/epoch reuse after the writer captured the old
+    // identity. The process start time is the field that distinguishes it.
+    slot.proc_start_time.store(1002, MEMORY_ORDER_WRITER);
+
+    EXPECT_FALSE(slot.TryClearStale(17, 101, 1001, 9));
+    EXPECT_EQ(slot.connect_id.load(MEMORY_ORDER_READER), 17u);
+    EXPECT_EQ(slot.pid.load(MEMORY_ORDER_READER), 101u);
+    EXPECT_EQ(slot.proc_start_time.load(MEMORY_ORDER_READER), 1002u);
+    EXPECT_EQ(slot.epoch.load(MEMORY_ORDER_READER), 9u);
+}
+
+TEST_F(JemallocRebuildMetadataTest, StaleReaderClearClearsMatchingSlot)
+{
+    ReaderEpochSlot slot {};
+    slot.connect_id.store(17, MEMORY_ORDER_WRITER);
+    slot.pid.store(101, MEMORY_ORDER_WRITER);
+    slot.proc_start_time.store(1001, MEMORY_ORDER_WRITER);
+    slot.epoch.store(9, MEMORY_ORDER_WRITER);
+
+    EXPECT_TRUE(slot.TryClearStale(17, 101, 1001, 9));
+    EXPECT_EQ(slot.connect_id.load(MEMORY_ORDER_READER), 0u);
+    EXPECT_EQ(slot.pid.load(MEMORY_ORDER_READER), 0u);
+    EXPECT_EQ(slot.proc_start_time.load(MEMORY_ORDER_READER), 0u);
+    EXPECT_EQ(slot.epoch.load(MEMORY_ORDER_READER), 0u);
+}
+
+TEST_F(JemallocRebuildMetadataTest, FallbackBarrierRemainsLockedUntilLastReader)
+{
+    MBConfig writer_config = MakeJemallocRebuildConfig(
+        CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, false);
+    DB writer_db(writer_config);
+    ASSERT_TRUE(writer_db.is_open());
+
+    MBConfig reader_config = MakeJemallocRebuildConfig(
+        CONSTS::ACCESS_MODE_READER | CONSTS::OPTION_JEMALLOC, false);
+    DB reader1(reader_config);
+    DB reader2(reader_config);
+    ASSERT_TRUE(reader1.is_open());
+    ASSERT_TRUE(reader2.is_open());
+
+    ASSERT_EQ(mabain::DBTestPeer::AcquireRebuildBarrierShared(reader1), MBError::SUCCESS);
+    if (mabain::DBTestPeer::AcquireRebuildBarrierShared(reader2) != MBError::SUCCESS) {
+        mabain::DBTestPeer::ReleaseRebuildBarrierShared(reader1);
+        FAIL() << "second reader failed to acquire rebuild barrier";
+    }
+    mabain::DBTestPeer::ReleaseRebuildBarrierShared(reader1);
+
+    const std::string header_path = reader1.GetDBDir() + "_mabain_h";
+    int probe_fd = open(header_path.c_str(), O_RDWR);
+    if (probe_fd < 0) {
+        mabain::DBTestPeer::ReleaseRebuildBarrierShared(reader2);
+        FAIL() << "failed to open rebuild barrier probe";
+    }
+
+    errno = 0;
+    EXPECT_EQ(flock(probe_fd, LOCK_EX | LOCK_NB), -1);
+    EXPECT_TRUE(errno == EWOULDBLOCK || errno == EAGAIN);
+
+    mabain::DBTestPeer::ReleaseRebuildBarrierShared(reader2);
+    EXPECT_EQ(flock(probe_fd, LOCK_EX | LOCK_NB), 0);
+    EXPECT_EQ(flock(probe_fd, LOCK_UN), 0);
+    EXPECT_EQ(close(probe_fd), 0);
 }
 
 TEST_F(JemallocRebuildMetadataTest, RunStartupRebuildOnReaderReturnsControlledError)

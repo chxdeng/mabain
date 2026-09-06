@@ -51,12 +51,14 @@ namespace mabain {
 //   acquire on reads and release on writes. For 2/3-byte tables, publication is
 //   done by writing `tag=0`, storing the body, then `tag=p+1` (release). For the
 //   4-byte table, publication is `valid=0`, store body, store `tag=p4` (release),
-//   then `valid=1` (release). Reads use acquire loads to validate and then copy
-//   the body directly.
+//   then `valid=1` (release). Each entry's `lf_counter` also carries an update
+//   generation. Readers snapshot it before copying and accept the body only if
+//   the counter is unchanged afterward.
 //
 // Notes
-// - `lf_counter` is carried over on overwrites to preserve origin bits when the
-//   same slot is reused (e.g., due to aliasing).
+// - The low two `lf_counter` bits are carried over on overwrites to preserve
+//   origin flags when the same slot is reused (e.g., due to aliasing). The
+//   remaining bits are reserved for optimistic update validation.
 // - All pointers reference a single shared-memory mapping; there is no
 //   process-local fallback.
 
@@ -67,8 +69,12 @@ struct PrefixCacheEntry {
     // when this entry is used (1..edge_len). 0 means start-of-edge.
     uint8_t edge_skip;
     uint8_t reserved_[3];
+    // Low two bits record origin. The cache uses the remaining bits as a
+    // per-slot generation/active marker for optimistic read validation.
     uint32_t lf_counter;
 };
+
+class PrefixCacheTestPeer;
 
 class PrefixCache {
 public:
@@ -78,6 +84,9 @@ public:
 
     void Put(const uint8_t* key, int len, const PrefixCacheEntry& in);
     void PutAtDepth(const uint8_t* key, int depth, const PrefixCacheEntry& in);
+    // Returns 4/3/2 on a stable hit, 0 on miss, or UNSTABLE when a matching
+    // slot changed while it was copied. Callers should retry on UNSTABLE.
+    static constexpr int UNSTABLE = -1;
     int GetDepth(const uint8_t* key, int len, PrefixCacheEntry& out) const;
     // Report the maximum prefix length this cache can seed from (3 bytes reported for compatibility)
     int PrefixLen() const { return 3; }
@@ -103,6 +112,12 @@ public:
     void ResetStats() { put_count = 0; }
 
 private:
+    friend class PrefixCacheTestPeer;
+
+    static uint32_t LoadEntryCounterForTest(const PrefixCacheEntry& entry);
+    static bool CopyStableEntryForTest(const PrefixCacheEntry& src, uint32_t before,
+        PrefixCacheEntry& out);
+
     inline bool build2(const uint8_t* key, int len, uint16_t& p2) const;
     inline bool build3(const uint8_t* key, int len, uint32_t& p3) const;
     inline bool build4(const uint8_t* key, int len, uint32_t& p4) const;

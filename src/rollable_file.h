@@ -110,6 +110,7 @@ private:
     size_t mmap_mem;
     bool sliding_mmap;
     int mode;
+    bool owns_jemalloc_arena;
     size_t sliding_mem_size;
     // shared memory sliding start offset for reader
     // Note writer does not flush sliding mmap during writing.

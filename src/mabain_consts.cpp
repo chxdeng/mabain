@@ -43,6 +43,7 @@ const int CONSTS::MAX_DATA_SIZE = 0x7FFF;
 // Limit how many times readers retry when lock-free snapshot reports TRY_AGAIN
 const int CONSTS::LOCK_FREE_RETRY_LIMIT = 1000;
 const int CONSTS::FIND_TRAVERSAL_LIMIT = 1000;
+const int CONSTS::DEFAULT_ASYNC_QUEUE_RESERVATION_TIMEOUT_SEC = 3600;
 
 int CONSTS::WriterOptions()
 {

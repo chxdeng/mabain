@@ -498,27 +498,30 @@ bool ResourceCollection::IsReaderEpochQuiesced(uint64_t retire_epoch) const
 
     for (uint32_t i = 0; i < header->reader_epoch_slot_count; i++) {
         ReaderEpochSlot& slot = header->reader_epoch_slot[i];
-        if (slot.connect_id.load(MEMORY_ORDER_READER) == 0)
+        const uint32_t slot_connect_id = slot.connect_id.load(MEMORY_ORDER_READER);
+        if (slot_connect_id == 0)
             continue;
         uint64_t epoch = slot.epoch.load(MEMORY_ORDER_READER);
         if (epoch != 0 && epoch <= retire_epoch) {
             uint32_t pid = slot.pid.load(MEMORY_ORDER_READER);
             if (pid != 0) {
-#ifdef __linux__
                 const uint64_t slot_start_time = slot.proc_start_time.load(MEMORY_ORDER_READER);
+#ifdef __linux__
                 uint64_t live_start_time = 0;
                 if (slot_start_time != 0 && ReadProcStartTimeForPid(static_cast<pid_t>(pid), live_start_time)) {
                     if (live_start_time != slot_start_time) {
-                        slot.Clear();
-                        continue;
+                        if (slot.TryClearStale(slot_connect_id, pid, slot_start_time, epoch))
+                            continue;
+                        return false;
                     }
                     return false;
                 }
 #endif
                 errno = 0;
                 if (kill(static_cast<pid_t>(pid), 0) != 0 && errno == ESRCH) {
-                    slot.Clear();
-                    continue;
+                    if (slot.TryClearStale(slot_connect_id, pid, slot_start_time, epoch))
+                        continue;
+                    return false;
                 }
             }
             return false;

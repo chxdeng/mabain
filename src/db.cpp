@@ -20,7 +20,6 @@
 #include <fstream>
 #include <iostream>
 #include <sstream>
-#include <sys/file.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 
@@ -49,28 +48,6 @@ namespace {
 
 const uint64_t kRebuildBarrierGuardToken = static_cast<uint64_t>(-1);
 const uint32_t kReaderEpochGuardMaxStabilizeRetries = 32;
-
-int WaitForRebuildBarrierLock(int fd, int op)
-{
-    if (fd < 0)
-        return MBError::NOT_INITIALIZED;
-    while (flock(fd, op) != 0) {
-        if (errno == EINTR)
-            continue;
-        return MBError::MUTEX_ERROR;
-    }
-    return MBError::SUCCESS;
-}
-
-void UnlockRebuildBarrier(int fd)
-{
-    if (fd < 0)
-        return;
-    while (flock(fd, LOCK_UN) != 0) {
-        if (errno != EINTR)
-            break;
-    }
-}
 
 #ifdef __linux__
 bool ReadProcStartTimeFromStatPath(const std::string& stat_path, uint64_t& start_time)
@@ -152,7 +129,7 @@ int DB::Close()
         rval = status;
     }
 
-    rebuild_guard_file.reset();
+    rebuild_barrier.reset();
 
     status = MBError::DB_CLOSED;
     if (options & CONSTS::ACCESS_MODE_WRITER) {
@@ -191,7 +168,7 @@ uint64_t DB::BeginReaderEpochGuard() const
         ReaderEpochSlot& slot = header->reader_epoch_slot[i];
         uint32_t expected = 0;
         if (!slot.connect_id.compare_exchange_strong(
-                expected, slot_connect_id, MEMORY_ORDER_WRITER, MEMORY_ORDER_READER))
+                expected, slot_connect_id, std::memory_order_acq_rel, MEMORY_ORDER_READER))
             continue;
 
         slot.pid.store(static_cast<uint32_t>(getpid()), MEMORY_ORDER_WRITER);
@@ -244,43 +221,42 @@ void DB::EndReaderEpochGuard(uint64_t epoch) const
         header->reader_epoch_slot[slot_index].Clear();
 }
 
-int DB::EnsureRebuildGuardFd() const
+int DB::EnsureRebuildBarrier() const
 {
-    if (rebuild_guard_file)
+    if (rebuild_barrier)
         return MBError::SUCCESS;
     if (options & CONSTS::MEMORY_ONLY_MODE)
         return MBError::NOT_INITIALIZED;
 
-    bool map_file = false;
     const std::string header_path = mb_dir + "_mabain_h";
     const std::string pool_key = header_path + "#rebuild_guard";
-    rebuild_guard_file = ResourcePool::getInstance().OpenFileWithKey(
-        pool_key, header_path, options, 0, map_file, false);
-    if (rebuild_guard_file == NULL || !rebuild_guard_file->IsOpen())
+    rebuild_barrier = ResourcePool::getInstance().OpenRebuildBarrier(
+        pool_key, header_path, options);
+    if (rebuild_barrier == NULL || !rebuild_barrier->IsOpen())
         return MBError::OPEN_FAILURE;
     return MBError::SUCCESS;
 }
 
 int DB::AcquireRebuildBarrierShared() const
 {
-    int rval = EnsureRebuildGuardFd();
+    int rval = EnsureRebuildBarrier();
     if (rval != MBError::SUCCESS)
         return rval;
-    return WaitForRebuildBarrierLock(rebuild_guard_file->GetFD(), LOCK_SH);
+    return rebuild_barrier->LockShared();
 }
 
 void DB::ReleaseRebuildBarrierShared() const
 {
-    if (rebuild_guard_file != NULL)
-        UnlockRebuildBarrier(rebuild_guard_file->GetFD());
+    if (rebuild_barrier != NULL)
+        rebuild_barrier->UnlockShared();
 }
 
 int DB::AcquireRebuildBarrierExclusive() const
 {
-    int rval = EnsureRebuildGuardFd();
+    int rval = EnsureRebuildBarrier();
     if (rval != MBError::SUCCESS)
         return rval;
-    return WaitForRebuildBarrierLock(rebuild_guard_file->GetFD(), LOCK_EX);
+    return rebuild_barrier->LockExclusive();
 }
 
 uint64_t DB::GetReaderGuardFastSlotCount() const
@@ -295,8 +271,8 @@ uint64_t DB::GetReaderGuardBarrierFallbackCount() const
 
 void DB::ReleaseRebuildBarrierExclusive() const
 {
-    if (rebuild_guard_file != NULL)
-        UnlockRebuildBarrier(rebuild_guard_file->GetFD());
+    if (rebuild_barrier != NULL)
+        rebuild_barrier->UnlockExclusive();
 }
 
 // Constructor for initializing DB handle
@@ -306,11 +282,16 @@ DB::DB(const char* db_path,
     size_t memcap_data,
     uint32_t id,
     uint32_t queue_size)
-    : status(MBError::NOT_INITIALIZED)
-    , rebuild_guard_file(NULL)
+    : options(0)
+    , dict(NULL)
+    , status(MBError::NOT_INITIALIZED)
+    , identifier(0)
+    , rebuild_barrier(NULL)
     , process_start_time(0)
     , reader_guard_fast_slot_count(0)
     , reader_guard_barrier_fallback_count(0)
+    , dbConfig {}
+    , async_writer(NULL)
     , writer_lock_fd(-1)
 {
     MBConfig config;
@@ -326,11 +307,16 @@ DB::DB(const char* db_path,
 }
 
 DB::DB(MBConfig& config)
-    : status(MBError::NOT_INITIALIZED)
-    , rebuild_guard_file(NULL)
+    : options(0)
+    , dict(NULL)
+    , status(MBError::NOT_INITIALIZED)
+    , identifier(0)
+    , rebuild_barrier(NULL)
     , process_start_time(0)
     , reader_guard_fast_slot_count(0)
     , reader_guard_barrier_fallback_count(0)
+    , dbConfig {}
+    , async_writer(NULL)
     , writer_lock_fd(-1)
 {
     InitDB(config);
@@ -388,6 +374,10 @@ int DB::ValidateConfig(MBConfig& config)
         std::cerr << "async queue size exceeds maximum\n";
     if (config.queue_size == 0 || config.queue_size > MB_MAX_NUM_SHM_QUEUE_NODE)
         config.queue_size = MB_MAX_NUM_SHM_QUEUE_NODE;
+    if (config.async_queue_reservation_timeout_sec == 0) {
+        config.async_queue_reservation_timeout_sec
+            = CONSTS::DEFAULT_ASYNC_QUEUE_RESERVATION_TIMEOUT_SEC;
+    }
 #ifdef __APPLE__
     if (config.queue_dir == nullptr)
         config.queue_dir = config.mbdir;
@@ -828,11 +818,16 @@ int DB::Status() const
 }
 
 DB::DB(const DB& db)
-    : status(MBError::NOT_INITIALIZED)
-    , rebuild_guard_file(NULL)
+    : options(0)
+    , dict(NULL)
+    , status(MBError::NOT_INITIALIZED)
+    , identifier(0)
+    , rebuild_barrier(NULL)
     , process_start_time(0)
     , reader_guard_fast_slot_count(0)
     , reader_guard_barrier_fallback_count(0)
+    , dbConfig {}
+    , async_writer(NULL)
     , writer_lock_fd(-1)
 {
     MBConfig db_config = db.dbConfig;
@@ -851,7 +846,7 @@ const DB& DB::operator=(const DB& db)
     MBConfig db_config = db.dbConfig;
     db_config.mbdir = db.mb_dir.c_str();
     status = MBError::NOT_INITIALIZED;
-    rebuild_guard_file.reset();
+    rebuild_barrier.reset();
     process_start_time = 0;
     reader_guard_fast_slot_count = 0;
     reader_guard_barrier_fallback_count = 0;
@@ -1004,6 +999,11 @@ int DB::Add(const char* key, int len, MBData& mbdata, bool overwrite)
         return MBError::INVALID_ARG;
     if (status != MBError::SUCCESS)
         return MBError::NOT_INITIALIZED;
+    if (mbdata.buff == NULL)
+        return MBError::INVALID_ARG;
+    if (len <= 0 || len > CONSTS::MAX_KEY_LENGHTH
+        || mbdata.data_len <= 0 || mbdata.data_len > CONSTS::MAX_DATA_SIZE)
+        return MBError::OUT_OF_BOUND;
 
     if (async_writer == NULL && (options & CONSTS::ACCESS_MODE_WRITER)) {
         rval = dict->Add(reinterpret_cast<const uint8_t*>(key), len, mbdata, overwrite);

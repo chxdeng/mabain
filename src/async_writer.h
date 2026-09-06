@@ -19,6 +19,7 @@
 #ifndef __ASYNC_WRITER_H__
 #define __ASYNC_WRITER_H__
 
+#include <atomic>
 #include <mutex>
 #include <pthread.h>
 
@@ -48,7 +49,6 @@ private:
     AsyncNode* AcquireSlot();
     int PrepareSlot(AsyncNode* node_ptr) const;
     void* async_writer_thread();
-    uint32_t NextShmSlot(uint32_t windex, uint32_t qindex);
 
     // db pointer
     DB* db;
@@ -56,15 +56,19 @@ private:
 
     // thread id
     pthread_t tid;
-    bool stop_processing;
+    std::atomic<bool> stop_processing;
 
     AsyncNode* queue;
+    std::atomic<uint64_t>* reservation_time_ms;
     IndexHeader* header;
+    uint64_t reservation_timeout_ms;
 
     bool is_rc_running;
     char* rc_backup_dir;
 
     std::timed_mutex writer_lock;
+    // Process-local shortcut for producer handles targeting the same DB.
+    // Assumes one async-writer DB per process and that it outlives local producers.
     static AsyncWriter* writer_instance;
 };
 

@@ -54,7 +54,10 @@ typedef struct _shm_lock_and_queue {
     int initialized;
     pthread_mutex_t lock;
     AsyncNode queue[MB_MAX_NUM_SHM_QUEUE_NODE];
+    std::atomic<uint64_t> reservation_time_ms[MB_MAX_NUM_SHM_QUEUE_NODE];
 } shm_lock_and_queue;
+
+uint64_t SHMQ_GetMonotonicTimeMs();
 
 class ShmQueueMgr {
 public:

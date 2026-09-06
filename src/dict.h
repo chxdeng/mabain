@@ -115,6 +115,7 @@ public:
 
     pthread_mutex_t* GetShmLockPtr() const;
     AsyncNode* GetAsyncQueuePtr() const;
+    std::atomic<uint64_t>* GetAsyncQueueReservationTimePtr() const;
 
     void UpdateNumReader(int delta) const;
     int UpdateNumWriter(int delta) const;

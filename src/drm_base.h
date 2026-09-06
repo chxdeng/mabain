@@ -73,17 +73,59 @@
 namespace mabain {
 
 typedef struct _ReaderEpochSlot {
+    static constexpr uint64_t RECLAIMING_PROC_START_TIME = static_cast<uint64_t>(-1);
+
     std::atomic<uint32_t> connect_id;
     std::atomic<uint32_t> pid;
     std::atomic<uint64_t> proc_start_time;
     std::atomic<uint64_t> epoch;
 
+    // The caller must first establish that the process identity represented by
+    // the expected metadata is no longer alive. Claim proc_start_time before
+    // clearing so a replacement reader cannot be erased using an old snapshot.
+    bool TryClearStale(uint32_t expected_connect_id, uint32_t expected_pid,
+        uint64_t expected_proc_start_time, uint64_t expected_epoch)
+    {
+        if (expected_connect_id == 0 || expected_pid == 0
+            || expected_proc_start_time == RECLAIMING_PROC_START_TIME)
+            return false;
+        if (connect_id.load(MEMORY_ORDER_READER) != expected_connect_id
+            || pid.load(MEMORY_ORDER_READER) != expected_pid
+            || epoch.load(MEMORY_ORDER_READER) != expected_epoch)
+            return false;
+
+        uint64_t expected = expected_proc_start_time;
+        if (!proc_start_time.compare_exchange_strong(expected,
+                RECLAIMING_PROC_START_TIME, std::memory_order_acq_rel,
+                MEMORY_ORDER_READER))
+            return false;
+
+        // Revalidate after acquiring the claim. If another owner changed the
+        // slot, restore only if the claim marker is still ours.
+        if (connect_id.load(MEMORY_ORDER_READER) != expected_connect_id
+            || pid.load(MEMORY_ORDER_READER) != expected_pid
+            || epoch.load(MEMORY_ORDER_READER) != expected_epoch) {
+            expected = RECLAIMING_PROC_START_TIME;
+            proc_start_time.compare_exchange_strong(expected,
+                expected_proc_start_time, std::memory_order_acq_rel,
+                MEMORY_ORDER_READER);
+            return false;
+        }
+
+        pid.store(0, MEMORY_ORDER_WRITER);
+        epoch.store(0, MEMORY_ORDER_WRITER);
+        proc_start_time.store(0, MEMORY_ORDER_WRITER);
+        connect_id.store(0, MEMORY_ORDER_WRITER);
+        return true;
+    }
+
     void Clear()
     {
-        connect_id.store(0, MEMORY_ORDER_WRITER);
         pid.store(0, MEMORY_ORDER_WRITER);
         proc_start_time.store(0, MEMORY_ORDER_WRITER);
         epoch.store(0, MEMORY_ORDER_WRITER);
+        // Publish the slot as free only after its previous metadata is gone.
+        connect_id.store(0, MEMORY_ORDER_WRITER);
     }
 } ReaderEpochSlot;
 
@@ -208,7 +250,7 @@ typedef struct _IndexHeader {
     // multi-process async queue
     int async_queue_size;
     std::atomic<uint32_t> queue_index;
-    uint32_t writer_index;
+    std::atomic<uint32_t> writer_index;
     std::atomic<uint32_t> rc_flag;
 
     // Embedded prefix cache (fixed capacity, set at DB initialization)

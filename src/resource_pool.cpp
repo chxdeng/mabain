@@ -16,7 +16,9 @@
 
 // @author Changxue Deng <chadeng@cisco.com>
 
+#include <errno.h>
 #include <string.h>
+#include <sys/file.h>
 
 #include "error.h"
 #include "logger.h"
@@ -25,6 +27,98 @@
 #include "resource_pool.h"
 
 namespace mabain {
+
+namespace {
+
+int WaitForFileLock(int fd, int op)
+{
+    if (fd < 0)
+        return MBError::NOT_INITIALIZED;
+    while (flock(fd, op) != 0) {
+        if (errno == EINTR)
+            continue;
+        return MBError::MUTEX_ERROR;
+    }
+    return MBError::SUCCESS;
+}
+
+void UnlockFile(int fd)
+{
+    if (fd < 0)
+        return;
+    while (flock(fd, LOCK_UN) != 0) {
+        if (errno != EINTR)
+            break;
+    }
+}
+
+} // namespace
+
+RebuildBarrier::RebuildBarrier(std::shared_ptr<MmapFileIO> in_file)
+    : file(in_file)
+    , reader_count(0)
+    , waiting_writer_count(0)
+    , writer_active(false)
+{
+}
+
+bool RebuildBarrier::IsOpen() const
+{
+    return file != nullptr && file->IsOpen();
+}
+
+int RebuildBarrier::LockShared()
+{
+    std::unique_lock<std::mutex> lock(lock_mutex);
+    while (writer_active || waiting_writer_count != 0)
+        lock_cv.wait(lock);
+
+    if (reader_count == 0) {
+        int rval = WaitForFileLock(file->GetFD(), LOCK_SH);
+        if (rval != MBError::SUCCESS)
+            return rval;
+    }
+    reader_count++;
+    return MBError::SUCCESS;
+}
+
+void RebuildBarrier::UnlockShared()
+{
+    std::lock_guard<std::mutex> lock(lock_mutex);
+    if (reader_count == 0)
+        return;
+    if (--reader_count == 0) {
+        UnlockFile(file->GetFD());
+        lock_cv.notify_all();
+    }
+}
+
+int RebuildBarrier::LockExclusive()
+{
+    std::unique_lock<std::mutex> lock(lock_mutex);
+    waiting_writer_count++;
+    while (writer_active || reader_count != 0)
+        lock_cv.wait(lock);
+    waiting_writer_count--;
+    writer_active = true;
+
+    int rval = WaitForFileLock(file->GetFD(), LOCK_EX);
+    if (rval != MBError::SUCCESS) {
+        writer_active = false;
+        lock_cv.notify_all();
+    }
+    return rval;
+}
+
+void RebuildBarrier::UnlockExclusive()
+{
+    std::lock_guard<std::mutex> lock(lock_mutex);
+    if (!writer_active)
+        return;
+    UnlockFile(file->GetFD());
+    writer_active = false;
+    lock_cv.notify_all();
+}
 
 ResourcePool::ResourcePool()
 {
@@ -39,6 +133,7 @@ ResourcePool::~ResourcePool()
 void ResourcePool::RemoveAll()
 {
     pthread_mutex_lock(&pool_mutex);
+    rebuild_barrier_pool.clear();
     file_pool.clear();
     pthread_mutex_unlock(&pool_mutex);
 }
@@ -47,16 +142,17 @@ void ResourcePool::RemoveAll()
 bool ResourcePool::CheckExistence(const std::string& header_path)
 {
     pthread_mutex_lock(&pool_mutex);
-    auto search = file_pool.find(header_path);
+    bool exists = file_pool.find(header_path) != file_pool.end();
     pthread_mutex_unlock(&pool_mutex);
 
-    return (search != file_pool.end());
+    return exists;
 }
 
 void ResourcePool::RemoveResourceByPath(const std::string& path)
 {
     Logger::Log(LOG_LEVEL_DEBUG, "remove resource %s", path.c_str());
     pthread_mutex_lock(&pool_mutex);
+    rebuild_barrier_pool.erase(path);
     file_pool.erase(path);
     pthread_mutex_unlock(&pool_mutex);
 }
@@ -68,6 +164,13 @@ void ResourcePool::RemoveResourceByDB(const std::string& db_path)
     for (auto it = file_pool.begin(); it != file_pool.end();) {
         if (it->first.compare(0, db_path.size(), db_path) == 0)
             it = file_pool.erase(it);
+        else
+            it++;
+    }
+
+    for (auto it = rebuild_barrier_pool.begin(); it != rebuild_barrier_pool.end();) {
+        if (it->first.compare(0, db_path.size(), db_path) == 0)
+            it = rebuild_barrier_pool.erase(it);
         else
             it++;
     }
@@ -137,6 +240,28 @@ std::shared_ptr<MmapFileIO> ResourcePool::OpenFile(const std::string& fpath,
     bool create_file)
 {
     return OpenFileWithKey(fpath, fpath, mode, file_size, map_file, create_file);
+}
+
+std::shared_ptr<RebuildBarrier> ResourcePool::OpenRebuildBarrier(
+    const std::string& pool_key, const std::string& fpath, int mode)
+{
+    bool map_file = false;
+    std::shared_ptr<MmapFileIO> file = OpenFileWithKey(
+        pool_key, fpath, mode, 0, map_file, false);
+    if (file == nullptr || !file->IsOpen())
+        return nullptr;
+
+    pthread_mutex_lock(&pool_mutex);
+    auto search = rebuild_barrier_pool.find(pool_key);
+    std::shared_ptr<RebuildBarrier> barrier;
+    if (search == rebuild_barrier_pool.end()) {
+        barrier = std::make_shared<RebuildBarrier>(file);
+        rebuild_barrier_pool[pool_key] = barrier;
+    } else {
+        barrier = search->second;
+    }
+    pthread_mutex_unlock(&pool_mutex);
+    return barrier;
 }
 
 int ResourcePool::AddResourceByPath(const std::string& path, std::shared_ptr<MmapFileIO> resource)

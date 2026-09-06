@@ -29,6 +29,8 @@ public:
     static const int SYNC_ON_WRITE;
     static const int USE_SLIDING_WINDOW;
     static const int MEMORY_ONLY_MODE;
+    // Lookup-only mode: no shared async queue is attached, so queue-backed
+    // updates and the DB lock APIs are unsupported.
     static const int READ_ONLY_DB;
 
     static const int OPTION_FIND_AND_STORE_PARENT;
@@ -46,6 +48,8 @@ public:
     static const int LOCK_FREE_RETRY_LIMIT;
     // Max steps allowed in Find traversal loop to avoid pathological spins
     static const int FIND_TRAVERSAL_LIMIT;
+    // Default lease in seconds for an unpublished async queue reservation.
+    static const int DEFAULT_ASYNC_QUEUE_RESERVATION_TIMEOUT_SEC;
 
     static int WriterOptions();
     static int ReaderOptions();

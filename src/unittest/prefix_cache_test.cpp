@@ -14,6 +14,29 @@
 
 using namespace mabain;
 
+namespace mabain {
+
+class PrefixCacheTestPeer {
+public:
+    static int CopyAfterOverwrite(PrefixCache& cache, const uint8_t* key,
+        const PrefixCacheEntry& replacement, PrefixCacheEntry& out)
+    {
+        uint16_t p2 = static_cast<uint16_t>(static_cast<uint16_t>(key[0])
+            | (static_cast<uint16_t>(key[1]) << 8));
+        PrefixCacheEntry& slot = cache.tab2[static_cast<size_t>(p2) & cache.mask2];
+        uint32_t before = PrefixCache::LoadEntryCounterForTest(slot);
+
+        // Force a complete overwrite between the reader's pre-copy snapshot
+        // and its post-copy validation.
+        cache.PutAtDepth(key, 2, replacement);
+        return PrefixCache::CopyStableEntryForTest(slot, before, out)
+            ? 2
+            : PrefixCache::UNSTABLE;
+    }
+};
+
+} // namespace mabain
+
 namespace {
 
 #define MB_DIR "/var/tmp/mabain_test/"
@@ -146,6 +169,42 @@ TEST_F(PrefixCacheTest, SeedFromCache_GetDepth)
     PrefixCacheEntry e4 {};
     int n4 = pc->GetDepth(reinterpret_cast<const uint8_t*>("x"), 1, e4);
     EXPECT_EQ(n4, 0);
+}
+
+TEST_F(PrefixCacheTest, OverwriteBetweenCounterChecksIsRejected)
+{
+    Dict* dict = db->GetDictPtr();
+    ASSERT_NE(dict, nullptr);
+    PrefixCache* pc = dict->ActivePrefixCache();
+    ASSERT_NE(pc, nullptr);
+
+    const uint8_t key[] = { 'q', 'r' };
+    PrefixCacheEntry old_entry {};
+    old_entry.edge_offset = 0x1111111111111111ULL;
+    memset(old_entry.edge_buff, 0x11, sizeof(old_entry.edge_buff));
+    old_entry.edge_skip = 1;
+    old_entry.lf_counter = 1;
+    pc->PutAtDepth(key, 2, old_entry);
+
+    PrefixCacheEntry new_entry {};
+    new_entry.edge_offset = 0x2222222222222222ULL;
+    memset(new_entry.edge_buff, 0x22, sizeof(new_entry.edge_buff));
+    new_entry.edge_skip = 2;
+    new_entry.lf_counter = 2;
+
+    PrefixCacheEntry rejected {};
+    EXPECT_EQ(PrefixCacheTestPeer::CopyAfterOverwrite(*pc, key, new_entry,
+                  rejected),
+        PrefixCache::UNSTABLE);
+
+    PrefixCacheEntry stable {};
+    ASSERT_EQ(pc->GetDepth(key, 2, stable), 2);
+    EXPECT_EQ(stable.edge_offset, new_entry.edge_offset);
+    EXPECT_EQ(memcmp(stable.edge_buff, new_entry.edge_buff,
+                  sizeof(stable.edge_buff)),
+        0);
+    EXPECT_EQ(stable.edge_skip, new_entry.edge_skip);
+    EXPECT_EQ(stable.lf_counter, 3u); // old and new origin bits are preserved
 }
 
 } // namespace

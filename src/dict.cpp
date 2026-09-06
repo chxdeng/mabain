@@ -128,7 +128,9 @@ Dict::Dict(const std::string& mbdir, bool init_header, int datasize,
 
     // In jemalloc mode, ensure the data-file arena starts after the reserved
     // embedded prefix-cache region so allocations do not overwrite cache tables.
-    if ((options & CONSTS::OPTION_JEMALLOC) && header->pfxcache_size > 0) {
+    if ((options & CONSTS::OPTION_JEMALLOC)
+        && (options & CONSTS::ACCESS_MODE_WRITER)
+        && header->pfxcache_size > 0) {
         // header->m_data_offset already points to the first user-data byte.
         // PreAlloc advances the arena's alloc_size to this offset for block 0.
         (void)kv_file->PreAlloc(header->m_data_offset);
@@ -1017,6 +1019,11 @@ pthread_mutex_t* Dict::GetShmLockPtr() const
 AsyncNode* Dict::GetAsyncQueuePtr() const
 {
     return slaq->queue;
+}
+
+std::atomic<uint64_t>* Dict::GetAsyncQueueReservationTimePtr() const
+{
+    return slaq->reservation_time_ms;
 }
 
 // Reserve buffer and write to it

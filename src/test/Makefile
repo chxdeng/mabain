@@ -9,7 +9,8 @@ TESTSOURCES=$(wildcard *.cpp)
 all: mb_test mb_test1 mb_test2 mb_test_mp multi_writer_bug_test mb_bound_test mb_header_test \
 	mb_mm_test mb_mm_prune_test sigbus_disk_pressure_test errno95_db_writer_test jemalloc_test \
 	shared_prefix_cache_concurrency_test hashmap_lookup_bench jemalloc_restart_rebuild_test \
-	find_lower_bound_concurrency_test
+	find_lower_bound_concurrency_test shmq_reservation_timeout_test \
+	prefix_cache_snapshot_concurrency_test shmq_queue_full_stress_test
 
 mb_mm_prune_test: mb_mm_prune_test.cpp
 	$(CPP) $(CPPFLAGS) mb_mm_prune_test.cpp
@@ -71,6 +72,18 @@ find_lower_bound_concurrency_test: find_lower_bound_concurrency_test.cpp ../../b
 	$(CPP) $(CPPFLAGS) find_lower_bound_concurrency_test.cpp
 	$(CPP) find_lower_bound_concurrency_test.o -o find_lower_bound_concurrency_test $(LDFLAGS)
 
+shmq_reservation_timeout_test: shmq_reservation_timeout_test.cpp ../../build/lib/libmabain.so
+	$(CPP) $(CPPFLAGS) shmq_reservation_timeout_test.cpp
+	$(CPP) shmq_reservation_timeout_test.o -o shmq_reservation_timeout_test $(LDFLAGS)
+
+shmq_queue_full_stress_test: shmq_queue_full_stress_test.cpp ../../build/lib/libmabain.so
+	$(CPP) $(CPPFLAGS) shmq_queue_full_stress_test.cpp
+	$(CPP) shmq_queue_full_stress_test.o -o shmq_queue_full_stress_test $(LDFLAGS)
+
+prefix_cache_snapshot_concurrency_test: prefix_cache_snapshot_concurrency_test.cpp ../../build/lib/libmabain.so
+	$(CPP) $(CPPFLAGS) prefix_cache_snapshot_concurrency_test.cpp
+	$(CPP) prefix_cache_snapshot_concurrency_test.o -o prefix_cache_snapshot_concurrency_test $(LDFLAGS)
+
 
 # Build standalone HashMap lookup benchmark
 hashmap_lookup_bench: hashmap_lookup_bench.cpp ../../build/lib/libmabain.so
@@ -79,4 +92,4 @@ hashmap_lookup_bench: hashmap_lookup_bench.cpp ../../build/lib/libmabain.so
 
 
 clean:
-	-rm -rf *.o mb_test* multi_writer_bug_test mb_bound_test mb_header_test mb_mm_test mb_mm_prune_test sigbus_disk_pressure_test errno95_db_writer_test jemalloc_test jemalloc_restart_rebuild_test shared_prefix_cache_concurrency_test find_lower_bound_concurrency_test hashmap_lookup_bench
+	-rm -rf *.o mb_test* multi_writer_bug_test mb_bound_test mb_header_test mb_mm_test mb_mm_prune_test sigbus_disk_pressure_test errno95_db_writer_test jemalloc_test jemalloc_restart_rebuild_test shared_prefix_cache_concurrency_test find_lower_bound_concurrency_test hashmap_lookup_bench shmq_reservation_timeout_test shmq_queue_full_stress_test prefix_cache_snapshot_concurrency_test

@@ -18,6 +18,7 @@
 
 #include <iostream>
 #include <sys/stat.h>
+#include <time.h>
 
 #include "error.h"
 #include "logger.h"
@@ -26,6 +27,16 @@
 #include "util/shm_mutex.h"
 
 namespace mabain {
+
+uint64_t SHMQ_GetMonotonicTimeMs()
+{
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0)
+        return 0;
+
+    return static_cast<uint64_t>(now.tv_sec) * 1000
+        + static_cast<uint64_t>(now.tv_nsec) / 1000000;
+}
 
 ShmQueueMgr::ShmQueueMgr()
 {
@@ -38,6 +49,9 @@ void ShmQueueMgr::InitShmObjects(shm_lock_and_queue* slaq, int queue_size)
     rval = InitShmMutex(&slaq->lock);
     if (rval != MBError::SUCCESS)
         throw rval;
+
+    for (int i = 0; i < MB_MAX_NUM_SHM_QUEUE_NODE; ++i)
+        slaq->reservation_time_ms[i].store(0, std::memory_order_relaxed);
 
     slaq->initialized = 1;
 }
@@ -59,8 +73,6 @@ shm_lock_and_queue* ShmQueueMgr::CreateFile(uint64_t qid, int qsize,
 
     bool map_qfile = true;
     int q_buff_size = sizeof(shm_lock_and_queue);
-    if (qsize < MB_MAX_NUM_SHM_QUEUE_NODE)
-        q_buff_size -= sizeof(AsyncNode) * (MB_MAX_NUM_SHM_QUEUE_NODE - qsize);
     qfile = ResourcePool::getInstance().OpenFile(qfile_path,
         CONSTS::ACCESS_MODE_WRITER,
         q_buff_size,

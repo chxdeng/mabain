@@ -19,7 +19,10 @@
 #ifndef __RESOURCE_POOL__
 #define __RESOURCE_POOL__
 
+#include <cstdint>
+#include <condition_variable>
 #include <memory>
+#include <mutex>
 #include <pthread.h>
 #include <string>
 #include <unordered_map>
@@ -27,6 +30,27 @@
 #include "mmap_file.h"
 
 namespace mabain {
+
+// One process-local owner for the cross-process rebuild flock. Local reference
+// counting keeps one reader from releasing another reader's shared lock.
+class RebuildBarrier {
+public:
+    explicit RebuildBarrier(std::shared_ptr<MmapFileIO> file);
+
+    bool IsOpen() const;
+    int LockShared();
+    void UnlockShared();
+    int LockExclusive();
+    void UnlockExclusive();
+
+private:
+    std::shared_ptr<MmapFileIO> file;
+    std::mutex lock_mutex;
+    std::condition_variable lock_cv;
+    uint32_t reader_count;
+    uint32_t waiting_writer_count;
+    bool writer_active;
+};
 
 // A singleton class for managing resource/file descriptors using
 // shared_ptr. All db handles for the same db will share the same
@@ -43,6 +67,8 @@ public:
         const std::string& fpath, int mode,
         size_t file_size, bool& map_file,
         bool create_file);
+    std::shared_ptr<RebuildBarrier> OpenRebuildBarrier(
+        const std::string& pool_key, const std::string& fpath, int mode);
     void RemoveResourceByDB(const std::string& db_path);
     void RemoveResourceByPath(const std::string& path);
     void RemoveAll();
@@ -60,6 +86,7 @@ private:
     ResourcePool();
 
     std::unordered_map<std::string, std::shared_ptr<MmapFileIO>> file_pool;
+    std::unordered_map<std::string, std::shared_ptr<RebuildBarrier>> rebuild_barrier_pool;
     pthread_mutex_t pool_mutex;
 };
 

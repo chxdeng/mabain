@@ -76,7 +76,8 @@ static void ensure_clean_db(const std::string& dbdir)
 
 static bool initialize_db_header(const TestConfig& cfg)
 {
-    DB writer(cfg.dbdir.c_str(), CONSTS::WriterOptions());
+    DB writer(cfg.dbdir.c_str(),
+        CONSTS::WriterOptions() | CONSTS::OPTION_PREFIX_CACHE);
     if (!writer.is_open()) {
         std::cerr << "writer init open failed: " << writer.StatusStr() << std::endl;
         return false;
@@ -166,7 +167,8 @@ static void stop_readers(Metrics& m, std::vector<std::thread>& readers)
 
 static bool run_interleaved_workload(const TestConfig& cfg, const std::vector<std::string>& keys, double& work_sec, std::atomic<int>& last_added)
 {
-    DB writer(cfg.dbdir.c_str(), CONSTS::WriterOptions());
+    DB writer(cfg.dbdir.c_str(),
+        CONSTS::WriterOptions() | CONSTS::OPTION_PREFIX_CACHE);
     if (!writer.is_open()) {
         std::cerr << "writer open failed: " << writer.StatusStr() << std::endl;
         return false;
