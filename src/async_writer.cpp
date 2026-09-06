@@ -48,7 +48,10 @@ AsyncWriter::AsyncWriter(DB* db_ptr)
     , tid(0)
     , stop_processing(false)
     , queue(NULL)
+    , reservation_time_ms(NULL)
     , header(NULL)
+    , reservation_timeout_ms(
+          static_cast<uint64_t>(CONSTS::DEFAULT_ASYNC_QUEUE_RESERVATION_TIMEOUT_SEC) * 1000)
 {
     dict = NULL;
     if (!(db_ptr->GetDBOptions() & CONSTS::ACCESS_MODE_WRITER))
@@ -64,6 +67,11 @@ AsyncWriter::AsyncWriter(DB* db_ptr)
     if (header == NULL)
         throw (int)MBError::NOT_INITIALIZED;
     queue = dict->GetAsyncQueuePtr();
+    reservation_time_ms = dict->GetAsyncQueueReservationTimePtr();
+    MBConfig config = { 0 };
+    db->GetDBConfig(config);
+    reservation_timeout_ms
+        = static_cast<uint64_t>(config.async_queue_reservation_timeout_sec) * 1000;
     header->rc_flag.store(0, std::memory_order_release);
 
     rc_backup_dir = NULL;
@@ -81,7 +89,7 @@ AsyncWriter::~AsyncWriter()
 
 int AsyncWriter::StopAsyncThread()
 {
-    stop_processing = true;
+    stop_processing.store(true, std::memory_order_relaxed);
     dict->SHMQ_Signal();
 
     if (tid != 0) {
@@ -102,7 +110,8 @@ int AsyncWriter::ProcessTask(int ntasks, bool rc_mode)
     int count = 0;
 
     while (count < ntasks) {
-        node_ptr = &queue[header->writer_index % header->async_queue_size];
+        uint32_t writer_index = header->writer_index.load(std::memory_order_relaxed);
+        node_ptr = &queue[writer_index % header->async_queue_size];
 
         if (node_ptr->in_use.load(std::memory_order_consume)) {
             switch (node_ptr->type) {
@@ -120,14 +129,15 @@ int AsyncWriter::ProcessTask(int ntasks, bool rc_mode)
                 }
                 break;
             case MABAIN_ASYNC_TYPE_REMOVE:
-                // FIXME
-                // Removing entries during rc is currently not supported.
-                // The index or data index could have been reset in fucntion ResourceColletion::Finish.
-                // However, the deletion may be run for some entry which still exist in the rc root tree.
-                // This requires modifying buffer in high end, where the offset for writing is greather than
-                // header->m_index_offset. This causes exception thrown from DictMem::WriteData.
-                // Note this is not a problem for Dict::Add since Add does not modify buffers in high end.
-                // This problem will be fixed when resolving issue: https://github.com/chxdeng/mabain/issues/21
+                // Removing entries during resource collection is currently unsupported.
+                // This task is intentionally acknowledged and discarded: the queue
+                // slot is released below, but the key remains in the database.
+                // ResourceCollection::Finish may already have reset the index or data
+                // offset while the key still exists in the resource-collection root
+                // tree. Removing it here could then write beyond header->m_index_offset
+                // and cause DictMem::WriteData to throw. Dict::Add does not have this
+                // problem because it does not modify buffers in the high end.
+                // See https://github.com/chxdeng/mabain/issues/21.
                 rval = MBError::SUCCESS;
                 break;
             case MABAIN_ASYNC_TYPE_REMOVE_ALL:
@@ -164,10 +174,13 @@ int AsyncWriter::ProcessTask(int ntasks, bool rc_mode)
                 break;
             }
 
-            header->writer_index++;
+            uint32_t slot_index = writer_index % header->async_queue_size;
+            reservation_time_ms[slot_index].store(0, std::memory_order_release);
             node_ptr->num_reader.store(0, std::memory_order_release);
             node_ptr->type = MABAIN_ASYNC_TYPE_NONE;
             node_ptr->in_use.store(false, std::memory_order_release);
+            // Publish capacity only after this physical slot is fully free.
+            header->writer_index.store(writer_index + 1, std::memory_order_release);
             mbd.Clear();
             count++;
         } else {
@@ -181,26 +194,9 @@ int AsyncWriter::ProcessTask(int ntasks, bool rc_mode)
         }
     }
 
-    if (stop_processing)
+    if (stop_processing.load(std::memory_order_relaxed))
         return MBError::RC_SKIPPED;
     return MBError::SUCCESS;
-}
-
-uint32_t AsyncWriter::NextShmSlot(uint32_t windex, uint32_t qindex)
-{
-    int cnt = 0;
-    while (windex != qindex) {
-        if (queue[windex % header->async_queue_size].in_use.load(std::memory_order_consume))
-            break;
-        if (++cnt > header->async_queue_size) {
-            windex = qindex;
-            break;
-        }
-
-        windex++;
-    }
-
-    return windex;
 }
 
 void* AsyncWriter::async_writer_thread()
@@ -223,27 +219,61 @@ void* AsyncWriter::async_writer_thread()
         writer_lock.unlock();
     }
 
-    while (!stop_processing) {
-        node_ptr = &queue[header->writer_index % header->async_queue_size];
+    while (!stop_processing.load(std::memory_order_relaxed)) {
+        uint32_t writer_index = header->writer_index.load(std::memory_order_relaxed);
+        node_ptr = &queue[writer_index % header->async_queue_size];
 
         skip = false;
         while (!node_ptr->in_use.load(std::memory_order_consume)) {
-            if (stop_processing) {
+            if (stop_processing.load(std::memory_order_relaxed)) {
                 skip = true;
                 break;
             }
 
-#define __ASYNC_THREAD_SLEEP_TIME 1000
-            mbp.Wait(__ASYNC_THREAD_SLEEP_TIME);
-
-            auto windex = header->writer_index;
+            auto windex = header->writer_index.load(std::memory_order_relaxed);
             auto qindex = header->queue_index.load(std::memory_order_consume);
-            if (windex != qindex) {
-                // Reader process may have exited unexpectedly. Recover index.
-                skip = true;
-                header->writer_index = NextShmSlot(windex, qindex);
-                break;
+            if (windex == qindex) {
+                mbp.Wait(1000);
+                continue;
             }
+
+            uint32_t slot_index = windex % header->async_queue_size;
+            uint16_t reservation = node_ptr->num_reader.load(std::memory_order_acquire);
+            uint64_t now = SHMQ_GetMonotonicTimeMs();
+            uint64_t reserved_at = reservation_time_ms[slot_index].load(std::memory_order_acquire);
+            if (reserved_at == 0 || now < reserved_at) {
+                reservation_time_ms[slot_index].store(now, std::memory_order_release);
+                reserved_at = now;
+            }
+
+            uint64_t elapsed = now - reserved_at;
+            uint64_t timeout_ms = reservation_timeout_ms;
+            if (elapsed < timeout_ms) {
+                uint64_t remaining = timeout_ms - elapsed;
+                mbp.Wait(static_cast<int>(remaining > 1000 ? 1000 : remaining));
+                continue;
+            }
+
+            // The producer may have published while the timeout check was in
+            // progress. Let the normal processing path consume it in that case.
+            if (node_ptr->in_use.load(std::memory_order_acquire))
+                continue;
+
+            // The producer may also have completed the num_reader claim while
+            // the timeout check was in progress. Re-evaluate its lease then.
+            if (reservation == 0
+                && node_ptr->num_reader.load(std::memory_order_acquire) != 0) {
+                continue;
+            }
+
+            // The reservation lease expired. Clear its timestamp before making
+            // the physical slot available to another producer.
+            reservation_time_ms[slot_index].store(0, std::memory_order_release);
+            node_ptr->type = MABAIN_ASYNC_TYPE_NONE;
+            node_ptr->num_reader.store(0, std::memory_order_release);
+            header->writer_index.store(windex + 1, std::memory_order_release);
+            skip = true;
+            break;
         }
 
         if (skip)
@@ -316,10 +346,13 @@ void* AsyncWriter::async_writer_thread()
             break;
         }
 
-        header->writer_index++;
+        uint32_t slot_index = writer_index % header->async_queue_size;
+        reservation_time_ms[slot_index].store(0, std::memory_order_release);
         node_ptr->num_reader.store(0, std::memory_order_release);
         node_ptr->type = MABAIN_ASYNC_TYPE_NONE;
         node_ptr->in_use.store(false, std::memory_order_release);
+        // Publish capacity only after this physical slot is fully free.
+        header->writer_index.store(writer_index + 1, std::memory_order_release);
 
         if (rval != MBError::SUCCESS) {
             Logger::Log(LOG_LEVEL_DEBUG, "failed to run update %d: %s",

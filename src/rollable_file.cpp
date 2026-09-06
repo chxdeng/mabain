@@ -59,6 +59,7 @@ RollableFile::RollableFile(const std::string& fpath, size_t blocksize, size_t me
     , mmap_mem(memcap)
     , sliding_mmap(access_mode & CONSTS::USE_SLIDING_WINDOW)
     , mode(access_mode)
+    , owns_jemalloc_arena(false)
     , max_num_block(max_block)
     , rc_offset_percentage(in_rc_offset_percentage)
     , mem_used(0)
@@ -112,7 +113,7 @@ void RollableFile::InitShmSlidingAddr(std::atomic<size_t>* shm_sliding_addr)
 
 void RollableFile::Close()
 {
-    if (mode & CONSTS::OPTION_JEMALLOC) {
+    if (owns_jemalloc_arena) {
         DestroyJemallocArena(false);
     }
     if (sliding_addr != NULL) {
@@ -151,14 +152,9 @@ int RollableFile::OpenAndMapBlockFile(size_t block_order, bool create_file)
 
     if (!map_file && (mode & CONSTS::MEMORY_ONLY_MODE))
         return MBError::NO_MEMORY;
-    bool init_jem = false;
-    if (block_order == 0 && (mode & CONSTS::OPTION_JEMALLOC)) {
-        // Check if jemalloc is initialized already
-        if (ResourcePool::getInstance().GetResourceByPath(path + "0") == nullptr) {
-            // mm_meta is only initialized for the first block
-            init_jem = true;
-        }
-    }
+    bool configure_jemalloc = block_order == 0
+        && (mode & CONSTS::OPTION_JEMALLOC)
+        && (mode & CONSTS::ACCESS_MODE_WRITER);
     files[block_order] = ResourcePool::getInstance().OpenFile(path + ss.str(),
         mode,
         block_size,
@@ -168,14 +164,15 @@ int RollableFile::OpenAndMapBlockFile(size_t block_order, bool create_file)
         return MBError::OPEN_FAILURE;
     if (map_file) {
         mem_used += block_size;
-        if (init_jem) {
+        if (configure_jemalloc) {
             if (files[0]->mm_meta == nullptr) {
                 rval = files[0]->InitMemoryManager();
                 if (rval != MBError::SUCCESS) {
                     return rval;
                 }
             }
-            rval = ConfigureJemalloc(files[0]->mm_meta);
+            if (files[0]->mm_meta->arena_index == 0)
+                rval = ConfigureJemalloc(files[0]->mm_meta);
         }
     } else if ((mode & CONSTS::MEMORY_ONLY_MODE) || (mode & CONSTS::OPTION_JEMALLOC)) {
         rval = MBError::MMAP_FAILED;
@@ -440,6 +437,8 @@ int RollableFile::ConfigureJemalloc(MemoryManagerMetadata* mm_meta)
 {
     if (!(mode & CONSTS::OPTION_JEMALLOC))
         return MBError::INVALID_ARG;
+    if (!(mode & CONSTS::ACCESS_MODE_WRITER))
+        return MBError::NOT_ALLOWED;
 
     extent_hooks_t* extent_hooks = mm_meta->extent_hooks;
     extent_hooks->alloc = [](extent_hooks_t* extent_hooks, void* addr, size_t size,
@@ -477,6 +476,7 @@ int RollableFile::ConfigureJemalloc(MemoryManagerMetadata* mm_meta)
     // Store the MemoryManager instance in the global map
     arena_manager_map[arena_ind] = this;
     mm_meta->arena_index = arena_ind;
+    owns_jemalloc_arena = true;
     return MBError::SUCCESS;
 }
 
@@ -486,6 +486,9 @@ int RollableFile::ConfigureJemalloc(MemoryManagerMetadata* mm_meta)
 // This funnction must be called before any other memory allocation
 void* RollableFile::PreAlloc(size_t init_off)
 {
+    if (!(mode & CONSTS::ACCESS_MODE_WRITER))
+        return nullptr;
+
     int rval = CheckAndOpenFile(0, true);
     if (rval != MBError::SUCCESS) {
         throw (int)rval;
@@ -695,6 +698,8 @@ void RollableFile::Purge() const
 // Reset jemalloc
 int RollableFile::ResetJemalloc()
 {
+    if (!owns_jemalloc_arena)
+        return MBError::NOT_ALLOWED;
     return DestroyJemallocArena(true);
 }
 
@@ -723,6 +728,7 @@ int RollableFile::DestroyJemallocArena(bool reinitialize)
         }
         files[0]->mm_meta->arena_index = 0;
     }
+    owns_jemalloc_arena = false;
 
     if (!reinitialize) {
         return MBError::SUCCESS;

@@ -129,7 +129,7 @@ void Logger::Log(int level, const char* format, ...)
     char message[256];
     va_list args;
     va_start(args, format);
-    vsprintf(message, format, args);
+    vsnprintf(message, sizeof(message), format, args);
     if (log_stream != NULL) {
         char buffer[64];
         FillDateTime(buffer, sizeof(buffer));

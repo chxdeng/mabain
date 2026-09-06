@@ -29,7 +29,10 @@ namespace mabain {
 int Dict::SHMQ_Add(const char* key, int key_len, const char* data, int data_len,
     bool overwrite)
 {
-    if (key_len > MB_ASYNC_SHM_KEY_SIZE || data_len > MB_ASYNC_SHM_DATA_SIZE) {
+    if (key == nullptr || data == nullptr)
+        return MBError::INVALID_ARG;
+    if (key_len <= 0 || key_len > MB_ASYNC_SHM_KEY_SIZE
+        || data_len <= 0 || data_len > MB_ASYNC_SHM_DATA_SIZE) {
         return MBError::OUT_OF_BOUND;
     }
 
@@ -50,7 +53,9 @@ int Dict::SHMQ_Add(const char* key, int key_len, const char* data, int data_len,
 
 int Dict::SHMQ_Remove(const char* key, int len)
 {
-    if (len > MB_ASYNC_SHM_KEY_SIZE)
+    if (key == nullptr)
+        return MBError::INVALID_ARG;
+    if (len <= 0 || len > MB_ASYNC_SHM_KEY_SIZE)
         return MBError::OUT_OF_BOUND;
 
     int err = MBError::SUCCESS;
@@ -114,21 +119,29 @@ int Dict::SHMQ_CollectResource(int64_t m_index_rc_size,
 
 AsyncNode* Dict::SHMQ_AcquireSlot(int& err) const
 {
-    uint32_t index = header->queue_index.fetch_add(1, std::memory_order_release);
-    AsyncNode* node_ptr = queue + (index % header->async_queue_size);
+    uint32_t index = header->queue_index.load(std::memory_order_acquire);
+    for (;;) {
+        uint32_t writer_index = header->writer_index.load(std::memory_order_acquire);
+        if (index - writer_index >= static_cast<uint32_t>(header->async_queue_size)) {
+            err = MBError::TRY_AGAIN;
+            return nullptr;
+        }
 
-    if (node_ptr->in_use.load(std::memory_order_consume)) {
-        // This slot is being processed by writer.
-        err = MBError::TRY_AGAIN;
-        return nullptr;
+        if (header->queue_index.compare_exchange_weak(index, index + 1,
+                std::memory_order_acq_rel, std::memory_order_acquire)) {
+            break;
+        }
     }
 
-    uint16_t nreader = node_ptr->num_reader.fetch_add(1, std::memory_order_release);
-    if (nreader != 0) {
-        // This slot is being processed by another reader.
-        err = MBError::TRY_AGAIN;
-        return nullptr;
-    }
+    uint32_t slot_index = index % header->async_queue_size;
+    AsyncNode* node_ptr = queue + slot_index;
+
+    // queue_index is advanced only when capacity exists. writer_index is
+    // published after the previous occupant has been fully released, so this
+    // producer exclusively owns the corresponding physical slot.
+    node_ptr->num_reader.store(1, std::memory_order_release);
+    slaq->reservation_time_ms[slot_index].store(
+        SHMQ_GetMonotonicTimeMs(), std::memory_order_release);
 
     return node_ptr;
 }
@@ -148,7 +161,9 @@ void Dict::SHMQ_Signal()
 
 bool Dict::SHMQ_Busy() const
 {
-    if ((header->queue_index.load(std::memory_order_consume) != header->writer_index) || header->rc_flag == 1)
+    if ((header->queue_index.load(std::memory_order_acquire)
+            != header->writer_index.load(std::memory_order_acquire))
+        || header->rc_flag == 1)
         return true;
 
     size_t rc_off = header->rc_root_offset.load(std::memory_order_consume);

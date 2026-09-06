@@ -362,7 +362,13 @@ namespace {
         bool use_cache = true
             && !(dict.reader_rc_off != 0 && root_off == dict.reader_rc_off)
             && !(data.options & CONSTS::OPTION_FIND_AND_STORE_PARENT);
-        bool used_cache = use_cache ? seedFromCache(key, len, edge_ptrs, data, key_cursor, len, consumed) : false;
+        bool cache_retry = false;
+        bool used_cache = use_cache
+            ? seedFromCache(key, len, edge_ptrs, data, key_cursor, len, consumed,
+                cache_retry)
+            : false;
+        if (cache_retry)
+            return MBError::TRY_AGAIN;
 
         if (!used_cache) {
             rval = dict.mm.GetRootEdge(root_off, key[0], edge_ptrs);

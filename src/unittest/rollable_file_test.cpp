@@ -16,6 +16,7 @@
 
 // @author Changxue Deng <chadeng@cisco.com>
 
+#include <memory>
 #include <string>
 
 #include <gtest/gtest.h>
@@ -245,6 +246,78 @@ TEST_F(RollableFileTest, JemallocPreAllocSetsCursor_test)
 
     void* base_ptr = rfile->PreAlloc(4096);
     ASSERT_NE(base_ptr, nullptr);
+    EXPECT_EQ(rfile->GetJemallocAllocSize(), 4096u);
+}
+
+TEST_F(RollableFileTest, JemallocReaderCloseDoesNotDestroyWriterArena_test)
+{
+    const std::string path = std::string(ROLLABLE_FILE_TEST_DIR)
+        + "/_mabain_jem_writer_first_i";
+    rfile = new RollableFile(path, JEMALLOC_TEST_BLOCK_SIZE,
+        JEMALLOC_TEST_MEMCAP,
+        CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, 4);
+    ASSERT_NE(rfile, nullptr);
+    ASSERT_NE(rfile->PreAlloc(64), nullptr);
+
+    std::unique_ptr<RollableFile> reader(new RollableFile(path,
+        JEMALLOC_TEST_BLOCK_SIZE, JEMALLOC_TEST_MEMCAP,
+        CONSTS::ACCESS_MODE_READER | CONSTS::OPTION_JEMALLOC, 4));
+    uint8_t value = 0;
+    ASSERT_EQ(reader->MemRead(&value, sizeof(value), 0), sizeof(value));
+    reader.reset();
+
+    size_t offset = 0;
+    EXPECT_NE(rfile->Malloc(128, offset), nullptr);
+    EXPECT_GE(offset, 64u);
+}
+
+TEST_F(RollableFileTest, JemallocWriterOwnsArenaWhenReaderOpenedFirst_test)
+{
+    const std::string path = std::string(ROLLABLE_FILE_TEST_DIR)
+        + "/_mabain_jem_reader_first_i";
+    {
+        RollableFile creator(path, JEMALLOC_TEST_BLOCK_SIZE,
+            JEMALLOC_TEST_MEMCAP, CONSTS::ACCESS_MODE_WRITER, 4);
+        size_t offset = 0;
+        uint8_t* ptr = nullptr;
+        ASSERT_EQ(creator.Reserve(offset, 1, ptr), MBError::SUCCESS);
+    }
+    ResourcePool::getInstance().RemoveAll();
+
+    std::unique_ptr<RollableFile> reader(new RollableFile(path,
+        JEMALLOC_TEST_BLOCK_SIZE, JEMALLOC_TEST_MEMCAP,
+        CONSTS::ACCESS_MODE_READER | CONSTS::OPTION_JEMALLOC, 4));
+    uint8_t value = 0;
+    ASSERT_EQ(reader->MemRead(&value, sizeof(value), 0), sizeof(value));
+
+    rfile = new RollableFile(path, JEMALLOC_TEST_BLOCK_SIZE,
+        JEMALLOC_TEST_MEMCAP,
+        CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, 4);
+    ASSERT_NE(rfile->PreAlloc(64), nullptr);
+    reader.reset();
+
+    size_t offset = 0;
+    EXPECT_NE(rfile->Malloc(128, offset), nullptr);
+    EXPECT_GE(offset, 64u);
+}
+
+TEST_F(RollableFileTest, JemallocReaderCannotRewindWriterCursor_test)
+{
+    const std::string path = std::string(ROLLABLE_FILE_TEST_DIR)
+        + "/_mabain_jem_reader_cursor_i";
+    rfile = new RollableFile(path, JEMALLOC_TEST_BLOCK_SIZE,
+        JEMALLOC_TEST_MEMCAP,
+        CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, 4);
+    ASSERT_NE(rfile, nullptr);
+    ASSERT_NE(rfile->PreAlloc(4096), nullptr);
+
+    RollableFile reader(path, JEMALLOC_TEST_BLOCK_SIZE,
+        JEMALLOC_TEST_MEMCAP,
+        CONSTS::ACCESS_MODE_READER | CONSTS::OPTION_JEMALLOC, 4);
+    uint8_t value = 0;
+    ASSERT_EQ(reader.MemRead(&value, sizeof(value), 0), sizeof(value));
+
+    EXPECT_EQ(reader.PreAlloc(128), nullptr);
     EXPECT_EQ(rfile->GetJemallocAllocSize(), 4096u);
 }
 

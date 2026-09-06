@@ -40,6 +40,7 @@ class LockFree;
 class AsyncWriter;
 class ResourceCollection;
 class MmapFileIO;
+class RebuildBarrier;
 struct _DBTraverseNode;
 
 typedef struct _MBConfig {
@@ -62,6 +63,10 @@ typedef struct _MBConfig {
 
     // Jemalloc configuration
     bool jemalloc_keep_db; // If true, don't call RemoveAll in jemalloc mode
+
+    // Unpublished async reservations older than this many seconds are reclaimed.
+    // Zero selects DEFAULT_ASYNC_QUEUE_RESERVATION_TIMEOUT_SEC.
+    uint32_t async_queue_reservation_timeout_sec;
 } MBConfig;
 
 // Database handle class
@@ -229,7 +234,7 @@ public:
 private:
     uint64_t BeginReaderEpochGuard() const;
     void EndReaderEpochGuard(uint64_t epoch) const;
-    int EnsureRebuildGuardFd() const;
+    int EnsureRebuildBarrier() const;
     int AcquireRebuildBarrierShared() const;
     void ReleaseRebuildBarrierShared() const;
     int AcquireRebuildBarrierExclusive() const;
@@ -254,7 +259,7 @@ private:
 
     // DB connector ID
     uint32_t identifier;
-    mutable std::shared_ptr<MmapFileIO> rebuild_guard_file;
+    mutable std::shared_ptr<RebuildBarrier> rebuild_barrier;
     uint64_t process_start_time;
     mutable uint64_t reader_guard_fast_slot_count;
     mutable uint64_t reader_guard_barrier_fallback_count;

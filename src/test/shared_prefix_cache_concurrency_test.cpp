@@ -76,7 +76,8 @@ static void ensure_clean_db(const std::string& dbdir)
 
 static bool initialize_db_header(const TestConfig& cfg)
 {
-    DB writer(cfg.dbdir.c_str(), CONSTS::WriterOptions());
+    DB writer(cfg.dbdir.c_str(),
+        CONSTS::WriterOptions() | CONSTS::OPTION_PREFIX_CACHE);
     if (!writer.is_open()) {
         std::cerr << "writer init open failed: " << writer.StatusStr() << std::endl;
         return false;
@@ -97,7 +98,8 @@ static std::vector<std::string> generate_keys(int n)
 
 static void reader_thread_fn(const TestConfig& cfg, const std::vector<std::string>& keys, Metrics& m, const std::atomic<int>* last_added)
 {
-    DB rdb(cfg.dbdir.c_str(), CONSTS::ReaderOptions());
+    DB rdb(cfg.dbdir.c_str(),
+        CONSTS::ReaderOptions() | CONSTS::OPTION_PREFIX_CACHE);
     if (!rdb.is_open()) {
         std::cerr << "reader open failed" << std::endl;
         return;
@@ -166,7 +168,8 @@ static void stop_readers(Metrics& m, std::vector<std::thread>& readers)
 
 static bool run_interleaved_workload(const TestConfig& cfg, const std::vector<std::string>& keys, double& work_sec, std::atomic<int>& last_added)
 {
-    DB writer(cfg.dbdir.c_str(), CONSTS::WriterOptions());
+    DB writer(cfg.dbdir.c_str(),
+        CONSTS::WriterOptions() | CONSTS::OPTION_PREFIX_CACHE);
     if (!writer.is_open()) {
         std::cerr << "writer open failed: " << writer.StatusStr() << std::endl;
         return false;

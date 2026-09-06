@@ -84,7 +84,8 @@ namespace detail {
         // key_cursor/len_remaining/consumed accordingly. For very short keys
         // (len < 2) it returns false without making a virtual call.
         inline bool seedFromCache(const uint8_t* key, int len, EdgePtrs& edge_ptrs,
-            MBData& data, const uint8_t*& key_cursor, int& len_remaining, int& consumed) const;
+            MBData& data, const uint8_t*& key_cursor, int& len_remaining, int& consumed,
+            bool& retry) const;
         // declared once above
 
         // Lower-bound internals
@@ -196,8 +197,10 @@ namespace detail {
     }
 
     inline bool SearchEngine::seedFromCache(const uint8_t* key, int len, EdgePtrs& edge_ptrs,
-        MBData& data, const uint8_t*& key_cursor, int& len_remaining, int& consumed) const
+        MBData& data, const uint8_t*& key_cursor, int& len_remaining, int& consumed,
+        bool& retry) const
     {
+        retry = false;
         // Keys shorter than 2 bytes cannot hit the cache; avoid virtual call.
         if (len < 2 || key == nullptr)
             return false;
@@ -208,6 +211,10 @@ namespace detail {
 
         PrefixCacheEntry entry;
         int n = pc->GetDepth(key, len, entry);
+        if (n == PrefixCache::UNSTABLE) {
+            retry = true;
+            return false;
+        }
         if (n == 0)
             return false;
 

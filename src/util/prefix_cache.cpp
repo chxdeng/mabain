@@ -42,14 +42,17 @@ static inline size_t cap3_from_capacity(size_t capacity)
 // Construct a prefix cache backed by an embedded mapping in _mabain_d.
 //
 // Embedded Region Layout (in block 0 of _mabain_d):
-//   PCShmHeader | tag2 | tab2 | tag3 | tab3 | valid4 | tag4 | tab4
+//   PCShmHeader | root_epoch | prefix2_epoch |
+//   tag2 | tab2 | tag3 | tab3 | valid4 | tag4 | tab4
 // where:
 //   - PCShmHeader carries magic/version and fixed capacities/masks for tables.
 //   - tag2/tag3 hold (prefix+1) to distinguish empty from p == 0.
 //   - 4-byte table uses a separate valid[] bitmap and exact tag4 values to avoid
 //     overflow; publish protocol clears valid, writes body+tag, then sets valid.
 //
-// Publication/reads use release/acquire on the atomic tag/valid arrays.
+// Publication/reads use release/acquire on the atomic tag/valid arrays and a
+// per-entry optimistic counter so readers can reject an entry changed while
+// its non-atomic body was being copied.
 PrefixCache::PrefixCache(const std::string& mbdir, const IndexHeader* hdr, size_t capacity)
     : cap2(0)
     , cap3(0)
@@ -124,14 +127,24 @@ struct PCShmHeader {
     uint32_t mask2;
     uint32_t mask3;
     uint32_t mask4;
+    uint32_t global_epoch;
+    // Keep the following PrefixCacheEntry array 8-byte aligned.
+    uint32_t reserved2;
 };
+
+static_assert(sizeof(PCShmHeader) == 40,
+    "Unexpected shared prefix-cache header layout");
+static_assert(sizeof(PCShmHeader) % alignof(PrefixCacheEntry) == 0,
+    "Shared prefix-cache tables must remain naturally aligned");
 
 // Create or open the shared-memory file and map the cache arrays.
 // Initializes tags/valids on first creation; otherwise issues MADV_WILLNEED.
 bool PrefixCache::map_shared(const std::string& path)
 {
     const uint32_t MAGIC = 0x50434632; // 'PCF2'
-    const uint16_t VER = 2; // bump for 4-byte table layout
+    const uint16_t VER = 3; // folded indexes and hierarchical invalidation
+    size_t er = sizeof(uint32_t) * ROOT_EPOCH_COUNT;
+    size_t e2 = sizeof(uint32_t) * PREFIX2_EPOCH_COUNT;
     size_t t2 = sizeof(PrefixCacheEntry) * (cap2 ? cap2 : 1);
     size_t g2 = sizeof(uint32_t) * (cap2 ? cap2 : 1);
     size_t t3 = sizeof(PrefixCacheEntry) * (cap3 ? cap3 : 1);
@@ -139,7 +152,8 @@ bool PrefixCache::map_shared(const std::string& path)
     size_t t4 = sizeof(PrefixCacheEntry) * (cap4 ? cap4 : 1);
     size_t g4 = sizeof(uint32_t) * (cap4 ? cap4 : 1); // tag4
     size_t v4 = sizeof(uint32_t) * (cap4 ? cap4 : 1); // valid4
-    size_t need = sizeof(PCShmHeader) + g2 + t2 + g3 + t3 + v4 + g4 + t4;
+    size_t need = sizeof(PCShmHeader) + er + e2
+        + g2 + t2 + g3 + t3 + v4 + g4 + t4;
 
     int fd = ::open(path.c_str(), O_CREAT | O_RDWR, 0666);
     if (fd < 0)
@@ -180,10 +194,17 @@ bool PrefixCache::map_shared(const std::string& path)
         hdr->mask2 = static_cast<uint32_t>(mask2);
         hdr->mask3 = static_cast<uint32_t>(mask3);
         hdr->mask4 = static_cast<uint32_t>(mask4);
+        hdr->global_epoch = 0;
+        hdr->reserved2 = 0;
         init = true;
     }
 
     uint8_t* p = reinterpret_cast<uint8_t*>(base) + sizeof(PCShmHeader);
+    global_epoch = &hdr->global_epoch;
+    root_epoch = reinterpret_cast<uint32_t*>(p);
+    p += er;
+    prefix2_epoch = reinterpret_cast<uint32_t*>(p);
+    p += e2;
     tag2 = reinterpret_cast<std::atomic<uint32_t>*>(p);
     p += sizeof(uint32_t) * (cap2 ? cap2 : 1);
     tab2 = reinterpret_cast<PrefixCacheEntry*>(p);
@@ -199,6 +220,11 @@ bool PrefixCache::map_shared(const std::string& path)
     tab4 = (cap4 ? reinterpret_cast<PrefixCacheEntry*>(p) : nullptr);
 
     if (init) {
+        __atomic_store_n(global_epoch, 0u, __ATOMIC_RELAXED);
+        for (size_t i = 0; i < ROOT_EPOCH_COUNT; ++i)
+            __atomic_store_n(&root_epoch[i], 0u, __ATOMIC_RELAXED);
+        for (size_t i = 0; i < PREFIX2_EPOCH_COUNT; ++i)
+            __atomic_store_n(&prefix2_epoch[i], 0u, __ATOMIC_RELAXED);
         size_t c2 = (cap2 ? cap2 : 1);
         for (size_t i = 0; i < c2; ++i)
             tag2[i].store(0u, std::memory_order_relaxed);
@@ -252,7 +278,9 @@ bool PrefixCache::map_embedded(const std::string& mbdir)
 
     // Recreate the same header and tables layout offsets as map_shared, but relative to base+delta
     const uint32_t MAGIC = 0x50434632; // 'PCF2'
-    const uint16_t VER = 2;
+    const uint16_t VER = 3; // folded indexes and hierarchical invalidation
+    size_t er = sizeof(uint32_t) * ROOT_EPOCH_COUNT;
+    size_t e2 = sizeof(uint32_t) * PREFIX2_EPOCH_COUNT;
     size_t t2 = sizeof(PrefixCacheEntry) * (cap2 ? cap2 : 1);
     size_t g2 = sizeof(uint32_t) * (cap2 ? cap2 : 1);
     size_t t3 = sizeof(PrefixCacheEntry) * (cap3 ? cap3 : 1);
@@ -260,7 +288,8 @@ bool PrefixCache::map_embedded(const std::string& mbdir)
     size_t t4 = sizeof(PrefixCacheEntry) * (cap4 ? cap4 : 1);
     size_t g4 = sizeof(uint32_t) * (cap4 ? cap4 : 1); // tag4
     size_t v4 = sizeof(uint32_t) * (cap4 ? cap4 : 1); // valid4
-    size_t need = sizeof(PCShmHeader) + g2 + t2 + g3 + t3 + v4 + g4 + t4;
+    size_t need = sizeof(PCShmHeader) + er + e2
+        + g2 + t2 + g3 + t3 + v4 + g4 + t4;
     if (need != hdr_->pfxcache_size) {
         // Capacity mismatch vs header; clear mapped region and try to proceed if space allows
         // to keep running. Readers/writers can still function without cache.
@@ -283,8 +312,15 @@ bool PrefixCache::map_embedded(const std::string& mbdir)
         hdr->mask2 = static_cast<uint32_t>(mask2);
         hdr->mask3 = static_cast<uint32_t>(mask3);
         hdr->mask4 = static_cast<uint32_t>(mask4);
+        hdr->global_epoch = 0;
+        hdr->reserved2 = 0;
     }
     uint8_t* p = reinterpret_cast<uint8_t*>(hdr) + sizeof(PCShmHeader);
+    global_epoch = &hdr->global_epoch;
+    root_epoch = reinterpret_cast<uint32_t*>(p);
+    p += er;
+    prefix2_epoch = reinterpret_cast<uint32_t*>(p);
+    p += e2;
     tag2 = reinterpret_cast<std::atomic<uint32_t>*>(p);
     p += sizeof(uint32_t) * (cap2 ? cap2 : 1);
     tab2 = reinterpret_cast<PrefixCacheEntry*>(p);
@@ -300,6 +336,11 @@ bool PrefixCache::map_embedded(const std::string& mbdir)
     tab4 = (cap4 ? reinterpret_cast<PrefixCacheEntry*>(p) : nullptr);
 
     if (init) {
+        __atomic_store_n(global_epoch, 0u, __ATOMIC_RELAXED);
+        for (size_t i = 0; i < ROOT_EPOCH_COUNT; ++i)
+            __atomic_store_n(&root_epoch[i], 0u, __ATOMIC_RELAXED);
+        for (size_t i = 0; i < PREFIX2_EPOCH_COUNT; ++i)
+            __atomic_store_n(&prefix2_epoch[i], 0u, __ATOMIC_RELAXED);
         size_t c2 = (cap2 ? cap2 : 1);
         for (size_t i = 0; i < c2; ++i) tag2[i].store(0u, std::memory_order_relaxed);
         if (cap3) for (size_t i = 0; i < cap3; ++i) tag3[i].store(0u, std::memory_order_relaxed);
@@ -356,19 +397,155 @@ inline bool PrefixCache::build4(const uint8_t* key, int len, uint32_t& p4) const
     return true;
 }
 
+namespace {
+
+constexpr uint32_t PFX_ORIGIN_MASK = 0x3u;
+constexpr uint32_t PFX_COUNTER_STEP = 0x4u;
+constexpr uint32_t PFX_COUNTER_MASK = 0x7FFFFFFCu;
+constexpr uint32_t PFX_UPDATE_ACTIVE = 0x80000000u;
+
+// Fold the upper prefix bytes into the low table-index bits. Unlike a
+// multiply-heavy avalanche hash, this leaves 16-bit integer keys unchanged
+// while distributing fixed-leading-byte string prefixes across sparse tables.
+inline uint32_t FoldPrefix(uint32_t value)
+{
+    return value ^ (value >> 16);
+}
+
+inline uint32_t LoadEntryCounter(const PrefixCacheEntry& entry)
+{
+    return __atomic_load_n(&entry.lf_counter, __ATOMIC_ACQUIRE);
+}
+
+inline bool EntryUpdateActive(uint32_t counter)
+{
+    return (counter & PFX_UPDATE_ACTIVE) != 0;
+}
+
+inline uint32_t BeginEntryUpdate(PrefixCacheEntry& entry, uint32_t origin_flags,
+    bool preserve_origin)
+{
+    uint32_t old_counter = LoadEntryCounter(entry);
+    if (preserve_origin)
+        origin_flags |= old_counter & PFX_ORIGIN_MASK;
+
+    uint32_t generation = ((old_counter & PFX_COUNTER_MASK) + PFX_COUNTER_STEP)
+        & PFX_COUNTER_MASK;
+    uint32_t stable_counter = generation | (origin_flags & PFX_ORIGIN_MASK);
+
+    // The acquire side of the exchange keeps subsequent body stores after the
+    // active marker; the final release store publishes the completed body.
+    __atomic_exchange_n(&entry.lf_counter, stable_counter | PFX_UPDATE_ACTIVE,
+        __ATOMIC_ACQ_REL);
+    return stable_counter;
+}
+
+inline void FinishEntryUpdate(PrefixCacheEntry& entry, uint32_t stable_counter)
+{
+    __atomic_store_n(&entry.lf_counter, stable_counter, __ATOMIC_RELEASE);
+}
+
+inline void CopyEntryBody(PrefixCacheEntry& dst, const PrefixCacheEntry& src)
+{
+    // `lf_counter` is the final field. Copy the contiguous payload in one
+    // operation while leaving the active generation marker untouched.
+    memcpy(&dst, &src, offsetof(PrefixCacheEntry, lf_counter));
+}
+
+inline bool CopyStableEntry(const PrefixCacheEntry& src, uint32_t before,
+    PrefixCacheEntry& out)
+{
+    // Intentional Mabain optimistic snapshot protocol, matching
+    // LockFree::ReaderLockFreeStart/Stop: copy the mmap-backed payload, then
+    // accept it only if the atomic generation is unchanged and inactive.
+    // This relies on Mabain's validated GCC/Linux x86-64 ordering rather than
+    // providing a general ISO C++ synchronization primitive. A port to another
+    // compiler or architecture must validate both protocols together.
+    // See prefix_cache_snapshot_concurrency_test.cpp.
+    PrefixCacheEntry candidate {};
+    CopyEntryBody(candidate, src);
+
+    // Keep the body copy before the final validation load. This is Mabain's
+    // existing optimistic read pattern: consume the copy only when unchanged.
+    std::atomic_thread_fence(std::memory_order_acquire);
+    uint32_t after = LoadEntryCounter(src);
+    if (before != after || EntryUpdateActive(after))
+        return false;
+
+    candidate.lf_counter = after & PFX_ORIGIN_MASK;
+    out = candidate;
+    return true;
+}
+
+} // namespace
+
+uint32_t PrefixCache::CurrentEpoch(const uint8_t* key, int len) const
+{
+    if (key == nullptr || len < 2 || global_epoch == nullptr
+        || root_epoch == nullptr || prefix2_epoch == nullptr)
+        return 0;
+
+    uint16_t p2;
+    if (!build2(key, len, p2))
+        return 0;
+
+    // Counters only increase. Their modulo-2^32 sum changes whenever any
+    // applicable invalidation scope advances, without enlarging cache entries.
+    return __atomic_load_n(global_epoch, __ATOMIC_ACQUIRE)
+        + __atomic_load_n(&root_epoch[key[0]], __ATOMIC_ACQUIRE)
+        + __atomic_load_n(&prefix2_epoch[p2], __ATOMIC_ACQUIRE);
+}
+
+void PrefixCache::InvalidatePrefix2(const uint8_t* key, int len)
+{
+    uint16_t p2;
+    if (prefix2_epoch != nullptr && build2(key, len, p2))
+        (void)__atomic_add_fetch(&prefix2_epoch[p2], 1u, __ATOMIC_ACQ_REL);
+}
+
+void PrefixCache::InvalidateRoot(uint8_t first_byte)
+{
+    if (root_epoch != nullptr)
+        (void)__atomic_add_fetch(&root_epoch[first_byte], 1u, __ATOMIC_ACQ_REL);
+}
+
+void PrefixCache::InvalidateAll()
+{
+    if (global_epoch != nullptr)
+        (void)__atomic_add_fetch(global_epoch, 1u, __ATOMIC_ACQ_REL);
+}
+
+uint32_t PrefixCache::LoadEntryCounterForTest(const PrefixCacheEntry& entry)
+{
+    return LoadEntryCounter(entry);
+}
+
+bool PrefixCache::CopyStableEntryForTest(const PrefixCacheEntry& src,
+    uint32_t before, PrefixCacheEntry& out)
+{
+    return CopyStableEntry(src, before, out);
+}
+
 // Lookup the deepest available cached entry for the given key prefix.
-// Returns 4, 3, 2 for hits at that depth; 0 on miss. Out param receives the cached entry.
+// Returns 4, 3, 2 for stable hits; 0 on miss; UNSTABLE when a matching slot
+// changed while copied. Out receives the entry only after validation succeeds.
 int PrefixCache::GetDepth(const uint8_t* key, int len, PrefixCacheEntry& out) const
 {
     if (cap4 > 0 && key != nullptr && len >= 4) {
         uint32_t p4 = static_cast<uint32_t>(static_cast<uint32_t>(key[0]) | (static_cast<uint32_t>(key[1]) << 8)
             | (static_cast<uint32_t>(key[2]) << 16) | (static_cast<uint32_t>(key[3]) << 24));
-        size_t idx4 = static_cast<size_t>(p4) & mask4;
-        uint32_t v = valid4[idx4].load(std::memory_order_acquire);
-        if (v) {
-            uint32_t t4 = tag4[idx4].load(std::memory_order_acquire);
-            if (t4 == p4) {
-                out = tab4[idx4];
+        size_t idx4 = static_cast<size_t>(FoldPrefix(p4)) & mask4;
+        uint32_t valid = valid4[idx4].load(std::memory_order_acquire);
+        if (valid && tag4[idx4].load(std::memory_order_acquire) == p4) {
+            uint32_t before = LoadEntryCounter(tab4[idx4]);
+            if (!EntryUpdateActive(before)) {
+                if (!CopyStableEntry(tab4[idx4], before, out))
+                    return UNSTABLE;
+                if (!valid4[idx4].load(std::memory_order_acquire)
+                    || tag4[idx4].load(std::memory_order_acquire) != p4)
+                    return UNSTABLE;
+                if (out.cache_epoch != CurrentEpoch(key, len))
+                    return 0;
                 return 4;
             }
         }
@@ -378,19 +555,36 @@ int PrefixCache::GetDepth(const uint8_t* key, int len, PrefixCacheEntry& out) co
         // Little-endian 3-byte build
         uint32_t p3 = static_cast<uint32_t>(static_cast<uint32_t>(key[0]) | (static_cast<uint32_t>(key[1]) << 8)
             | (static_cast<uint32_t>(key[2]) << 16));
-        size_t idx3 = static_cast<size_t>(p3) & mask3;
-        uint32_t t3 = tag3[idx3].load(std::memory_order_acquire);
-        if (t3 == (p3 + 1)) {
-            out = tab3[idx3];
-            return 3;
+        size_t idx3 = static_cast<size_t>(FoldPrefix(p3)) & mask3;
+        if (tag3[idx3].load(std::memory_order_acquire) == (p3 + 1)) {
+            uint32_t before3 = LoadEntryCounter(tab3[idx3]);
+            if (!EntryUpdateActive(before3)) {
+                if (!CopyStableEntry(tab3[idx3], before3, out))
+                    return UNSTABLE;
+                if (tag3[idx3].load(std::memory_order_acquire) != (p3 + 1))
+                    return UNSTABLE;
+                if (out.cache_epoch != CurrentEpoch(key, len))
+                    return 0;
+                return 3;
+            }
         }
         // Fall back to 2-byte table using lower 2 bytes of p3 (LE)
         uint16_t p2 = static_cast<uint16_t>(p3 & 0xFFFFu);
         size_t idx2 = static_cast<size_t>(p2) & mask2;
-        uint32_t t2 = tag2[idx2].load(std::memory_order_acquire);
-        if ((full2 && t2) || (!full2 && t2 == (static_cast<uint32_t>(p2) + 1))) {
-            out = tab2[idx2];
-            return 2;
+        uint32_t tag = tag2[idx2].load(std::memory_order_acquire);
+        if ((full2 && tag) || (!full2 && tag == (static_cast<uint32_t>(p2) + 1))) {
+            uint32_t before2 = LoadEntryCounter(tab2[idx2]);
+            if (!EntryUpdateActive(before2)) {
+                if (!CopyStableEntry(tab2[idx2], before2, out))
+                    return UNSTABLE;
+                uint32_t after_tag = tag2[idx2].load(std::memory_order_acquire);
+                if (!((full2 && after_tag)
+                        || (!full2 && after_tag == (static_cast<uint32_t>(p2) + 1))))
+                    return UNSTABLE;
+                if (out.cache_epoch != CurrentEpoch(key, len))
+                    return 0;
+                return 2;
+            }
         }
         return 0;
     }
@@ -398,10 +592,20 @@ int PrefixCache::GetDepth(const uint8_t* key, int len, PrefixCacheEntry& out) co
         // Little-endian 2-byte build
         uint16_t p2 = static_cast<uint16_t>(static_cast<uint16_t>(key[0]) | (static_cast<uint16_t>(key[1]) << 8));
         size_t idx2 = static_cast<size_t>(p2) & mask2;
-        uint32_t t2 = tag2[idx2].load(std::memory_order_acquire);
-        if ((full2 && t2) || (!full2 && t2 == (static_cast<uint32_t>(p2) + 1))) {
-            out = tab2[idx2];
-            return 2;
+        uint32_t tag = tag2[idx2].load(std::memory_order_acquire);
+        if ((full2 && tag) || (!full2 && tag == (static_cast<uint32_t>(p2) + 1))) {
+            uint32_t before = LoadEntryCounter(tab2[idx2]);
+            if (!EntryUpdateActive(before)) {
+                if (!CopyStableEntry(tab2[idx2], before, out))
+                    return UNSTABLE;
+                uint32_t after_tag = tag2[idx2].load(std::memory_order_acquire);
+                if (!((full2 && after_tag)
+                        || (!full2 && after_tag == (static_cast<uint32_t>(p2) + 1))))
+                    return UNSTABLE;
+                if (out.cache_epoch != CurrentEpoch(key, len))
+                    return 0;
+                return 2;
+            }
         }
     }
     return 0;
@@ -411,32 +615,35 @@ int PrefixCache::GetDepth(const uint8_t* key, int len, PrefixCacheEntry& out) co
 // Uses release-ordering on tag/valid to publish after the entry body is written.
 void PrefixCache::Put(const uint8_t* key, int len, const PrefixCacheEntry& in)
 {
+    PrefixCacheEntry seeded = in;
+    seeded.cache_epoch = CurrentEpoch(key, len);
+
     // Insert into 4-byte table if we have at least 4 bytes
     uint32_t p4;
     if (cap4 > 0 && build4(key, len, p4)) {
-        size_t idx4 = static_cast<size_t>(p4) & mask4;
+        size_t idx4 = static_cast<size_t>(FoldPrefix(p4)) & mask4;
+        uint32_t stable_counter = BeginEntryUpdate(tab4[idx4], seeded.lf_counter,
+            false);
         // Clear valid first to prevent readers from observing partial update
         valid4[idx4].store(0, std::memory_order_release);
-        PrefixCacheEntry e = in;
-        tab4[idx4] = e;
+        CopyEntryBody(tab4[idx4], seeded);
         tag4[idx4].store(p4, std::memory_order_release);
         valid4[idx4].store(1, std::memory_order_release);
+        FinishEntryUpdate(tab4[idx4], stable_counter);
         ++put_count;
     }
     // Insert into 3-byte table if we have at least 3 bytes
     uint32_t p3;
     if (cap3 > 0 && build3(key, len, p3)) {
-        size_t idx3 = static_cast<size_t>(p3) & mask3;
+        size_t idx3 = static_cast<size_t>(FoldPrefix(p3)) & mask3;
         uint32_t old_tag = tag3[idx3].load(std::memory_order_relaxed);
-        PrefixCacheEntry e = in;
-        if (old_tag != 0) {
-            // Preserve prior origin bits on overwrite
-            e.lf_counter |= tab3[idx3].lf_counter;
-        }
+        uint32_t stable_counter = BeginEntryUpdate(tab3[idx3], seeded.lf_counter,
+            old_tag != 0);
         // Clear tag to prevent readers from observing partial update
         tag3[idx3].store(0, std::memory_order_release);
-        tab3[idx3] = e; // write body
+        CopyEntryBody(tab3[idx3], seeded);
         tag3[idx3].store(p3 + 1, std::memory_order_release); // publish
+        FinishEntryUpdate(tab3[idx3], stable_counter);
         ++put_count;
     }
     // Also insert into 2-byte table if we have at least 2 bytes
@@ -444,13 +651,12 @@ void PrefixCache::Put(const uint8_t* key, int len, const PrefixCacheEntry& in)
     if (build2(key, len, p2)) {
         size_t idx2 = static_cast<size_t>(p2) & mask2;
         uint32_t old_tag = tag2[idx2].load(std::memory_order_relaxed);
-        PrefixCacheEntry e = in;
-        if (old_tag != 0) {
-            e.lf_counter |= tab2[idx2].lf_counter;
-        }
+        uint32_t stable_counter = BeginEntryUpdate(tab2[idx2], seeded.lf_counter,
+            old_tag != 0);
         tag2[idx2].store(0, std::memory_order_release);
-        tab2[idx2] = e;
+        CopyEntryBody(tab2[idx2], seeded);
         tag2[idx2].store(static_cast<uint32_t>(p2) + 1, std::memory_order_release);
+        FinishEntryUpdate(tab2[idx2], stable_counter);
         ++put_count;
     }
 }
@@ -459,15 +665,20 @@ void PrefixCache::Put(const uint8_t* key, int len, const PrefixCacheEntry& in)
 // Used by writer to seed canonical boundaries and mid-edge seeds.
 void PrefixCache::PutAtDepth(const uint8_t* key, int depth, const PrefixCacheEntry& in)
 {
+    PrefixCacheEntry seeded = in;
+    seeded.cache_epoch = CurrentEpoch(key, depth);
+
     if (depth == 4 && cap4 > 0) {
         uint32_t p4;
         if (build4(key, 4, p4)) {
-            size_t idx4 = static_cast<size_t>(p4) & mask4;
+            size_t idx4 = static_cast<size_t>(FoldPrefix(p4)) & mask4;
+            uint32_t stable_counter = BeginEntryUpdate(tab4[idx4], seeded.lf_counter,
+                false);
             valid4[idx4].store(0, std::memory_order_release);
-            PrefixCacheEntry e = in;
-            tab4[idx4] = e;
+            CopyEntryBody(tab4[idx4], seeded);
             tag4[idx4].store(p4, std::memory_order_release);
             valid4[idx4].store(1, std::memory_order_release);
+            FinishEntryUpdate(tab4[idx4], stable_counter);
             ++put_count;
         }
         return;
@@ -475,14 +686,14 @@ void PrefixCache::PutAtDepth(const uint8_t* key, int depth, const PrefixCacheEnt
     if (depth == 3 && cap3 > 0) {
         uint32_t p3;
         if (build3(key, 3, p3)) {
-            size_t idx3 = static_cast<size_t>(p3) & mask3;
+            size_t idx3 = static_cast<size_t>(FoldPrefix(p3)) & mask3;
             uint32_t old_tag = tag3[idx3].load(std::memory_order_relaxed);
-            PrefixCacheEntry e = in;
-            if (old_tag != 0)
-                e.lf_counter |= tab3[idx3].lf_counter;
+            uint32_t stable_counter = BeginEntryUpdate(tab3[idx3], seeded.lf_counter,
+                old_tag != 0);
             tag3[idx3].store(0, std::memory_order_release);
-            tab3[idx3] = e;
+            CopyEntryBody(tab3[idx3], seeded);
             tag3[idx3].store(p3 + 1, std::memory_order_release);
+            FinishEntryUpdate(tab3[idx3], stable_counter);
             ++put_count;
         }
         return;
@@ -492,12 +703,12 @@ void PrefixCache::PutAtDepth(const uint8_t* key, int depth, const PrefixCacheEnt
         if (build2(key, 2, p2)) {
             size_t idx2 = static_cast<size_t>(p2) & mask2;
             uint32_t old_tag = tag2[idx2].load(std::memory_order_relaxed);
-            PrefixCacheEntry e = in;
-            if (old_tag != 0)
-                e.lf_counter |= tab2[idx2].lf_counter;
+            uint32_t stable_counter = BeginEntryUpdate(tab2[idx2], seeded.lf_counter,
+                old_tag != 0);
             tag2[idx2].store(0, std::memory_order_release);
-            tab2[idx2] = e;
+            CopyEntryBody(tab2[idx2], seeded);
             tag2[idx2].store(static_cast<uint32_t>(p2) + 1, std::memory_order_release);
+            FinishEntryUpdate(tab2[idx2], stable_counter);
             ++put_count;
         }
         return;
