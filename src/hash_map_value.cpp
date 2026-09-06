@@ -2,7 +2,7 @@
  * HashMap-owned immutable key/value records and reader-safe reclamation.
  */
 
-#include "hash_map.h"
+#include "hash_map_internal.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -432,7 +432,7 @@ enum class RecordMatch {
 
 class HashMapValueState {
 public:
-    HashMapValueState(HashMap& map, const HashMapValueConfig& config,
+    HashMapValueState(HashMapImpl& map, const HashMapValueConfig& config,
         bool writer)
         : map_(map)
         , config_(config)
@@ -484,7 +484,7 @@ public:
         }
     }
 
-    void Attach(HashMap::ValueHMHeader* header)
+    void Attach(HashMapImpl::ValueHMHeader* header)
     {
         header_ = header;
         local_owners_.reset(
@@ -591,8 +591,8 @@ public:
         if (view == nullptr)
             return MBError::READ_ERROR;
 
-        const uint64_t hash = HashMap::normalize_hash(
-            HashMap::fnv1a64(key, key_length));
+        const uint64_t hash = HashMapImpl::normalize_hash(
+            HashMapImpl::fnv1a64(key, key_length));
         ProbeResult probe;
         int result = ProbeForWriter(view, key, key_length, hash, probe);
         if (result != MBError::SUCCESS)
@@ -615,7 +615,7 @@ public:
         if (new_record == nullptr)
             return writer_file_->GetLastAllocError();
 
-        HashMap::ValueBucket* bucket = Bucket(probe.index);
+        HashMapImpl::ValueBucket* bucket = Bucket(probe.index);
         if (probe.found) {
             const uint64_t retire_epoch
                 = header_->reader_epoch.load(std::memory_order_seq_cst);
@@ -657,7 +657,7 @@ public:
         int claim_result = GetThreadSlot(slot_entry);
         if (claim_result != MBError::SUCCESS)
             return claim_result;
-        HashMap::ValueReaderSlot& slot
+        HashMapImpl::ValueReaderSlot& slot
             = header_->reader_slots[slot_entry.slot_index];
 
         for (unsigned attempt = 0; attempt < kLookupRetries; ++attempt) {
@@ -726,8 +726,8 @@ public:
         ValueGenerationView* view = EnsureView(generation);
         if (view == nullptr)
             return MBError::READ_ERROR;
-        const uint64_t hash = HashMap::normalize_hash(
-            HashMap::fnv1a64(key, key_length));
+        const uint64_t hash = HashMapImpl::normalize_hash(
+            HashMapImpl::fnv1a64(key, key_length));
         ProbeResult probe;
         int result = ProbeForWriter(view, key, key_length, hash, probe);
         if (result != MBError::SUCCESS)
@@ -789,7 +789,7 @@ public:
     {
         if (header_ == nullptr || slot_index >= header_->reader_slot_count)
             return;
-        HashMap::ValueReaderSlot& slot = header_->reader_slots[slot_index];
+        HashMapImpl::ValueReaderSlot& slot = header_->reader_slots[slot_index];
         uint64_t expected = owner_id;
         if (!slot.owner_id.compare_exchange_strong(expected, kSlotClaiming,
                 std::memory_order_acq_rel, std::memory_order_acquire)) {
@@ -807,7 +807,7 @@ public:
 private:
     class ActiveSlotGuard {
     public:
-        explicit ActiveSlotGuard(HashMap::ValueReaderSlot& slot)
+        explicit ActiveSlotGuard(HashMapImpl::ValueReaderSlot& slot)
             : slot_(slot)
             , active_(false)
         {
@@ -841,7 +841,7 @@ private:
         }
 
     private:
-        HashMap::ValueReaderSlot& slot_;
+        HashMapImpl::ValueReaderSlot& slot_;
         bool active_;
     };
 
@@ -910,11 +910,11 @@ private:
             + remainder * header_->max_load_percent / 100U;
     }
 
-    HashMap::ValueBucket* Bucket(size_t index) const
+    HashMapImpl::ValueBucket* Bucket(size_t index) const
     {
-        return reinterpret_cast<HashMap::ValueBucket*>(
+        return reinterpret_cast<HashMapImpl::ValueBucket*>(
             map_.map_base_ + header_->buckets_off
-            + index * sizeof(HashMap::ValueBucket));
+            + index * sizeof(HashMapImpl::ValueBucket));
     }
 
     RecordMatch InspectRecord(ValueGenerationView* view, size_t offset,
@@ -972,7 +972,7 @@ private:
         size_t first_tombstone = header_->capacity;
         for (size_t probe = 0; probe < header_->capacity; ++probe) {
             const size_t index = (start + probe) & header_->mask;
-            HashMap::ValueBucket* bucket = Bucket(index);
+            HashMapImpl::ValueBucket* bucket = Bucket(index);
             const uint64_t bucket_hash
                 = bucket->hash.load(std::memory_order_relaxed);
             if (bucket_hash == kTombstoneHash) {
@@ -1018,8 +1018,8 @@ private:
     int LookupValue(ValueGenerationView* view, const uint8_t* key,
         int key_length, MBData& output, uint32_t& copied_length)
     {
-        const uint64_t hash = HashMap::normalize_hash(
-            HashMap::fnv1a64(key, key_length));
+        const uint64_t hash = HashMapImpl::normalize_hash(
+            HashMapImpl::fnv1a64(key, key_length));
         const size_t start = static_cast<size_t>(hash) & header_->mask;
         for (size_t probe = 0; probe < header_->capacity; ++probe) {
             const size_t index = (start + probe) & header_->mask;
@@ -1027,7 +1027,7 @@ private:
                 const size_t prefetch = (start + probe + 2) & header_->mask;
                 __builtin_prefetch(Bucket(prefetch), 0, 1);
             }
-            HashMap::ValueBucket* bucket = Bucket(index);
+            HashMapImpl::ValueBucket* bucket = Bucket(index);
             const uint64_t bucket_hash
                 = bucket->hash.load(std::memory_order_acquire);
             if (bucket_hash == kEmptyHash)
@@ -1141,7 +1141,7 @@ private:
     bool IsProtected(const RetiredRecord& record) const
     {
         for (uint32_t index = 0; index < header_->reader_slot_count; ++index) {
-            const HashMap::ValueReaderSlot& slot = header_->reader_slots[index];
+            const HashMapImpl::ValueReaderSlot& slot = header_->reader_slots[index];
             const uint64_t epoch
                 = slot.active_epoch.load(std::memory_order_seq_cst);
             if (epoch == 0 || epoch > record.retirement_epoch)
@@ -1157,7 +1157,7 @@ private:
     void CleanDeadSlots()
     {
         for (uint32_t index = 0; index < header_->reader_slot_count; ++index) {
-            HashMap::ValueReaderSlot& slot = header_->reader_slots[index];
+            HashMapImpl::ValueReaderSlot& slot = header_->reader_slots[index];
             const uint64_t owner
                 = slot.owner_id.load(std::memory_order_acquire);
             if (owner == 0 || owner == kSlotClaiming)
@@ -1214,7 +1214,7 @@ private:
             owner ^= 0xD6E8FEB86659FD93ULL;
 
         for (uint32_t index = 0; index < header_->reader_slot_count; ++index) {
-            HashMap::ValueReaderSlot& slot = header_->reader_slots[index];
+            HashMapImpl::ValueReaderSlot& slot = header_->reader_slots[index];
             uint64_t expected = 0;
             if (!slot.owner_id.compare_exchange_strong(expected, kSlotClaiming,
                     std::memory_order_acq_rel, std::memory_order_acquire)) {
@@ -1256,7 +1256,7 @@ private:
                 = local_owners_[index].load(std::memory_order_acquire);
             if (local_owner == 0)
                 continue;
-            const HashMap::ValueReaderSlot& slot = header_->reader_slots[index];
+            const HashMapImpl::ValueReaderSlot& slot = header_->reader_slots[index];
             if (slot.owner_id.load(std::memory_order_acquire) != local_owner)
                 continue;
             if (slot.active_epoch.load(std::memory_order_seq_cst) != 0
@@ -1301,9 +1301,9 @@ private:
         }
     }
 
-    HashMap& map_;
+    HashMapImpl& map_;
     HashMapValueConfig config_;
-    HashMap::ValueHMHeader* header_;
+    HashMapImpl::ValueHMHeader* header_;
     bool writer_;
     uint64_t process_id_;
     uint64_t process_start_time_;
@@ -1369,7 +1369,7 @@ bool StatSizedFile(const std::string& path, size_t size, bool& exists)
 
 } // namespace
 
-HashMap::HashMap(const std::string& mbdir, size_t requested_capacity,
+HashMapImpl::HashMapImpl(const std::string& mbdir, size_t requested_capacity,
     int options, const HashMapValueConfig& config, size_t index_memcap_mb)
     : path_(mbdir + "_hashmap")
     , options_(options)
@@ -1533,7 +1533,7 @@ HashMap::HashMap(const std::string& mbdir, size_t requested_capacity,
     }
 }
 
-int HashMap::PutValue(const uint8_t* key, int key_length,
+int HashMapImpl::PutValue(const uint8_t* key, int key_length,
     const uint8_t* value, int value_length, bool overwrite)
 {
     if (storage_mode_ != StorageMode::VALUE || value_state_ == nullptr)
@@ -1541,7 +1541,7 @@ int HashMap::PutValue(const uint8_t* key, int key_length,
     return value_state_->Put(key, key_length, value, value_length, overwrite);
 }
 
-int HashMap::GetValue(const uint8_t* key, int key_length, MBData& value) const
+int HashMapImpl::GetValue(const uint8_t* key, int key_length, MBData& value) const
 {
     value.data_len = 0;
     if (storage_mode_ != StorageMode::VALUE || value_state_ == nullptr)
@@ -1549,20 +1549,20 @@ int HashMap::GetValue(const uint8_t* key, int key_length, MBData& value) const
     return value_state_->Get(key, key_length, value);
 }
 
-int HashMap::erase_value(const uint8_t* key, int length)
+int HashMapImpl::erase_value(const uint8_t* key, int length)
 {
     return value_state_ == nullptr
         ? MBError::NOT_ALLOWED
         : value_state_->Erase(key, length);
 }
 
-void HashMap::print_value_stats(std::ostream& output) const
+void HashMapImpl::print_value_stats(std::ostream& output) const
 {
     if (value_state_ != nullptr)
         value_state_->PrintStats(output);
 }
 
-void HashMap::flush_value() const
+void HashMapImpl::flush_value() const
 {
     if (value_state_ != nullptr)
         value_state_->Flush();

@@ -26,7 +26,7 @@
 
 #include "../db.h"
 #include "../error.h"
-#include "../hash_map.h"
+#include "../hash_map_api.h"
 #include "../mabain_consts.h"
 
 using namespace mabain;

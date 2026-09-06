@@ -190,6 +190,10 @@ have the same 64-bit hash.
 
 ## 6. Public API
 
+The HashMap API is declared in the separately installed `hash_map_api.h`
+header. It is not added to or included by `db.h`; existing radix-tree clients
+therefore do not acquire a HashMap dependency.
+
 Preserve the existing constructor and reference-only methods:
 
 ```cpp

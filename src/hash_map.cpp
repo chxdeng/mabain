@@ -2,7 +2,7 @@
  * Shared-memory hash map for exact-match caching using RollableFile.
  */
 
-#include "hash_map.h"
+#include "hash_map_internal.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -68,7 +68,7 @@ void BuildInlineWords(const uint8_t* key, uint32_t len, uint32_t inline_key,
 } // namespace
 
 // Fast 64-bit hash; uses XXH3 when available, otherwise FNV-1a.
-uint64_t HashMap::fnv1a64(const uint8_t* data, int len)
+uint64_t HashMapImpl::fnv1a64(const uint8_t* data, int len)
 {
     uint64_t hash = 0;
 #ifdef MB_HAVE_XXHASH
@@ -85,7 +85,7 @@ uint64_t HashMap::fnv1a64(const uint8_t* data, int len)
     return hash;
 }
 
-uint64_t HashMap::normalize_hash(uint64_t hash)
+uint64_t HashMapImpl::normalize_hash(uint64_t hash)
 {
     if (hash == kEmptyHash)
         return 0xA5A5A5A5A5A5A5A5ULL;
@@ -94,7 +94,7 @@ uint64_t HashMap::normalize_hash(uint64_t hash)
     return hash;
 }
 
-size_t HashMap::checked_memcap_bytes(size_t memcap_mb)
+size_t HashMapImpl::checked_memcap_bytes(size_t memcap_mb)
 {
     if (memcap_mb == 0
         || memcap_mb > (std::numeric_limits<size_t>::max() >> 20)) {
@@ -103,7 +103,7 @@ size_t HashMap::checked_memcap_bytes(size_t memcap_mb)
     return memcap_mb << 20;
 }
 
-HashMap::HashMap(const std::string& mbdir, size_t capacity, int options,
+HashMapImpl::HashMapImpl(const std::string& mbdir, size_t capacity, int options,
     uint32_t num_stripes, uint32_t inline_key, size_t memcap_mb, bool compact64)
     : path_(mbdir + "_hashmap")
     , options_(options)
@@ -173,12 +173,12 @@ HashMap::HashMap(const std::string& mbdir, size_t capacity, int options,
     }
 }
 
-HashMap::~HashMap()
+HashMapImpl::~HashMapImpl()
 {
     // RollableFile owns mappings and flush.
 }
 
-size_t HashMap::expected_capacity(size_t requested, size_t bucket_size) const
+size_t HashMapImpl::expected_capacity(size_t requested, size_t bucket_size) const
 {
     size_t desired = floor_pow2_sz(std::max(requested, kMinimumCapacity));
     if (map_size_ < sizeof(HMHeader) + kMinimumCapacity * bucket_size)
@@ -188,7 +188,7 @@ size_t HashMap::expected_capacity(size_t requested, size_t bucket_size) const
     return std::min(desired, maximum);
 }
 
-void HashMap::initialize_header(size_t capacity, uint32_t inline_key)
+void HashMapImpl::initialize_header(size_t capacity, uint32_t inline_key)
 {
     new (&hdr_->control) std::atomic<uint64_t>(0);
     hdr_->capacity = capacity;
@@ -221,7 +221,7 @@ void HashMap::initialize_header(size_t capacity, uint32_t inline_key)
     hdr_->control.store(kHashMapControl, std::memory_order_release);
 }
 
-void HashMap::validate_header(size_t capacity, uint32_t inline_key) const
+void HashMapImpl::validate_header(size_t capacity, uint32_t inline_key) const
 {
     const size_t expected_bucket_size
         = compact_ ? sizeof(BucketCompact) : sizeof(BucketFull);
@@ -235,7 +235,7 @@ void HashMap::validate_header(size_t capacity, uint32_t inline_key) const
     }
 }
 
-void HashMap::reset_for_writer()
+void HashMapImpl::reset_for_writer()
 {
     uint64_t generation = hdr_->generation.load(std::memory_order_relaxed);
     if (generation >= std::numeric_limits<uint64_t>::max() - 1)
@@ -258,17 +258,17 @@ void HashMap::reset_for_writer()
     hdr_->generation.store(resetting + 1, std::memory_order_release);
 }
 
-HashMap::BucketFull* HashMap::bucket_full_ptr(size_t i) const
+HashMapImpl::BucketFull* HashMapImpl::bucket_full_ptr(size_t i) const
 {
     return reinterpret_cast<BucketFull*>(map_base_ + bucket_offset(i));
 }
 
-HashMap::BucketCompact* HashMap::bucket_compact_ptr(size_t i) const
+HashMapImpl::BucketCompact* HashMapImpl::bucket_compact_ptr(size_t i) const
 {
     return reinterpret_cast<BucketCompact*>(map_base_ + bucket_offset(i));
 }
 
-bool HashMap::full_key_matches(const BucketFull& bucket, const uint8_t* key,
+bool HashMapImpl::full_key_matches(const BucketFull& bucket, const uint8_t* key,
     uint32_t len, uint64_t& stable_meta) const
 {
     uint64_t meta_before = bucket.key_meta.load(std::memory_order_acquire);
@@ -293,7 +293,7 @@ bool HashMap::full_key_matches(const BucketFull& bucket, const uint8_t* key,
         && actual[2] == expected[2];
 }
 
-bool HashMap::write_full_body(BucketFull& bucket, const uint8_t* key,
+bool HashMapImpl::write_full_body(BucketFull& bucket, const uint8_t* key,
     uint32_t len, size_t ref_offset)
 {
     const uint64_t old_meta = bucket.key_meta.load(std::memory_order_relaxed);
@@ -315,7 +315,7 @@ bool HashMap::write_full_body(BucketFull& bucket, const uint8_t* key,
     return true;
 }
 
-bool HashMap::Get(const uint8_t* key, int len, size_t& ref_offset) const
+bool HashMapImpl::Get(const uint8_t* key, int len, size_t& ref_offset) const
 {
     if (storage_mode_ != StorageMode::REFERENCE)
         return false;
@@ -424,7 +424,7 @@ bool HashMap::Get(const uint8_t* key, int len, size_t& ref_offset) const
     return false;
 }
 
-int HashMap::Put(const uint8_t* key, int len, size_t ref_offset, bool overwrite)
+int HashMapImpl::Put(const uint8_t* key, int len, size_t ref_offset, bool overwrite)
 {
     if (storage_mode_ != StorageMode::REFERENCE)
         return MBError::NOT_ALLOWED;
@@ -507,7 +507,7 @@ int HashMap::Put(const uint8_t* key, int len, size_t ref_offset, bool overwrite)
     return MBError::SUCCESS;
 }
 
-int HashMap::Erase(const uint8_t* key, int len)
+int HashMapImpl::Erase(const uint8_t* key, int len)
 {
     if (storage_mode_ == StorageMode::VALUE)
         return erase_value(key, len);
@@ -553,7 +553,7 @@ int HashMap::Erase(const uint8_t* key, int len)
     return MBError::NOT_EXIST;
 }
 
-void HashMap::PrintStats(std::ostream& os) const
+void HashMapImpl::PrintStats(std::ostream& os) const
 {
     if (storage_mode_ == StorageMode::VALUE) {
         print_value_stats(os);
@@ -567,7 +567,7 @@ void HashMap::PrintStats(std::ostream& os) const
        << "\tstripes: " << hdr_->stripes << "\n";
 }
 
-void HashMap::Flush() const
+void HashMapImpl::Flush() const
 {
     if (storage_mode_ == StorageMode::VALUE) {
         flush_value();

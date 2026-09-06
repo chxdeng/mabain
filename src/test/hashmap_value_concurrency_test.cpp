@@ -18,7 +18,7 @@
 #include <vector>
 
 #include "../error.h"
-#include "../hash_map.h"
+#include "../hash_map_api.h"
 #include "../mabain_consts.h"
 #include "../mb_data.h"
 #include "../resource_pool.h"
