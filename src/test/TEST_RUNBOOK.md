@@ -13,9 +13,11 @@ Linux validation host from a clean Mabain checkout. Do not run tests that share
   `/var/tmp/mabain_test` at startup, not only Mabain files.
 - Run `sigbus_disk_pressure_test` only on a disposable host or an isolated
   `/tmp` filesystem. It intentionally fills `/tmp` to 100%.
-- Run `repro_errno95_real.sh` only on a disposable host with root or passwordless
-  sudo access. It creates filesystems, loop-mounts images, and preserves a 2 GB
-  image and mount by default.
+- Run `repro_errno95_real.sh` only on a Linux validation host with root or
+  passwordless sudo access and enough free space under `/tmp`. It creates a 2 GB
+  filesystem image and loop-mounts it. Use `KEEP_ARTIFACTS=0` for normal
+  validation so the mount, loop device, image, and probe error file are cleaned
+  up on exit; the script default is to preserve them for debugging.
 - The tracked `run_test` script is a historical soak launcher, not a complete or
   reliable all-tests driver. It omits newer tests, runs for hours, starts the
   final multi-process workload in the background, and does not wait for it.
@@ -285,9 +287,17 @@ wait "$master_writer" || exit 1
 
 ### Real errno 95 reproduction
 
-Run only on a disposable Linux host. The default test probes vfat, msdos,
-minix, bfs, and ntfs loop-mounted filesystems, inserts one million records, and
-keeps its final image and mount for inspection:
+Run only on a Linux validation host with root or passwordless sudo access. The
+default test probes vfat, msdos, minix, bfs, and ntfs. For each available
+filesystem it creates a 2 GB image under `/tmp`, formats and loop-mounts it, and
+uses a 1 MB `fallocate` probe. Minix is formatted as Minix v3. The first mounted
+filesystem whose probe returns real kernel `EOPNOTSUPP`/errno 95 is used for the
+Mabain test. Which candidate is selected can vary with the host kernel and
+filesystem tools; on the current validation host, vfat and msdos supported the
+probe and Minix produced errno 95.
+
+The recommended invocation automatically cleans up the mount, loop device,
+image, and probe error file even after a normal test failure:
 
 ```bash
 cd ~/mabain
@@ -296,8 +306,29 @@ KEEP_ARTIFACTS=0 src/test/repro_errno95_real.sh
 
 Useful overrides are `FS_CANDIDATES`, `INSERT_LOOKUP_COUNT`,
 `MEMCAP_INDEX_MB`, `MEMCAP_DATA_MB`, `IMAGE_SIZE_MB`, and `KEEP_ARTIFACTS`.
-Pass criteria: the script reports a real kernel `EOPNOTSUPP`/errno 95 path and
-the writer completes insert/lookup validation.
+
+Pass criteria:
+
+- The probe selects a filesystem after receiving real kernel errno 95.
+- The Mabain log reports `errno=95, falling back to ftruncate` for its files.
+- `errno95_db_writer_test` completes all configured inserts and verifies every
+  lookup; the default is one million of each.
+- The script exits with status 0 and reports `SUCCESS: real filesystem
+  reproduction of errno=95 confirmed`.
+
+A pass means errno 95 was reproduced and Mabain handled it correctly. It does
+not mean the filesystem stopped returning errno 95. With `KEEP_ARTIFACTS=0`,
+the script retains only its small Mabain log copy under
+`/tmp/mabain_errno95_log_<fs>_<pid>.txt`.
+
+After an interrupted run, verify that no test mount or loop device remains:
+
+```bash
+findmnt -rn -o SOURCE,TARGET,FSTYPE | grep mabain_errno95 || true
+sudo losetup -a | grep mabain_errno95 || true
+find /tmp -maxdepth 1 \
+  \( -name 'mabain_errno95_*.img' -o -name 'mabain_errno95_mnt_*' \) -print
+```
 
 ### SIGBUS disk-pressure test
 
