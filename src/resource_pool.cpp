@@ -178,12 +178,21 @@ void ResourcePool::RemoveResourceByDB(const std::string& db_path)
     pthread_mutex_unlock(&pool_mutex);
 }
 
+std::shared_ptr<MmapFileIO> ResourcePool::OpenFileWithKey(
+    const std::string& pool_key, const std::string& fpath, int mode,
+    size_t file_size, bool& map_file, bool create_file)
+{
+    return OpenFileWithKey(pool_key, fpath, mode, file_size, map_file,
+        create_file, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+}
+
 std::shared_ptr<MmapFileIO> ResourcePool::OpenFileWithKey(const std::string& pool_key,
     const std::string& fpath,
     int mode,
     size_t file_size,
     bool& map_file,
-    bool create_file)
+    bool create_file,
+    mode_t create_mode)
 {
     std::shared_ptr<MmapFileIO> mmap_file;
 
@@ -202,7 +211,8 @@ std::shared_ptr<MmapFileIO> ResourcePool::OpenFileWithKey(const std::string& poo
             new MmapFileIO(fpath,
                 flags,
                 file_size,
-                mode & CONSTS::SYNC_ON_WRITE));
+                mode & CONSTS::SYNC_ON_WRITE,
+                create_mode));
         if (!(mode & CONSTS::MEMORY_ONLY_MODE) && !mmap_file->IsOpen()) {
             pthread_mutex_unlock(&pool_mutex);
             return NULL;
@@ -239,7 +249,19 @@ std::shared_ptr<MmapFileIO> ResourcePool::OpenFile(const std::string& fpath,
     bool& map_file,
     bool create_file)
 {
-    return OpenFileWithKey(fpath, fpath, mode, file_size, map_file, create_file);
+    return OpenFile(fpath, mode, file_size, map_file, create_file,
+        S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+}
+
+std::shared_ptr<MmapFileIO> ResourcePool::OpenFile(const std::string& fpath,
+    int mode,
+    size_t file_size,
+    bool& map_file,
+    bool create_file,
+    mode_t create_mode)
+{
+    return OpenFileWithKey(fpath, fpath, mode, file_size, map_file, create_file,
+        create_mode);
 }
 
 std::shared_ptr<RebuildBarrier> ResourcePool::OpenRebuildBarrier(

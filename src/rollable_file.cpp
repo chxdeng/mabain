@@ -46,6 +46,15 @@ thread_local int g_jemalloc_alloc_error = MBError::SUCCESS;
 const long RollableFile::page_size = sysconf(_SC_PAGESIZE);
 std::unordered_map<unsigned, RollableFile*> RollableFile::arena_manager_map;
 
+RollableFile::RollableFile(const std::string& fpath, size_t blocksize,
+    size_t memcap, int access_mode, long max_block,
+    int in_rc_offset_percentage)
+    : RollableFile(fpath, blocksize, memcap, access_mode, max_block,
+        in_rc_offset_percentage,
+        S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)
+{
+}
+
 int RollableFile::ShmSync(uint8_t* addr, int size)
 {
     off_t page_offset = ((off_t)addr) % RollableFile::page_size;
@@ -53,7 +62,7 @@ int RollableFile::ShmSync(uint8_t* addr, int size)
 }
 
 RollableFile::RollableFile(const std::string& fpath, size_t blocksize, size_t memcap, int access_mode,
-    long max_block, int in_rc_offset_percentage)
+    long max_block, int in_rc_offset_percentage, mode_t in_create_mode)
     : path(fpath)
     , block_size(blocksize)
     , mmap_mem(memcap)
@@ -63,6 +72,7 @@ RollableFile::RollableFile(const std::string& fpath, size_t blocksize, size_t me
     , max_num_block(max_block)
     , rc_offset_percentage(in_rc_offset_percentage)
     , mem_used(0)
+    , create_mode(in_create_mode)
 {
     sliding_addr = NULL;
     sliding_mem_size = SLIDING_MEM_SIZE;
@@ -159,7 +169,8 @@ int RollableFile::OpenAndMapBlockFile(size_t block_order, bool create_file)
         mode,
         block_size,
         map_file,
-        create_file);
+        create_file,
+        create_mode);
     if (files[block_order] == nullptr)
         return MBError::OPEN_FAILURE;
     if (map_file) {
