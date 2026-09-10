@@ -142,13 +142,15 @@ private:
     };
 
     struct ValueBucket {
-        std::atomic<uint64_t> hash;
-        std::atomic<size_t> record_offset;
+        // One atomic publication word: high 16 bits are a hash fingerprint and
+        // low 48 bits are the immutable record offset. Values 0 and 1 are the
+        // empty and tombstone sentinels respectively.
+        std::atomic<uint64_t> entry;
     };
 
     static_assert(sizeof(ValueReaderSlot) == 64,
         "HashMap value reader slot layout changed");
-    static_assert(sizeof(ValueBucket) == 16,
+    static_assert(sizeof(ValueBucket) == 8,
         "HashMap value bucket layout changed");
 
     // Hash helpers

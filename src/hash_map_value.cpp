@@ -34,11 +34,14 @@ namespace mabain {
 namespace {
 
 constexpr uint32_t kHashMapMagic = 0x484D4150U; // 'HMAP'
-constexpr uint16_t kValueLayoutVersion = 3;
+constexpr uint16_t kValueLayoutVersion = 4;
 constexpr uint64_t kValueControl = static_cast<uint64_t>(kHashMapMagic)
     | (static_cast<uint64_t>(kValueLayoutVersion) << 32);
-constexpr uint64_t kEmptyHash = 0;
-constexpr uint64_t kTombstoneHash = 1;
+constexpr uint64_t kEmptyValueEntry = 0;
+constexpr uint64_t kTombstoneValueEntry = 1;
+constexpr unsigned kValueOffsetBits = 48;
+constexpr uint64_t kValueOffsetLimit = uint64_t { 1 } << kValueOffsetBits;
+constexpr uint64_t kValueOffsetMask = kValueOffsetLimit - 1;
 constexpr uint64_t kSlotClaiming = std::numeric_limits<uint64_t>::max();
 constexpr uint64_t kFirstValueGeneration = 1;
 constexpr uint64_t kFirstReaderEpoch = 1;
@@ -48,6 +51,22 @@ constexpr size_t kMinimumValueBlockSize = 4ULL * 1024ULL * 1024ULL;
 constexpr unsigned kLookupRetries = 8;
 constexpr uint32_t kMaxValueReaderSlots = 128;
 constexpr mode_t kOwnerFileMode = S_IRUSR | S_IWUSR;
+
+uint64_t PackValueEntry(uint64_t hash, size_t record_offset)
+{
+    return (hash & ~kValueOffsetMask)
+        | static_cast<uint64_t>(record_offset);
+}
+
+size_t ValueEntryOffset(uint64_t entry)
+{
+    return static_cast<size_t>(entry & kValueOffsetMask);
+}
+
+bool ValueEntryHashMatches(uint64_t entry, uint64_t hash)
+{
+    return (entry & ~kValueOffsetMask) == (hash & ~kValueOffsetMask);
+}
 
 #ifdef MB_HAVE_XXHASH
 constexpr uint32_t kHashAlgorithm = 2;
@@ -626,15 +645,16 @@ public:
                 writer_file_->Free(new_record);
                 return MBError::NO_MEMORY;
             }
-            bucket->record_offset.store(new_offset, std::memory_order_release);
+            bucket->entry.store(PackValueEntry(hash, new_offset),
+                std::memory_order_release);
             retired_bytes_ += probe.old_size;
             header_->retired_value_bytes.store(retired_bytes_,
                 std::memory_order_relaxed);
             header_->live_value_bytes.fetch_sub(probe.old_size,
                 std::memory_order_relaxed);
         } else {
-            bucket->record_offset.store(new_offset, std::memory_order_relaxed);
-            bucket->hash.store(hash, std::memory_order_release);
+            bucket->entry.store(PackValueEntry(hash, new_offset),
+                std::memory_order_release);
             header_->used.fetch_add(1, std::memory_order_relaxed);
             if (probe.reused_tombstone)
                 header_->tombstones.fetch_sub(1, std::memory_order_relaxed);
@@ -746,7 +766,7 @@ public:
             return MBError::NO_MEMORY;
         }
 
-        Bucket(probe.index)->hash.store(kTombstoneHash,
+        Bucket(probe.index)->entry.store(kTombstoneValueEntry,
             std::memory_order_release);
         retired_bytes_ += probe.old_size;
         header_->retired_value_bytes.store(retired_bytes_,
@@ -973,14 +993,14 @@ private:
         for (size_t probe = 0; probe < header_->capacity; ++probe) {
             const size_t index = (start + probe) & header_->mask;
             HashMapImpl::ValueBucket* bucket = Bucket(index);
-            const uint64_t bucket_hash
-                = bucket->hash.load(std::memory_order_relaxed);
-            if (bucket_hash == kTombstoneHash) {
+            const uint64_t bucket_entry
+                = bucket->entry.load(std::memory_order_relaxed);
+            if (bucket_entry == kTombstoneValueEntry) {
                 if (first_tombstone == header_->capacity)
                     first_tombstone = index;
                 continue;
             }
-            if (bucket_hash == kEmptyHash) {
+            if (bucket_entry == kEmptyValueEntry) {
                 result.index = first_tombstone != header_->capacity
                     ? first_tombstone
                     : index;
@@ -988,11 +1008,10 @@ private:
                     = first_tombstone != header_->capacity;
                 return MBError::SUCCESS;
             }
-            if (bucket_hash != hash)
+            if (!ValueEntryHashMatches(bucket_entry, hash))
                 continue;
 
-            const size_t offset
-                = bucket->record_offset.load(std::memory_order_acquire);
+            const size_t offset = ValueEntryOffset(bucket_entry);
             size_t record_size = 0;
             uint32_t ignored_length = 0;
             const RecordMatch match = InspectRecord(view, offset, key,
@@ -1028,15 +1047,16 @@ private:
                 __builtin_prefetch(Bucket(prefetch), 0, 1);
             }
             HashMapImpl::ValueBucket* bucket = Bucket(index);
-            const uint64_t bucket_hash
-                = bucket->hash.load(std::memory_order_acquire);
-            if (bucket_hash == kEmptyHash)
+            const uint64_t bucket_entry
+                = bucket->entry.load(std::memory_order_acquire);
+            if (bucket_entry == kEmptyValueEntry)
                 return MBError::NOT_EXIST;
-            if (bucket_hash == kTombstoneHash || bucket_hash != hash)
+            if (bucket_entry == kTombstoneValueEntry
+                || !ValueEntryHashMatches(bucket_entry, hash)) {
                 continue;
+            }
 
-            const size_t offset
-                = bucket->record_offset.load(std::memory_order_acquire);
+            const size_t offset = ValueEntryOffset(bucket_entry);
             size_t ignored_size = 0;
             uint32_t value_length = 0;
             const RecordMatch match = InspectRecord(view, offset, key,
@@ -1330,6 +1350,7 @@ void ValidateValueConfig(const HashMapValueConfig& config)
         || config.value_block_size < largest_record
         || config.value_block_size % kMinimumValueBlockSize != 0
         || config.value_memcap == 0
+        || static_cast<uint64_t>(config.value_memcap) > kValueOffsetLimit
         || config.value_memcap % config.value_block_size != 0
         || config.value_memcap / config.value_block_size
             > std::numeric_limits<uint32_t>::max()
@@ -1466,8 +1487,7 @@ HashMapImpl::HashMapImpl(const std::string& mbdir, size_t requested_capacity,
             ValueBucket* bucket = reinterpret_cast<ValueBucket*>(
                 map_base_ + value_hdr_->buckets_off
                 + index * sizeof(ValueBucket));
-            new (&bucket->hash) std::atomic<uint64_t>(kEmptyHash);
-            new (&bucket->record_offset) std::atomic<size_t>(0);
+            new (&bucket->entry) std::atomic<uint64_t>(kEmptyValueEntry);
         }
     } else {
         if (control != kValueControl)
@@ -1510,7 +1530,7 @@ HashMapImpl::HashMapImpl(const std::string& mbdir, size_t requested_capacity,
             ValueBucket* bucket = reinterpret_cast<ValueBucket*>(
                 map_base_ + value_hdr_->buckets_off
                 + index * sizeof(ValueBucket));
-            bucket->hash.store(kEmptyHash, std::memory_order_release);
+            bucket->entry.store(kEmptyValueEntry, std::memory_order_release);
         }
         value_hdr_->used.store(0, std::memory_order_relaxed);
         value_hdr_->tombstones.store(0, std::memory_order_relaxed);

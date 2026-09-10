@@ -14,6 +14,7 @@ src/test/jemalloc_restart_rebuild_test_local
 /src/test/errno95_db_writer_test
 /src/test/find_lower_bound_concurrency_test
 /src/test/hashmap_concurrency_test
+/src/test/hashmap_bucket_layout_bench
 /src/test/hashmap_value_concurrency_test
 /src/test/hashmap_lookup_bench
 /src/test/hashmap_radix_lookup_bench

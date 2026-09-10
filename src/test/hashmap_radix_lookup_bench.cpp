@@ -347,7 +347,7 @@ int main(int argc, char** argv)
     capacity = std::max<size_t>(capacity, 1024);
 
     (void)compact64;
-    const size_t bucket_size = 16;
+    const size_t bucket_size = 8;
     if (capacity
         > (std::numeric_limits<size_t>::max() - kHashMapValueHeaderReserve)
             / bucket_size) {
@@ -516,7 +516,7 @@ int main(int argc, char** argv)
         const double radix_average = Average(radix_times);
         std::cout << "\nConfiguration:\n"
                   << "  HashMap capacity: " << capacity << "\n"
-                  << "  HashMap value bucket: compact (16 bytes)\n"
+                  << "  HashMap value bucket: packed (8 bytes)\n"
                   << "  Stored value size: " << value_size << " bytes\n"
                   << "  HashMap load: "
                   << static_cast<double>(entries) / static_cast<double>(capacity)

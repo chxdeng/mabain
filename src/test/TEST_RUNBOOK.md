@@ -388,9 +388,25 @@ taskset -c 2 ./hashmap_radix_lookup_bench \
 ```
 
 The sixth compatibility argument should remain `1`; value mode always uses
-16-byte compact buckets. The seventh argument selects four-byte binary integer
+8-byte packed buckets. The seventh argument selects four-byte binary integer
 (`int32`) or string keys. The final argument is the value size in bytes and
 must be between 8 and `CONSTS::MAX_DATA_SIZE`.
+
+`hashmap_bucket_layout_bench` isolates the value-index layout and compares the
+legacy 16-byte `{hash, offset}` bucket with the packed 8-byte
+`{fingerprint, offset}` bucket. It reports index memory, probe counts, complete
+value-copy hit latency, and miss latency using identical records and queries:
+
+```bash
+cd ~/mabain/src/test
+./hashmap_bucket_layout_bench 838000 5000000 1048576 4 32 7
+./hashmap_bucket_layout_bench 838000 5000000 1048576 16 32 7
+```
+
+Arguments are entries, lookups, power-of-two capacity, key bytes, value bytes,
+and an odd number of alternating measurement rounds. This microbenchmark does
+not include shared reader-slot, epoch, mmap-resolution, or allocator costs; use
+`hashmap_radix_lookup_bench` for the integrated public-API measurement.
 
 ## 10. Final validation record
 

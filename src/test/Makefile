@@ -12,7 +12,7 @@ all: mb_test mb_test1 mb_test2 mb_test_mp multi_writer_bug_test mb_bound_test mb
 	find_lower_bound_concurrency_test shmq_reservation_timeout_test \
 	prefix_cache_snapshot_concurrency_test shmq_queue_full_stress_test \
 	hashmap_radix_lookup_bench hashmap_concurrency_test \
-	hashmap_value_concurrency_test
+	hashmap_value_concurrency_test hashmap_bucket_layout_bench
 
 mb_mm_prune_test: mb_mm_prune_test.cpp
 	$(CPP) $(CPPFLAGS) mb_mm_prune_test.cpp
@@ -104,6 +104,10 @@ hashmap_value_concurrency_test: hashmap_value_concurrency_test.cpp ../../build/l
 	$(CPP) $(CPPFLAGS) hashmap_value_concurrency_test.cpp
 	$(CPP) hashmap_value_concurrency_test.o -o hashmap_value_concurrency_test $(LDFLAGS)
 
+hashmap_bucket_layout_bench: hashmap_bucket_layout_bench.cpp
+	$(CPP) $(CPPFLAGS) hashmap_bucket_layout_bench.cpp
+	$(CPP) hashmap_bucket_layout_bench.o -o hashmap_bucket_layout_bench -lpthread
+
 
 clean:
-	-rm -rf *.o mb_test* multi_writer_bug_test mb_bound_test mb_header_test mb_mm_test mb_mm_prune_test sigbus_disk_pressure_test errno95_db_writer_test jemalloc_test jemalloc_restart_rebuild_test shared_prefix_cache_concurrency_test find_lower_bound_concurrency_test hashmap_lookup_bench hashmap_radix_lookup_bench hashmap_concurrency_test hashmap_value_concurrency_test shmq_reservation_timeout_test shmq_queue_full_stress_test prefix_cache_snapshot_concurrency_test
+	-rm -rf *.o mb_test* multi_writer_bug_test mb_bound_test mb_header_test mb_mm_test mb_mm_prune_test sigbus_disk_pressure_test errno95_db_writer_test jemalloc_test jemalloc_restart_rebuild_test shared_prefix_cache_concurrency_test find_lower_bound_concurrency_test hashmap_lookup_bench hashmap_radix_lookup_bench hashmap_concurrency_test hashmap_value_concurrency_test hashmap_bucket_layout_bench shmq_reservation_timeout_test shmq_queue_full_stress_test prefix_cache_snapshot_concurrency_test
