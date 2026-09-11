@@ -757,6 +757,24 @@ public:
         if (!CanRetire(probe.old_size))
             return MBError::TRY_AGAIN;
 
+        std::vector<BucketMove> moves;
+        size_t final_hole = probe.index;
+        result = BuildEraseShiftPlan(view, probe.index, moves, final_hole);
+        if (result != MBError::SUCCESS)
+            return result;
+
+        uint64_t map_generation = 0;
+        if (!moves.empty()) {
+            map_generation
+                = header_->map_generation.load(std::memory_order_relaxed);
+            if ((map_generation & 1U) != 0)
+                return MBError::TRY_AGAIN;
+            if (map_generation
+                > std::numeric_limits<uint64_t>::max() - 2) {
+                return MBError::NO_RESOURCE;
+            }
+        }
+
         const uint64_t retire_epoch
             = header_->reader_epoch.load(std::memory_order_seq_cst);
         try {
@@ -766,7 +784,15 @@ public:
             return MBError::NO_MEMORY;
         }
 
-        Bucket(probe.index)->entry.store(kTombstoneValueEntry,
+        if (!moves.empty()) {
+            header_->map_generation.store(map_generation + 1,
+                std::memory_order_release);
+        }
+        for (const BucketMove& move : moves) {
+            Bucket(move.target)->entry.store(move.entry,
+                std::memory_order_release);
+        }
+        Bucket(final_hole)->entry.store(kEmptyValueEntry,
             std::memory_order_release);
         retired_bytes_ += probe.old_size;
         header_->retired_value_bytes.store(retired_bytes_,
@@ -774,7 +800,10 @@ public:
         header_->live_value_bytes.fetch_sub(probe.old_size,
             std::memory_order_relaxed);
         header_->used.fetch_sub(1, std::memory_order_relaxed);
-        header_->tombstones.fetch_add(1, std::memory_order_relaxed);
+        if (!moves.empty()) {
+            header_->map_generation.store(map_generation + 2,
+                std::memory_order_release);
+        }
         MaybeReclaim();
         return MBError::SUCCESS;
     }
@@ -880,6 +909,11 @@ private:
         uint64_t retirement_epoch;
     };
 
+    struct BucketMove {
+        size_t target;
+        uint64_t entry;
+    };
+
     void AcquireWriterLock()
     {
         const std::string lock_path = map_.path_ + ".lock";
@@ -983,6 +1017,74 @@ private:
                 header.value_length);
         }
         return RecordMatch::MATCH;
+    }
+
+    int RecordHash(ValueGenerationView* view, uint64_t entry, uint64_t& hash)
+    {
+        const size_t offset = ValueEntryOffset(entry);
+        if (offset == 0 || offset >= config_.value_memcap)
+            return MBError::READ_ERROR;
+        uint8_t* raw_header = view->Resolve(offset, sizeof(ValueRecordHeader));
+        if (raw_header == nullptr)
+            return MBError::READ_ERROR;
+
+        ValueRecordHeader header {};
+        std::memcpy(&header, raw_header, sizeof(header));
+        size_t record_size = 0;
+        if (header.flags != 0 || header.key_length == 0
+            || header.key_length > CONSTS::MAX_KEY_LENGHTH
+            || header.value_length == 0
+            || header.value_length > static_cast<uint32_t>(
+                   CONSTS::MAX_DATA_SIZE)
+            || !RecordSize(header.key_length, header.value_length, record_size)
+            || record_size > config_.value_memcap
+            || offset > config_.value_memcap - record_size) {
+            return MBError::READ_ERROR;
+        }
+        uint8_t* record = view->Resolve(offset, record_size);
+        if (record == nullptr)
+            return MBError::READ_ERROR;
+        hash = HashMapImpl::normalize_hash(HashMapImpl::fnv1a64(
+            record + sizeof(header), static_cast<int>(header.key_length)));
+        return ValueEntryHashMatches(entry, hash)
+            ? MBError::SUCCESS
+            : MBError::READ_ERROR;
+    }
+
+    int BuildEraseShiftPlan(ValueGenerationView* view, size_t erased_index,
+        std::vector<BucketMove>& moves, size_t& final_hole)
+    {
+        size_t hole = erased_index;
+        for (size_t scanned = 1; scanned < header_->capacity; ++scanned) {
+            const size_t index = (erased_index + scanned) & header_->mask;
+            const uint64_t entry
+                = Bucket(index)->entry.load(std::memory_order_relaxed);
+            if (entry == kEmptyValueEntry) {
+                final_hole = hole;
+                return MBError::SUCCESS;
+            }
+            // Writer initialization starts with no tombstones and this erase
+            // path never creates one. Seeing one means the invariant was lost.
+            if (entry == kTombstoneValueEntry)
+                return MBError::READ_ERROR;
+
+            uint64_t hash = 0;
+            const int result = RecordHash(view, entry, hash);
+            if (result != MBError::SUCCESS)
+                return result;
+            const size_t home = static_cast<size_t>(hash) & header_->mask;
+            const size_t distance_to_hole = (hole - home) & header_->mask;
+            const size_t distance_to_entry = (index - home) & header_->mask;
+            if (distance_to_hole >= distance_to_entry)
+                continue;
+            try {
+                moves.push_back({ hole, entry });
+            } catch (const std::bad_alloc&) {
+                return MBError::NO_MEMORY;
+            }
+            hole = index;
+        }
+        return MBError::READ_ERROR;
     }
 
     int ProbeForWriter(ValueGenerationView* view, const uint8_t* key,
@@ -1216,6 +1318,15 @@ private:
     }
 
     int GetThreadSlot(ClaimedSlot& output)
+    {
+        const int result = TryGetThreadSlot(output);
+        if (result != MBError::TRY_AGAIN)
+            return result;
+        CleanDeadSlots();
+        return TryGetThreadSlot(output);
+    }
+
+    int TryGetThreadSlot(ClaimedSlot& output)
     {
         ThreadSlotEntry* cached = g_thread_slots.Find(connection_id_);
         if (cached != nullptr && cached->slot_index < header_->reader_slot_count

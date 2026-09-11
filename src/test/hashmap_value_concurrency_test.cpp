@@ -2,6 +2,7 @@
  * Validate HashMap value ownership and one-writer/multiple-reader concurrency.
  */
 
+#include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <cstring>
@@ -9,6 +10,7 @@
 #include <iostream>
 #include <memory>
 #include <new>
+#include <sstream>
 #include <string>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -292,6 +294,153 @@ bool TestBasicValueMode()
     return true;
 }
 
+bool ReaderLookupAndExitWithoutCleanup(const std::string& base,
+    const HashMapValueConfig& config, const std::string& key,
+    const std::string& expected_value)
+{
+    const pid_t reader_pid = fork();
+    if (reader_pid == 0) {
+        ResourcePool::getInstance().RemoveAll();
+        try {
+            HashMap reader(base, kCapacity, CONSTS::ACCESS_MODE_READER,
+                config, kIndexMemcapMb);
+            MBData data;
+            const int result = reader.GetValue(
+                reinterpret_cast<const uint8_t*>(key.data()),
+                static_cast<int>(key.size()), data);
+            const bool valid = result == MBError::SUCCESS
+                && data.buff != nullptr
+                && data.data_len == static_cast<int>(expected_value.size())
+                && std::equal(expected_value.begin(), expected_value.end(),
+                    data.buff);
+            // Bypass destructors to simulate abrupt process termination after
+            // this reader has claimed its shared reader slot.
+            _exit(valid ? 0 : 1);
+        } catch (...) {
+            _exit(1);
+        }
+    }
+    if (reader_pid < 0)
+        return false;
+
+    int status = 0;
+    return waitpid(reader_pid, &status, 0) == reader_pid
+        && WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+
+bool TestDeadReaderSlotRecovery()
+{
+    const std::string base
+        = "/var/tmp/mabain_hashmap_dead_reader_" + std::to_string(getpid());
+    Cleanup cleanup(base);
+    HashMapValueConfig config = TestConfig();
+    config.reader_slots = 1;
+    const std::string key("dead-reader-key");
+    const std::string value("value-after-abrupt-reader-exit");
+
+    try {
+        HashMap writer(base, kCapacity, CONSTS::ACCESS_MODE_WRITER, config,
+            kIndexMemcapMb);
+        if (writer.PutValue(reinterpret_cast<const uint8_t*>(key.data()),
+                static_cast<int>(key.size()),
+                reinterpret_cast<const uint8_t*>(value.data()),
+                static_cast<int>(value.size()))
+            != MBError::SUCCESS) {
+            return BasicFailure("dead-reader setup PutValue");
+        }
+        if (!ReaderLookupAndExitWithoutCleanup(base, config, key, value))
+            return BasicFailure("initial abrupt reader lookup");
+
+        // The first process left the only slot claimed. Recovery must happen
+        // during acquisition even though the writer has no retired values.
+        if (!ReaderLookupAndExitWithoutCleanup(base, config, key, value))
+            return BasicFailure("replacement reader slot recovery");
+    } catch (int error) {
+        std::cerr << "dead-reader recovery exception: "
+                  << MBError::get_error_str(error) << " (" << error << ")\n";
+        return false;
+    } catch (...) {
+        return BasicFailure("dead-reader recovery unknown exception");
+    }
+    return true;
+}
+
+bool TestEraseCompaction()
+{
+    constexpr size_t kChurnCapacity = 1024;
+    constexpr size_t kChurnBatch = 850;
+    constexpr size_t kChurnRounds = 24;
+    const std::string base
+        = "/var/tmp/mabain_hashmap_erase_compaction_"
+        + std::to_string(getpid());
+    Cleanup cleanup(base);
+    const HashMapValueConfig config = TestConfig();
+
+    try {
+        HashMap writer(base, kChurnCapacity, CONSTS::ACCESS_MODE_WRITER,
+            config, kIndexMemcapMb);
+        MBData data(128, 0);
+        for (size_t round = 0; round < kChurnRounds; ++round) {
+            const size_t first_key = round * kChurnBatch;
+            for (size_t index = 0; index < kChurnBatch; ++index) {
+                if (Put(writer, first_key + index, round) != MBError::SUCCESS)
+                    return BasicFailure("erase-compaction insert");
+            }
+
+            for (size_t index = 0; index < kChurnBatch; index += 2) {
+                const std::string key = Key(first_key + index);
+                if (writer.Erase(
+                        reinterpret_cast<const uint8_t*>(key.data()),
+                        static_cast<int>(key.size()))
+                    != MBError::SUCCESS) {
+                    return BasicFailure("erase-compaction first-half erase");
+                }
+            }
+
+            for (size_t index = 0; index < kChurnBatch; ++index) {
+                const size_t key_id = first_key + index;
+                const std::string key = Key(key_id);
+                const int result = writer.GetValue(
+                    reinterpret_cast<const uint8_t*>(key.data()),
+                    static_cast<int>(key.size()), data);
+                if ((index % 2 == 0
+                        && (result != MBError::NOT_EXIST || data.data_len != 0))
+                    || (index % 2 != 0
+                        && (result != MBError::SUCCESS
+                            || !ValidateValue(key_id, data)))) {
+                    return BasicFailure("erase-compaction surviving lookup");
+                }
+            }
+
+            for (size_t index = 1; index < kChurnBatch; index += 2) {
+                const std::string key = Key(first_key + index);
+                if (writer.Erase(
+                        reinterpret_cast<const uint8_t*>(key.data()),
+                        static_cast<int>(key.size()))
+                    != MBError::SUCCESS) {
+                    return BasicFailure("erase-compaction second-half erase");
+                }
+            }
+        }
+
+        std::ostringstream stats;
+        writer.PrintStats(stats);
+        const std::string report = stats.str();
+        if (report.find("\tused: 0\n") == std::string::npos
+            || report.find("\ttombstones: 0\n") == std::string::npos) {
+            std::cerr << report;
+            return BasicFailure("erase-compaction final statistics");
+        }
+    } catch (int error) {
+        std::cerr << "erase-compaction exception: "
+                  << MBError::get_error_str(error) << " (" << error << ")\n";
+        return false;
+    } catch (...) {
+        return BasicFailure("erase-compaction unknown exception");
+    }
+    return true;
+}
+
 int ReadAndValidate(HashMap& reader, size_t key_id, bool allow_miss,
     uint64_t& retries, uint64_t& unexpected_misses,
     uint64_t& wrong_values, uint64_t& other_errors,
@@ -556,9 +705,17 @@ int main()
         std::cerr << "HashMap basic value-mode test failed\n";
         return 1;
     }
+    if (!TestDeadReaderSlotRecovery()) {
+        std::cerr << "HashMap dead-reader slot recovery test failed\n";
+        return 2;
+    }
+    if (!TestEraseCompaction()) {
+        std::cerr << "HashMap erase-compaction test failed\n";
+        return 3;
+    }
     if (!TestConcurrentValues()) {
         std::cerr << "HashMap concurrent value-mode test failed\n";
-        return 2;
+        return 4;
     }
     std::cout << "HashMap value-mode validation passed\n";
     return 0;
