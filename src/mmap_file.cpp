@@ -31,8 +31,16 @@
 
 namespace mabain {
 
-MmapFileIO::MmapFileIO(const std::string& fpath, int mode, off_t filesize, bool sync)
-    : FileIO(fpath, mode, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH, sync)
+MmapFileIO::MmapFileIO(const std::string& fpath, int mode, off_t filesize,
+    bool sync)
+    : MmapFileIO(fpath, mode, filesize, sync,
+        S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)
+{
+}
+
+MmapFileIO::MmapFileIO(const std::string& fpath, int mode, off_t filesize,
+    bool sync, mode_t create_mode)
+    : FileIO(fpath, mode, create_mode, sync)
 {
     mmap_file = false;
     mmap_size = 0;

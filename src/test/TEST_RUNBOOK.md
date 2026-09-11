@@ -79,6 +79,8 @@ cd ~/mabain/src/test
 ./mb_header_test
 ./shmq_reservation_timeout_test
 ./shmq_queue_full_stress_test
+./hashmap_concurrency_test
+./hashmap_value_concurrency_test
 ./prefix_cache_snapshot_concurrency_test 1000000 4
 ./shared_prefix_cache_concurrency_test 200000 4 95
 ./find_lower_bound_concurrency_test \
@@ -95,6 +97,14 @@ Pass criteria:
   its expected one-second test window.
 - `shmq_queue_full_stress_test` reports at least one full-queue retry and verifies
   every queued request.
+- `hashmap_concurrency_test` passes its compact and full-bucket probe-chain,
+  overwrite, erase/reinsert, writer-restart, and four-reader process checks
+  with zero incorrect offsets or forbidden misses.
+- `hashmap_value_concurrency_test` validates binary key/value ownership,
+  overwrite, erase/reinsert, owner-only files, writer restart, and 32 lookup
+  threads across four reader processes. It must report zero unexpected misses,
+  wrong/torn values, or other read errors. Bounded `TRY_AGAIN` results during
+  generation/epoch churn are reported separately and are permitted.
 - `prefix_cache_snapshot_concurrency_test` reports nonzero hits and no torn or
   invalid stable snapshot.
 - `shared_prefix_cache_concurrency_test` reports `Post-remove verification OK`
@@ -365,6 +375,38 @@ Arguments are:
 Record the hit percentage and average nanoseconds per lookup. Compare
 performance only on an otherwise idle host using the same binary, fixture,
 CPU affinity, and run count.
+
+`hashmap_radix_lookup_bench` compares value-owning HashMap with the radix
+tree's optimized prefix-cache lookup path using identical keys, unique per-key
+values, and precomputed queries. Every timed lookup copies the complete value
+into `MBData` and compares every byte with the expected value:
+
+```bash
+cd ~/mabain/src/test
+taskset -c 2 ./hashmap_radix_lookup_bench \
+  1000000 5000000 5 256 0.5 1 int32 32
+```
+
+The sixth compatibility argument should remain `1`; value mode always uses
+8-byte packed buckets. The seventh argument selects four-byte binary integer
+(`int32`) or string keys. The final argument is the value size in bytes and
+must be between 8 and `CONSTS::MAX_DATA_SIZE`.
+
+`hashmap_bucket_layout_bench` isolates the value-index layout and compares the
+legacy 16-byte `{hash, offset}` bucket with the packed 8-byte
+`{fingerprint, offset}` bucket. It reports index memory, probe counts, complete
+value-copy hit latency, and miss latency using identical records and queries:
+
+```bash
+cd ~/mabain/src/test
+./hashmap_bucket_layout_bench 838000 5000000 1048576 4 32 7
+./hashmap_bucket_layout_bench 838000 5000000 1048576 16 32 7
+```
+
+Arguments are entries, lookups, power-of-two capacity, key bytes, value bytes,
+and an odd number of alternating measurement rounds. This microbenchmark does
+not include shared reader-slot, epoch, mmap-resolution, or allocator costs; use
+`hashmap_radix_lookup_bench` for the integrated public-API measurement.
 
 ## 10. Final validation record
 

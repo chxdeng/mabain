@@ -17,7 +17,7 @@ add_subdirectory(src)
 add_subdirectory(binaries)
 
 # Install headers
-install(FILES src/db.h src/mb_data.h src/mabain_consts.h src/lock.h src/error.h src/integer_4b_5b.h
+install(FILES src/db.h src/hash_map_api.h src/mb_data.h src/mabain_consts.h src/lock.h src/error.h src/integer_4b_5b.h
         DESTINATION ${MABAIN_INSTALL_DIR}/include/mabain)
 
 # Install shared library

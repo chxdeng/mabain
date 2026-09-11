@@ -63,10 +63,16 @@ public:
     std::shared_ptr<MmapFileIO> OpenFile(const std::string& fpath, int mode,
         size_t file_size, bool& map_file,
         bool create_file);
+    std::shared_ptr<MmapFileIO> OpenFile(const std::string& fpath, int mode,
+        size_t file_size, bool& map_file, bool create_file,
+        mode_t create_mode);
     std::shared_ptr<MmapFileIO> OpenFileWithKey(const std::string& pool_key,
         const std::string& fpath, int mode,
         size_t file_size, bool& map_file,
         bool create_file);
+    std::shared_ptr<MmapFileIO> OpenFileWithKey(const std::string& pool_key,
+        const std::string& fpath, int mode, size_t file_size, bool& map_file,
+        bool create_file, mode_t create_mode);
     std::shared_ptr<RebuildBarrier> OpenRebuildBarrier(
         const std::string& pool_key, const std::string& fpath, int mode);
     void RemoveResourceByDB(const std::string& db_path);

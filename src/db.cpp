@@ -95,8 +95,8 @@ uint64_t ReadSelfProcStartTime()
 
 } // namespace
 
-// Current mabain version 1.7.0
-uint16_t version[4] = { 1, 7, 0, 0 };
+// Current mabain version 1.7.2
+uint16_t version[4] = { 1, 7, 2, 0 };
 
 DB::~DB()
 {
