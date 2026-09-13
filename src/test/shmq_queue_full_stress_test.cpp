@@ -133,6 +133,23 @@ public:
         return WIFEXITED(status) && WEXITSTATUS(status) == 0;
     }
 
+    bool Crash()
+    {
+        if (pid <= 0 || kill(pid, SIGKILL) != 0)
+            return false;
+
+        int status = 0;
+        if (!WaitForChild(pid, status, std::chrono::seconds(10)))
+            return false;
+        pid = -1;
+        stopped = false;
+        if (fd >= 0) {
+            close(fd);
+            fd = -1;
+        }
+        return WIFSIGNALED(status) && WTERMSIG(status) == SIGKILL;
+    }
+
 private:
     pid_t pid;
     int fd;
@@ -188,10 +205,30 @@ bool WaitForValue(DB& db, const std::string& key, const std::string& expected,
         MBData data;
         int rval = db.Find(key, data);
         if (rval == MBError::SUCCESS) {
-            return std::string(reinterpret_cast<const char*>(data.buff), data.data_len)
-                == expected;
+            if (std::string(reinterpret_cast<const char*>(data.buff), data.data_len)
+                == expected) {
+                return true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            continue;
         }
         if (rval != MBError::NOT_EXIST && rval != MBError::TRY_AGAIN)
+            return false;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    return false;
+}
+
+bool WaitForMissing(DB& db, const std::string& key,
+    std::chrono::seconds timeout)
+{
+    auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (std::chrono::steady_clock::now() < deadline) {
+        MBData data;
+        int rval = db.Find(key, data);
+        if (rval == MBError::NOT_EXIST)
+            return true;
+        if (rval != MBError::SUCCESS && rval != MBError::TRY_AGAIN)
             return false;
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
@@ -273,10 +310,22 @@ int main()
         return 5;
     }
 
+    const std::string rejected_remove_key = "shmq-remove-must-retry";
+    const std::string rejected_remove_value = "remove-retry-value";
+    auto setup_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    if (QueueWithRetry(monitor_db, rejected_remove_key, rejected_remove_value,
+            setup_deadline, nullptr)
+            != MBError::SUCCESS
+        || !WaitForValue(monitor_db, rejected_remove_key, rejected_remove_value,
+            std::chrono::seconds(5))) {
+        std::cerr << "failed to prepare full-queue remove test" << std::endl;
+        return 6;
+    }
+
     // Stop the writer so the two-slot queue can be filled deterministically.
     if (!writer.Pause()) {
         std::cerr << "failed to pause writer" << std::endl;
-        return 6;
+        return 7;
     }
 
     const std::string prefill_value = "prefill-value";
@@ -285,26 +334,35 @@ int main()
         int rval = monitor_db.Add(key, prefill_value, true);
         if (rval != MBError::SUCCESS) {
             std::cerr << "failed to fill queue at slot " << i << std::endl;
-            return 7;
+            return 8;
         }
     }
 
     const std::string rejected_key = "shmq-must-retry";
     if (monitor_db.Add(rejected_key, prefill_value, true) != MBError::TRY_AGAIN) {
         std::cerr << "full queue did not reject acquisition" << std::endl;
-        return 8;
+        return 9;
+    }
+    if (monitor_db.Remove(rejected_remove_key) != MBError::TRY_AGAIN) {
+        std::cerr << "full queue did not reject remove acquisition" << std::endl;
+        return 10;
     }
 
     if (!writer.Resume()) {
         std::cerr << "failed to resume writer" << std::endl;
-        return 9;
+        return 11;
     }
     for (uint32_t i = 0; i < kQueueSize; ++i) {
         std::string key = "shmq-prefill-" + std::to_string(i);
         if (!WaitForValue(monitor_db, key, prefill_value, std::chrono::seconds(5))) {
             std::cerr << "writer failed to process prefilled request " << i << std::endl;
-            return 10;
+            return 12;
         }
+    }
+    if (!WaitForValue(monitor_db, rejected_remove_key, rejected_remove_value,
+            std::chrono::seconds(5))) {
+        std::cerr << "rejected remove was applied unexpectedly" << std::endl;
+        return 13;
     }
 
     // A successful request queued after the rejected acquisition must not sit
@@ -315,12 +373,53 @@ int main()
             sentinel_deadline, nullptr)
         != MBError::SUCCESS) {
         std::cerr << "failed to queue sentinel request" << std::endl;
-        return 11;
+        return 14;
     }
     if (!WaitForValue(monitor_db, sentinel_key, prefill_value,
             std::chrono::seconds(5))) {
         std::cerr << "sentinel request was blocked behind a queue hole" << std::endl;
-        return 12;
+        return 15;
+    }
+
+    // Exercise the public async APIs at the maximum supported value size,
+    // including overwrite, removal, and reuse of the removed key.
+    const std::string boundary_key = "shmq-maximum-value";
+    const std::string boundary_value(CONSTS::MAX_DATA_SIZE, 'a');
+    const std::string boundary_overwrite(CONSTS::MAX_DATA_SIZE, 'b');
+    if (monitor_db.AddAsync(boundary_key.data(), static_cast<int>(boundary_key.size()),
+            boundary_value.data(), static_cast<int>(boundary_value.size()), true)
+        != MBError::SUCCESS
+        || !WaitForValue(monitor_db, boundary_key, boundary_value,
+            std::chrono::seconds(5))) {
+        std::cerr << "maximum-size async add was not visible" << std::endl;
+        return 16;
+    }
+    auto overwrite_deadline
+        = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    if (QueueWithRetry(monitor_db, boundary_key, boundary_overwrite,
+            overwrite_deadline, nullptr)
+            != MBError::SUCCESS
+        || !WaitForValue(monitor_db, boundary_key, boundary_overwrite,
+            std::chrono::seconds(5))) {
+        std::cerr << "maximum-size async overwrite was not visible" << std::endl;
+        return 17;
+    }
+    if (monitor_db.RemoveAsync(boundary_key.data(),
+            static_cast<int>(boundary_key.size()))
+            != MBError::SUCCESS
+        || !WaitForMissing(monitor_db, boundary_key, std::chrono::seconds(5))) {
+        std::cerr << "maximum-size async remove was not visible" << std::endl;
+        return 18;
+    }
+    auto readd_deadline
+        = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    if (QueueWithRetry(monitor_db, boundary_key, boundary_value,
+            readd_deadline, nullptr)
+            != MBError::SUCCESS
+        || !WaitForValue(monitor_db, boundary_key, boundary_value,
+            std::chrono::seconds(5))) {
+        std::cerr << "async re-add after remove was not visible" << std::endl;
+        return 19;
     }
 
     std::atomic<bool> start(false);
@@ -365,15 +464,15 @@ int main()
 
     if (failures.load(std::memory_order_acquire) != 0) {
         std::cerr << "producer stress failed" << std::endl;
-        return 13;
+        return 20;
     }
     if (retries.load(std::memory_order_acquire) == 0) {
         std::cerr << "stress did not create queue contention" << std::endl;
-        return 14;
+        return 21;
     }
     if (!WaitUntilIdle(monitor_db, std::chrono::seconds(30))) {
         std::cerr << "writer failed to drain stress requests" << std::endl;
-        return 15;
+        return 22;
     }
 
     for (int producer = 0; producer < kProducerCount; ++producer) {
@@ -386,25 +485,105 @@ int main()
                 || std::string(reinterpret_cast<const char*>(data.buff), data.data_len)
                     != expected) {
                 std::cerr << "missing or corrupt stress request: " << key << std::endl;
-                return 16;
+                return 23;
             }
         }
     }
 
+    // Published requests must survive an abrupt writer-process restart. Queue
+    // one add and one remove while the writer is stopped, kill it, and verify
+    // that the replacement writer drains both requests in order.
+    const std::string restart_add_key = "shmq-restart-add";
+    const std::string restart_add_value = "restart-add-value";
+    const std::string restart_remove_key = "shmq-restart-remove";
+    const std::string restart_remove_value = "restart-remove-value";
+    auto restart_setup_deadline
+        = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    if (QueueWithRetry(monitor_db, restart_remove_key, restart_remove_value,
+            restart_setup_deadline, nullptr)
+            != MBError::SUCCESS
+        || !WaitForValue(monitor_db, restart_remove_key, restart_remove_value,
+            std::chrono::seconds(5))
+        || !WaitUntilIdle(monitor_db, std::chrono::seconds(5))) {
+        std::cerr << "failed to prepare writer-restart test" << std::endl;
+        return 24;
+    }
+    if (!writer.Pause()) {
+        std::cerr << "failed to pause writer for restart test" << std::endl;
+        return 25;
+    }
+    if (monitor_db.Add(restart_add_key, restart_add_value, true)
+            != MBError::SUCCESS
+        || monitor_db.Remove(restart_remove_key) != MBError::SUCCESS) {
+        std::cerr << "failed to queue requests before writer restart" << std::endl;
+        return 26;
+    }
+    if (!writer.Crash()) {
+        std::cerr << "failed to terminate writer for restart test" << std::endl;
+        return 27;
+    }
+
+    int restart_ready_pipe[2];
+    int restart_control_pipe[2];
+    if (pipe(restart_ready_pipe) != 0 || pipe(restart_control_pipe) != 0) {
+        std::cerr << "failed to create restart control pipes" << std::endl;
+        return 28;
+    }
+    pid_t restarted_writer_pid = fork();
+    if (restarted_writer_pid < 0) {
+        std::cerr << "failed to fork replacement writer" << std::endl;
+        return 29;
+    }
+    if (restarted_writer_pid == 0) {
+        close(restart_ready_pipe[0]);
+        close(restart_control_pipe[1]);
+        int rval = RunWriter(db_path, db_dir, restart_ready_pipe[1],
+            restart_control_pipe[0]);
+        _exit(rval);
+    }
+
+    close(restart_ready_pipe[1]);
+    close(restart_control_pipe[0]);
+    WriterChild restarted_writer(restarted_writer_pid, restart_control_pipe[1]);
+    ready = 0;
+    if (!ReadByte(restart_ready_pipe[0], ready, 10000) || ready != '1') {
+        std::cerr << "replacement writer failed to initialize" << std::endl;
+        return 30;
+    }
+    close(restart_ready_pipe[0]);
+
+    if (!WaitForValue(monitor_db, restart_add_key, restart_add_value,
+            std::chrono::seconds(5))) {
+        std::cerr << "replacement writer did not recover pending add" << std::endl;
+        return 31;
+    }
+    if (!WaitForMissing(monitor_db, restart_remove_key,
+            std::chrono::seconds(5))) {
+        std::cerr << "replacement writer did not recover pending remove" << std::endl;
+        return 32;
+    }
+    if (!WaitUntilIdle(monitor_db, std::chrono::seconds(5))) {
+        std::cerr << "replacement writer did not drain recovered queue" << std::endl;
+        return 33;
+    }
+
     monitor_db.Close();
     ResourcePool::getInstance().RemoveAll();
-    if (!writer.Shutdown()) {
-        std::cerr << "writer failed to shut down cleanly" << std::endl;
-        return 17;
+    if (!restarted_writer.Shutdown()) {
+        std::cerr << "replacement writer failed to shut down cleanly" << std::endl;
+        return 34;
     }
 
     std::filesystem::remove_all(db_dir, ec);
     if (ec) {
         std::cerr << "test passed, but cleanup failed: " << ec.message() << std::endl;
-        return 18;
+        return 35;
     }
 
     std::cout << "shmq_queue_full_stress_test passed with "
-              << retries.load(std::memory_order_relaxed) << " full-queue retries" << std::endl;
+              << retries.load(std::memory_order_relaxed)
+              << " full-queue retries; async add/overwrite/remove/re-add, "
+                 "maximum-size values, and writer restart verified"
+              << std::endl;
     return 0;
 }

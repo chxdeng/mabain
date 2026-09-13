@@ -106,8 +106,10 @@ Pass criteria:
   filesystem.
 - `shmq_reservation_timeout_test` reports that the stale slot was reclaimed in
   its expected one-second test window.
-- `shmq_queue_full_stress_test` reports at least one full-queue retry and verifies
-  every queued request.
+- `shmq_queue_full_stress_test` verifies full-queue rejection for both add and
+  remove, successful maximum-size async add/overwrite/remove/re-add, every
+  request from the concurrent producer stress, and recovery of pending add and
+  remove requests after an abrupt writer-process restart.
 - `hashmap_concurrency_test` passes its compact and full-bucket probe-chain,
   overwrite, erase/reinsert, writer-restart, and four-reader process checks
   with zero incorrect offsets or forbidden misses.
