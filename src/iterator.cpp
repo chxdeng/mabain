@@ -79,27 +79,18 @@ static iterator_node* new_iterator_node(const std::string& key, MBData* mbdata)
 // }
 /////////////////////////////////////////////////////////////////////
 
-const DB::iterator DB::begin(bool check_async_mode, bool rc_mode) const
+DB::iterator DB::begin(bool check_async_mode, bool rc_mode) const
 {
-    DB::iterator iter = iterator(*this, DB_ITER_STATE_INIT);
-    iter.prefix = "";
-    if (rc_mode)
-        iter.value.options |= CONSTS::OPTION_RC_MODE;
-    iter.init(check_async_mode);
-
-    return iter;
+    return iterator(*this, "", check_async_mode, rc_mode);
 }
 
 // iterator for all prefix match
-const DB::iterator DB::begin(const std::string& prefix) const
+DB::iterator DB::begin(const std::string& prefix) const
 {
-    DB::iterator iter = iterator(*this, DB_ITER_STATE_INIT);
-    iter.prefix = prefix;
-    iter.init(true);
-    return iter;
+    return iterator(*this, prefix, true, false);
 }
 
-const DB::iterator DB::end() const
+DB::iterator DB::end() const
 {
     return iterator(*this, DB_ITER_STATE_DONE);
 }
@@ -127,11 +118,16 @@ DB::iterator::iterator(const DB& db, int iter_state)
     iter_obj_init();
 }
 
-DB::iterator::iterator(const iterator& rhs)
-    : db_ref(rhs.db_ref)
-    , state(rhs.state)
+DB::iterator::iterator(const DB& db, const std::string& iter_prefix,
+    bool check_async_mode, bool rc_mode)
+    : prefix(iter_prefix)
+    , db_ref(db)
+    , state(DB_ITER_STATE_INIT)
 {
     iter_obj_init();
+    if (rc_mode)
+        value.options |= CONSTS::OPTION_RC_MODE;
+    init(check_async_mode);
 }
 
 DB::iterator::~iterator()

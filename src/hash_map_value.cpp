@@ -42,7 +42,11 @@ constexpr uint64_t kTombstoneValueEntry = 1;
 constexpr unsigned kValueOffsetBits = 48;
 constexpr uint64_t kValueOffsetLimit = uint64_t { 1 } << kValueOffsetBits;
 constexpr uint64_t kValueOffsetMask = kValueOffsetLimit - 1;
-constexpr uint64_t kSlotClaiming = std::numeric_limits<uint64_t>::max();
+constexpr uint64_t kSlotTransitionBit = uint64_t { 1 } << 63;
+constexpr unsigned kSlotProcessIdBits = 22;
+constexpr unsigned kSlotStartTimeBits = 63 - kSlotProcessIdBits;
+constexpr uint64_t kSlotProcessIdMask = (uint64_t { 1 } << kSlotProcessIdBits) - 1;
+constexpr uint64_t kSlotStartTimeMask = (uint64_t { 1 } << kSlotStartTimeBits) - 1;
 constexpr uint64_t kFirstValueGeneration = 1;
 constexpr uint64_t kFirstReaderEpoch = 1;
 constexpr size_t kMinimumCapacity = 1024;
@@ -126,6 +130,15 @@ public:
 
     ThreadSlotEntry* Add(const ThreadSlotEntry& entry)
     {
+        entries_.erase(
+            std::remove_if(entries_.begin(), entries_.end(),
+                [](const ThreadSlotEntry& existing) {
+                    return existing.connection == nullptr
+                        || !existing.connection->active.load(
+                            std::memory_order_acquire);
+                }),
+            entries_.end());
+
         entries_.push_back(entry);
         return &entries_.back();
     }
@@ -195,6 +208,26 @@ bool ProcessInstanceIsAlive(uint64_t process_id, uint64_t start_time)
     if (kill(pid, 0) == 0 || errno == EPERM)
         return true;
     return errno != ESRCH;
+}
+
+uint64_t MakeSlotTransitionOwner(uint64_t process_id, uint64_t start_time)
+{
+    return kSlotTransitionBit
+        | ((process_id & kSlotProcessIdMask) << kSlotStartTimeBits)
+        | (start_time & kSlotStartTimeMask);
+}
+
+bool IsSlotTransitionOwner(uint64_t owner)
+{
+    return (owner & kSlotTransitionBit) != 0;
+}
+
+bool SlotTransitionProcessIsAlive(uint64_t owner)
+{
+    const uint64_t process_id
+        = (owner >> kSlotStartTimeBits) & kSlotProcessIdMask;
+    const uint64_t start_time = owner & kSlotStartTimeMask;
+    return ProcessInstanceIsAlive(process_id, start_time);
 }
 
 bool NextPowerOfTwo(size_t value, size_t& result)
@@ -469,6 +502,10 @@ public:
         if (!ReadProcessStartTime(static_cast<pid_t>(process_id_),
                 process_start_time_)) {
             throw static_cast<int>(MBError::OPEN_FAILURE);
+        }
+        if (process_id_ > kSlotProcessIdMask
+            || process_start_time_ > kSlotStartTimeMask) {
+            throw static_cast<int>(MBError::NO_RESOURCE);
         }
         const uint64_t sequence
             = ConnectionCounter().fetch_add(1, std::memory_order_relaxed);
@@ -839,8 +876,10 @@ public:
         if (header_ == nullptr || slot_index >= header_->reader_slot_count)
             return;
         HashMapImpl::ValueReaderSlot& slot = header_->reader_slots[slot_index];
+        const uint64_t transition_owner
+            = MakeSlotTransitionOwner(process_id_, process_start_time_);
         uint64_t expected = owner_id;
-        if (!slot.owner_id.compare_exchange_strong(expected, kSlotClaiming,
+        if (!slot.owner_id.compare_exchange_strong(expected, transition_owner,
                 std::memory_order_acq_rel, std::memory_order_acquire)) {
             return;
         }
@@ -1278,12 +1317,31 @@ private:
 
     void CleanDeadSlots()
     {
+        const uint64_t cleanup_owner
+            = MakeSlotTransitionOwner(process_id_, process_start_time_);
         for (uint32_t index = 0; index < header_->reader_slot_count; ++index) {
             HashMapImpl::ValueReaderSlot& slot = header_->reader_slots[index];
             const uint64_t owner
                 = slot.owner_id.load(std::memory_order_acquire);
-            if (owner == 0 || owner == kSlotClaiming)
+            if (owner == 0)
                 continue;
+            if (IsSlotTransitionOwner(owner)) {
+                if (SlotTransitionProcessIsAlive(owner))
+                    continue;
+                uint64_t expected = owner;
+                if (!slot.owner_id.compare_exchange_strong(expected,
+                        cleanup_owner, std::memory_order_acq_rel,
+                        std::memory_order_acquire)) {
+                    continue;
+                }
+                slot.active_epoch.store(0, std::memory_order_seq_cst);
+                slot.active_value_generation.store(0,
+                    std::memory_order_relaxed);
+                slot.process_id.store(0, std::memory_order_relaxed);
+                slot.process_start_time.store(0, std::memory_order_relaxed);
+                slot.owner_id.store(0, std::memory_order_release);
+                continue;
+            }
             const uint64_t pid
                 = slot.process_id.load(std::memory_order_acquire);
             const uint64_t start
@@ -1296,7 +1354,7 @@ private:
                 continue;
 
             uint64_t expected = owner;
-            if (!slot.owner_id.compare_exchange_strong(expected, kSlotClaiming,
+            if (!slot.owner_id.compare_exchange_strong(expected, cleanup_owner,
                     std::memory_order_acq_rel, std::memory_order_acquire)) {
                 continue;
             }
@@ -1341,13 +1399,16 @@ private:
             ^ OwnerCounter().fetch_add(1, std::memory_order_relaxed)
             ^ static_cast<uint64_t>(
                 std::hash<std::thread::id>()(std::this_thread::get_id())));
-        if (owner == 0 || owner == kSlotClaiming)
-            owner ^= 0xD6E8FEB86659FD93ULL;
+        owner &= ~kSlotTransitionBit;
+        if (owner == 0)
+            owner = 1;
+        const uint64_t transition_owner
+            = MakeSlotTransitionOwner(process_id_, process_start_time_);
 
         for (uint32_t index = 0; index < header_->reader_slot_count; ++index) {
             HashMapImpl::ValueReaderSlot& slot = header_->reader_slots[index];
             uint64_t expected = 0;
-            if (!slot.owner_id.compare_exchange_strong(expected, kSlotClaiming,
+            if (!slot.owner_id.compare_exchange_strong(expected, transition_owner,
                     std::memory_order_acq_rel, std::memory_order_acquire)) {
                 continue;
             }

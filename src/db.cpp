@@ -740,6 +740,14 @@ void DB::InitDB(MBConfig& config)
 {
     if (config.mbdir == nullptr)
         return;
+
+    // Validate before entering any automatic recovery path. An invalid
+    // configuration must never cause an existing database to be erased.
+    const int validation_status = ValidateConfig(config);
+    if (validation_status != MBError::SUCCESS) {
+        status = validation_status;
+        return;
+    }
     std::string db_dir = std::string(config.mbdir);
     std::string lock_file = "/tmp/_mbh_lock";
     if (directory_exists(db_dir)) {
@@ -759,9 +767,6 @@ void DB::InitDBEx(MBConfig& config)
 {
     dict = NULL;
     async_writer = NULL;
-
-    if (ValidateConfig(config) != MBError::SUCCESS)
-        return;
 
     // save the configuration
     memcpy(&dbConfig, &config, sizeof(MBConfig));
@@ -883,8 +888,10 @@ bool DB::InDB(const char* key, int len, int& err)
         return false;
     }
     MBData data(0, CONSTS::OPTION_FIND_AND_STORE_PARENT);
+    uint64_t reader_epoch = BeginReaderEpochGuard();
     detail::SearchEngine engine(*dict);
     int rval = engine.find(reinterpret_cast<const uint8_t*>(key), len, data);
+    EndReaderEpochGuard(reader_epoch);
     if (rval == MBError::IN_DICT) {
         return true; // found it
     } else if (rval != MBError::NOT_EXIST) {

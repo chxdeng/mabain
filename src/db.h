@@ -78,6 +78,7 @@ public:
     // DB iterator class as an inner class
     class iterator {
         friend class DBTraverseBase;
+        friend class DB;
 
     public:
         std::string key;
@@ -86,8 +87,9 @@ public:
         std::string prefix;
 
         iterator(const DB& db, int iter_state);
-        // Copy constructor
-        iterator(const iterator& rhs);
+        // Traversal queues have single ownership; copying is unsupported.
+        iterator(const iterator& rhs) = delete;
+        iterator& operator=(const iterator& rhs) = delete;
         void init(bool check_async_mode = true);
         int init_no_next();
         ~iterator();
@@ -97,6 +99,8 @@ public:
         const iterator& operator++();
 
     private:
+        iterator(const DB& db, const std::string& iter_prefix,
+            bool check_async_mode, bool rc_mode);
         bool match_prefix(const std::string& key);
         int get_node_offset(const std::string& node_key, size_t& parent_edge_off,
             size_t& node_offset);
@@ -223,9 +227,9 @@ public:
     static int GetDataHeaderSize();
 
     // iterator
-    const iterator begin(bool check_async_mode = true, bool rc_mode = false) const;
-    const iterator begin(const std::string& prefix) const;
-    const iterator end() const;
+    iterator begin(bool check_async_mode = true, bool rc_mode = false) const;
+    iterator begin(const std::string& prefix) const;
+    iterator end() const;
 
     // Prefix cache stats
     void DumpPrefixCacheStats(std::ostream& os = std::cout) const;

@@ -34,6 +34,7 @@ constexpr size_t kKeyCount = 512;
 constexpr size_t kIndexMemcapMb = 1;
 constexpr unsigned kReaderProcesses = 4;
 constexpr unsigned kThreadsPerProcess = 8;
+constexpr unsigned kLookupAttempts = 64;
 
 struct SharedControl {
     std::atomic<uint32_t> ready_threads;
@@ -41,6 +42,7 @@ struct SharedControl {
     std::atomic<uint32_t> allow_miss;
     std::atomic<uint32_t> stop;
     std::atomic<uint64_t> hits;
+    std::atomic<uint64_t> allowed_misses;
     std::atomic<uint64_t> retries;
     std::atomic<uint64_t> errors;
     std::atomic<uint64_t> unexpected_misses;
@@ -441,14 +443,20 @@ bool TestEraseCompaction()
     return true;
 }
 
-int ReadAndValidate(HashMap& reader, size_t key_id, bool allow_miss,
+enum class ReadOutcome {
+    HIT,
+    ALLOWED_MISS,
+    ERROR
+};
+
+ReadOutcome ReadAndValidate(HashMap& reader, size_t key_id, bool allow_miss,
     uint64_t& retries, uint64_t& unexpected_misses,
     uint64_t& wrong_values, uint64_t& other_errors,
     uint64_t& exhausted_retries)
 {
     const std::string key = Key(key_id);
     MBData data(128, 0);
-    for (unsigned attempt = 0; attempt < 64; ++attempt) {
+    for (unsigned attempt = 0; attempt < kLookupAttempts; ++attempt) {
         int result = reader.GetValue(
             reinterpret_cast<const uint8_t*>(key.data()),
             static_cast<int>(key.size()), data);
@@ -457,24 +465,25 @@ int ReadAndValidate(HashMap& reader, size_t key_id, bool allow_miss,
             continue;
         }
         if (result == MBError::NOT_EXIST) {
-            if (!allow_miss)
-                ++unexpected_misses;
-            return allow_miss ? 0 : 1;
+            if (allow_miss)
+                return ReadOutcome::ALLOWED_MISS;
+            ++unexpected_misses;
+            return ReadOutcome::ERROR;
         }
         if (result != MBError::SUCCESS) {
             ++other_errors;
-            return 1;
+            return ReadOutcome::ERROR;
         }
         if (!ValidateValue(key_id, data)) {
             ++wrong_values;
-            return 1;
+            return ReadOutcome::ERROR;
         }
-        return 0;
+        return ReadOutcome::HIT;
     }
     ++exhausted_retries;
-    // TRY_AGAIN is an allowed bounded-retry result during epoch/generation
-    // churn. Report it separately, but do not classify it as bad data.
-    return 0;
+    // A bounded retry is acceptable, but failure to complete any lookup after
+    // the full budget is a liveness failure and must fail this stress test.
+    return ReadOutcome::ERROR;
 }
 
 [[noreturn]] void ReaderProcess(const std::string& base,
@@ -483,6 +492,7 @@ int ReadAndValidate(HashMap& reader, size_t key_id, bool allow_miss,
 {
     ResourcePool::getInstance().RemoveAll();
     uint64_t local_hits = 0;
+    uint64_t local_allowed_misses = 0;
     uint64_t local_retries = 0;
     uint64_t local_errors = 0;
     uint64_t local_unexpected_misses = 0;
@@ -505,6 +515,7 @@ int ReadAndValidate(HashMap& reader, size_t key_id, bool allow_miss,
                     ^ (static_cast<uint64_t>(process_index) << 32)
                     ^ thread_index;
                 uint64_t thread_hits = 0;
+                uint64_t thread_allowed_misses = 0;
                 uint64_t thread_retries = 0;
                 uint64_t thread_errors = 0;
                 uint64_t thread_unexpected_misses = 0;
@@ -515,15 +526,30 @@ int ReadAndValidate(HashMap& reader, size_t key_id, bool allow_miss,
                     random ^= random << 13;
                     random ^= random >> 7;
                     random ^= random << 17;
-                    const size_t key_id = random % kKeyCount;
-                    thread_errors += ReadAndValidate(reader, key_id,
-                        control->allow_miss.load(std::memory_order_acquire) != 0,
+                    const bool allow_miss
+                        = control->allow_miss.load(std::memory_order_acquire)
+                        != 0;
+                    // Once misses are allowed, target a known-absent key often
+                    // enough to exercise the NOT_EXIST path deterministically.
+                    const size_t key_id
+                        = allow_miss && ((random >> 32) & 0x0fU) == 0
+                        ? kKeyCount
+                        : random % kKeyCount;
+                    const ReadOutcome outcome = ReadAndValidate(reader, key_id,
+                        allow_miss,
                         thread_retries, thread_unexpected_misses,
                         thread_wrong_values, thread_other_errors,
                         thread_exhausted_retries);
-                    ++thread_hits;
+                    if (outcome == ReadOutcome::HIT)
+                        ++thread_hits;
+                    else if (outcome == ReadOutcome::ALLOWED_MISS)
+                        ++thread_allowed_misses;
+                    else
+                        ++thread_errors;
                 }
                 __atomic_fetch_add(&local_hits, thread_hits, __ATOMIC_RELAXED);
+                __atomic_fetch_add(&local_allowed_misses,
+                    thread_allowed_misses, __ATOMIC_RELAXED);
                 __atomic_fetch_add(&local_retries, thread_retries,
                     __ATOMIC_RELAXED);
                 __atomic_fetch_add(&local_errors, thread_errors,
@@ -547,6 +573,8 @@ int ReadAndValidate(HashMap& reader, size_t key_id, bool allow_miss,
     }
 
     control->hits.fetch_add(local_hits, std::memory_order_relaxed);
+    control->allowed_misses.fetch_add(
+        local_allowed_misses, std::memory_order_relaxed);
     control->retries.fetch_add(local_retries, std::memory_order_relaxed);
     control->errors.fetch_add(local_errors, std::memory_order_relaxed);
     control->unexpected_misses.fetch_add(local_unexpected_misses,
@@ -587,6 +615,7 @@ bool TestConcurrentValues()
     new (&control->allow_miss) std::atomic<uint32_t>(0);
     new (&control->stop) std::atomic<uint32_t>(0);
     new (&control->hits) std::atomic<uint64_t>(0);
+    new (&control->allowed_misses) std::atomic<uint64_t>(0);
     new (&control->retries) std::atomic<uint64_t>(0);
     new (&control->errors) std::atomic<uint64_t>(0);
     new (&control->unexpected_misses) std::atomic<uint64_t>(0);
@@ -648,6 +677,8 @@ bool TestConcurrentValues()
             writer.reset(new HashMap(base, kCapacity,
                 CONSTS::ACCESS_MODE_WRITER, config, kIndexMemcapMb));
             success = Populate(*writer, 151);
+            if (success)
+                control->allow_miss.store(0, std::memory_order_release);
         }
         for (size_t epoch = 152; success && epoch <= 200; ++epoch) {
             for (size_t key_id = 0; key_id < kKeyCount; ++key_id) {
@@ -673,13 +704,20 @@ bool TestConcurrentValues()
     }
     if (children.size() != kReaderProcesses
         || control->hits.load(std::memory_order_relaxed) == 0
-        || control->errors.load(std::memory_order_relaxed) != 0) {
+        || control->allowed_misses.load(std::memory_order_relaxed) == 0
+        || control->errors.load(std::memory_order_relaxed) != 0
+        || control->unexpected_misses.load(std::memory_order_relaxed) != 0
+        || control->wrong_values.load(std::memory_order_relaxed) != 0
+        || control->other_errors.load(std::memory_order_relaxed) != 0
+        || control->exhausted_retries.load(std::memory_order_relaxed) != 0) {
         success = false;
     }
 
     std::cout << "value readers="
               << kReaderProcesses * kThreadsPerProcess
               << " hits=" << control->hits.load(std::memory_order_relaxed)
+              << " allowed_misses="
+              << control->allowed_misses.load(std::memory_order_relaxed)
               << " retries="
               << control->retries.load(std::memory_order_relaxed)
               << " errors="

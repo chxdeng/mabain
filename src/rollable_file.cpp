@@ -821,8 +821,8 @@ void* RollableFile::custom_extent_alloc(void* new_addr, size_t size, size_t alig
                 // Try next tail block
                 block_order++;
                 if ((size_t)block_order >= mgr->max_num_block) {
-                    Logger::Log(LOG_LEVEL_ERROR, "custom_extent_alloc: arena %u max block number exceeded",
-                        " new memory (aligned offset: %zu, used: %zu, size: %zu)",
+                    Logger::Log(LOG_LEVEL_ERROR, "custom_extent_alloc: arena %u max block number exceeded"
+                                                 " new memory (aligned offset: %zu, used: %zu, size: %zu)",
                         arena_ind, aligned_offset, mm_meta->alloc_size, size);
                     g_jemalloc_alloc_error = MBError::NO_MEMORY;
                     return nullptr;
@@ -838,7 +838,7 @@ void* RollableFile::custom_extent_alloc(void* new_addr, size_t size, size_t alig
                 aligned_offset = 0; // reset aligned offset for new block
                 if (aligned_offset + size > mgr->block_size) {
                     Logger::Log(LOG_LEVEL_ERROR, "custom_extent_alloc: arena %u failed to extend"
-                                                 " new memory (offset: %zu, size: %zu, used: %zu, size: %zu)",
+                                                 " new memory (offset: %zu, size: %zu, block size: %zu)",
                         arena_ind, aligned_offset, size, mgr->block_size);
                     g_jemalloc_alloc_error = MBError::NO_MEMORY;
                     return nullptr;

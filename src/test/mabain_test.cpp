@@ -17,11 +17,13 @@
 // @author Changxue Deng <chadeng@cisco.com>
 
 #include <assert.h>
+#include <cerrno>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <sys/stat.h>
 #include <sys/time.h>
 #include <unistd.h>
 #include <vector>
@@ -38,9 +40,60 @@ using namespace mabain;
 static const char* MB_DIR = "/var/tmp/mabain_test/";
 static bool debug = false;
 
+static bool remove_queue_for_header()
+{
+#ifdef __linux__
+    const std::filesystem::path header_path
+        = std::filesystem::path(MB_DIR) / "_mabain_h";
+    struct stat header_stat = { };
+    if (::stat(header_path.c_str(), &header_stat) != 0) {
+        if (errno == ENOENT)
+            return true;
+        std::cerr << "failed to stat test header " << header_path << ": "
+                  << std::error_code(errno, std::generic_category()).message()
+                  << std::endl;
+        return false;
+    }
+
+    const std::filesystem::path queue_path
+        = std::filesystem::path("/dev/shm")
+        / ("_mabain_q"
+            + std::to_string(static_cast<uint64_t>(header_stat.st_ino)));
+    struct stat queue_stat = { };
+    if (::lstat(queue_path.c_str(), &queue_stat) != 0) {
+        if (errno == ENOENT)
+            return true;
+        std::cerr << "failed to stat test queue " << queue_path << ": "
+                  << std::error_code(errno, std::generic_category()).message()
+                  << std::endl;
+        return false;
+    }
+    if (queue_stat.st_uid != ::geteuid()) {
+        std::cerr << "refusing to remove test queue not owned by this user: "
+                  << queue_path << std::endl;
+        return false;
+    }
+
+    std::error_code error;
+    std::filesystem::remove(queue_path, error);
+    if (error) {
+        std::cerr << "failed to remove test queue " << queue_path << ": "
+                  << error.message() << std::endl;
+        return false;
+    }
+#endif
+    return true;
+}
+
 static void clean_db_dir()
 {
     try {
+        // The Linux queue filename is derived from the header inode. Remove
+        // that exact queue before deleting the header so a reused inode cannot
+        // attach the next test database to stale queue nodes.
+        if (!remove_queue_for_header())
+            std::exit(1);
+
         // Remove files matching pattern1
         for (const auto& entry : std::filesystem::directory_iterator(MB_DIR)) {
             if (entry.path().filename().string().find("_mabain_") == 0) {

@@ -45,6 +45,17 @@ export LD_LIBRARY_PATH="$MABAIN_ROOT/build/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PA
 mkdir -p /var/tmp/mabain_test
 
 reset_mabain_test_db() {
+  if [[ -f /var/tmp/mabain_test/_mabain_h ]]; then
+    MABAIN_TEST_QUEUE_ID="$(stat -c '%i' /var/tmp/mabain_test/_mabain_h)"
+    MABAIN_TEST_QUEUE_FILE="/dev/shm/_mabain_q${MABAIN_TEST_QUEUE_ID}"
+    if [[ -e "$MABAIN_TEST_QUEUE_FILE" ]]; then
+      if [[ ! -O "$MABAIN_TEST_QUEUE_FILE" ]]; then
+        echo "refusing to remove queue not owned by this user: $MABAIN_TEST_QUEUE_FILE" >&2
+        return 1
+      fi
+      rm -f -- "$MABAIN_TEST_QUEUE_FILE" || return 1
+    fi
+  fi
   find /var/tmp/mabain_test -mindepth 1 -maxdepth 1 \
     \( -name '_mabain_*' -o -name '_success' -o -name 'mabain.log' \
        -o -name 'key_id' \) \
@@ -82,7 +93,7 @@ cd ~/mabain/src/test
 ./hashmap_concurrency_test
 ./hashmap_value_concurrency_test
 ./prefix_cache_snapshot_concurrency_test 1000000 4
-./shared_prefix_cache_concurrency_test 200000 4 95
+./shared_prefix_cache_concurrency_test 200000 4
 ./find_lower_bound_concurrency_test \
   /var/tmp/mabain_find_lower_bound_concurrency 24 200000 5000000
 ```
