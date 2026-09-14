@@ -21,6 +21,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <signal.h>
 #include <sstream>
 #include <string>
 #include <sys/stat.h>
@@ -605,6 +606,11 @@ static void SetTestStatus(bool success)
 
 int main(int argc, char* argv[])
 {
+    if (signal(SIGPIPE, SIG_IGN) == SIG_ERR) {
+        std::cerr << "failed to ignore SIGPIPE\n";
+        return 1;
+    }
+
     if (argc > 1) {
         MB_DIR = argv[1];
     }

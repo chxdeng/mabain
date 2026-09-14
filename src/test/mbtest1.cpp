@@ -2,6 +2,7 @@
 #include <atomic>
 #include <filesystem>
 #include <fstream>
+#include <signal.h>
 #include <stdlib.h>
 #include <time.h>
 #include <unistd.h>
@@ -378,6 +379,13 @@ static void SetTestStatus(bool success)
 
 int main(int argc, char* argv[])
 {
+    // Mabain's FIFO signal write can return EPIPE when the async writer has
+    // already exited. Ignore SIGPIPE so the test can handle normal shutdown.
+    if (signal(SIGPIPE, SIG_IGN) == SIG_ERR) {
+        std::cerr << "failed to ignore SIGPIPE\n";
+        return 1;
+    }
+
     if (argc > 1) {
         mbdir = std::string(argv[1]);
         std::cout << "Test db directory is " << mbdir << "\n";

@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <signal.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -11,6 +12,11 @@ using namespace mabain;
 
 int main(int argc, char* argv[])
 {
+    if (signal(SIGPIPE, SIG_IGN) == SIG_ERR) {
+        std::cerr << "failed to ignore SIGPIPE\n";
+        return 1;
+    }
+
     int num = 0;
     int options = CONSTS::ReaderOptions();
     int duration = 0; // in seconds

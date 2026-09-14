@@ -1,6 +1,7 @@
 #include <assert.h>
 #include <filesystem>
 #include <fstream>
+#include <signal.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -25,6 +26,11 @@ static void create_header_file(int size)
 
 int main(int argc, char* argv[])
 {
+    if (signal(SIGPIPE, SIG_IGN) == SIG_ERR) {
+        std::cerr << "failed to ignore SIGPIPE\n";
+        return 1;
+    }
+
     srand(time(NULL));
 
     try {
