@@ -135,6 +135,22 @@ TEST_F(FreeListTest, ReleaseBuffer_test)
     EXPECT_EQ(flist.GetBufferCountByIndex(flist.GetBufferIndex(34)), 1u);
 }
 
+TEST_F(FreeListTest, OversizedBufferIsNotTracked_test)
+{
+    FreeList flist("./freelist", 4, 4);
+
+    EXPECT_EQ(flist.ReleaseBuffer(16, 16), MBError::SUCCESS);
+    EXPECT_EQ(flist.Count(), 1);
+    EXPECT_EQ(flist.GetTotSize(), 16u);
+
+    const size_t oversized_index = flist.GetBufferIndex(17);
+    EXPECT_EQ(oversized_index, 4u);
+    EXPECT_EQ(flist.GetBufferCountByIndex(oversized_index), 0u);
+    EXPECT_EQ(flist.ReleaseBuffer(32, 17), MBError::SUCCESS);
+    EXPECT_EQ(flist.Count(), 1);
+    EXPECT_EQ(flist.GetTotSize(), 16u);
+}
+
 TEST_F(FreeListTest, AddBuffer_test)
 {
     int rval;

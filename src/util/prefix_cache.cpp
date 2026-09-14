@@ -120,7 +120,7 @@ PrefixCache::PrefixCache(const std::string& mbdir, const IndexHeader* hdr, size_
 struct PCShmHeader {
     uint32_t magic;
     uint16_t version;
-    uint16_t reserved;
+    uint16_t flags;
     uint32_t cap2;
     uint32_t cap3;
     uint32_t cap4;
@@ -128,8 +128,8 @@ struct PCShmHeader {
     uint32_t mask3;
     uint32_t mask4;
     uint32_t global_epoch;
-    // Keep the following PrefixCacheEntry array 8-byte aligned.
-    uint32_t reserved2;
+    // Total invalidations protect the 32-bit cache epochs from wrapping.
+    uint32_t invalidation_count;
 };
 
 static_assert(sizeof(PCShmHeader) == 40,
@@ -187,7 +187,7 @@ bool PrefixCache::map_shared(const std::string& path)
     if (hdr->magic != MAGIC || hdr->version != VER) {
         hdr->magic = MAGIC;
         hdr->version = VER;
-        hdr->reserved = 0;
+        hdr->flags = 0;
         hdr->cap2 = static_cast<uint32_t>(cap2 ? cap2 : 1);
         hdr->cap3 = static_cast<uint32_t>(cap3 ? cap3 : 0);
         hdr->cap4 = static_cast<uint32_t>(cap4 ? cap4 : 0);
@@ -195,12 +195,14 @@ bool PrefixCache::map_shared(const std::string& path)
         hdr->mask3 = static_cast<uint32_t>(mask3);
         hdr->mask4 = static_cast<uint32_t>(mask4);
         hdr->global_epoch = 0;
-        hdr->reserved2 = 0;
+        hdr->invalidation_count = 0;
         init = true;
     }
 
     uint8_t* p = reinterpret_cast<uint8_t*>(base) + sizeof(PCShmHeader);
     global_epoch = &hdr->global_epoch;
+    cache_flags = &hdr->flags;
+    invalidation_count = &hdr->invalidation_count;
     root_epoch = reinterpret_cast<uint32_t*>(p);
     p += er;
     prefix2_epoch = reinterpret_cast<uint32_t*>(p);
@@ -241,6 +243,8 @@ bool PrefixCache::map_shared(const std::string& path)
     } else {
         (void)::madvise(shm_base, shm_size, MADV_WILLNEED);
     }
+    if (CacheDisabled())
+        Clear();
     return true;
 }
 
@@ -305,7 +309,7 @@ bool PrefixCache::map_embedded(const std::string& mbdir)
     if (init) {
         hdr->magic = MAGIC;
         hdr->version = VER;
-        hdr->reserved = 0;
+        hdr->flags = 0;
         hdr->cap2 = static_cast<uint32_t>(cap2 ? cap2 : 1);
         hdr->cap3 = static_cast<uint32_t>(cap3 ? cap3 : 0);
         hdr->cap4 = static_cast<uint32_t>(cap4 ? cap4 : 0);
@@ -313,10 +317,12 @@ bool PrefixCache::map_embedded(const std::string& mbdir)
         hdr->mask3 = static_cast<uint32_t>(mask3);
         hdr->mask4 = static_cast<uint32_t>(mask4);
         hdr->global_epoch = 0;
-        hdr->reserved2 = 0;
+        hdr->invalidation_count = 0;
     }
     uint8_t* p = reinterpret_cast<uint8_t*>(hdr) + sizeof(PCShmHeader);
     global_epoch = &hdr->global_epoch;
+    cache_flags = &hdr->flags;
+    invalidation_count = &hdr->invalidation_count;
     root_epoch = reinterpret_cast<uint32_t*>(p);
     p += er;
     prefix2_epoch = reinterpret_cast<uint32_t*>(p);
@@ -350,6 +356,8 @@ bool PrefixCache::map_embedded(const std::string& mbdir)
     } else {
         (void)::madvise((uint8_t*)base + shm_delta, need, MADV_WILLNEED);
     }
+    if (CacheDisabled())
+        Clear();
     return true;
 }
 
@@ -496,22 +504,53 @@ uint32_t PrefixCache::CurrentEpoch(const uint8_t* key, int len) const
         + __atomic_load_n(&prefix2_epoch[p2], __ATOMIC_ACQUIRE);
 }
 
+bool PrefixCache::CacheDisabled() const
+{
+    return cache_flags != nullptr
+        && (__atomic_load_n(cache_flags, __ATOMIC_ACQUIRE)
+            & CACHE_DISABLED_FLAG) != 0;
+}
+
+bool PrefixCache::PrepareInvalidation()
+{
+    if (CacheDisabled())
+        return false;
+    if (invalidation_count == nullptr)
+        return true;
+
+    uint32_t count = __atomic_load_n(invalidation_count, __ATOMIC_ACQUIRE);
+    if (count == 0xFFFFFFFFu) {
+        // A key can be affected at most once per cache invalidation. Empty the
+        // cache before a 32-bit epoch could repeat, then keep it disabled for
+        // this DB lifetime. Clear precedes the persistent marker so a writer
+        // crash cannot leave a changed DB reachable through uncleared tags.
+        Clear();
+        (void)__atomic_fetch_or(cache_flags, CACHE_DISABLED_FLAG,
+            __ATOMIC_RELEASE);
+        return false;
+    }
+
+    (void)__atomic_add_fetch(invalidation_count, 1u, __ATOMIC_ACQ_REL);
+    return true;
+}
+
 void PrefixCache::InvalidatePrefix2(const uint8_t* key, int len)
 {
     uint16_t p2;
-    if (prefix2_epoch != nullptr && build2(key, len, p2))
+    if (prefix2_epoch != nullptr && build2(key, len, p2)
+        && PrepareInvalidation())
         (void)__atomic_add_fetch(&prefix2_epoch[p2], 1u, __ATOMIC_ACQ_REL);
 }
 
 void PrefixCache::InvalidateRoot(uint8_t first_byte)
 {
-    if (root_epoch != nullptr)
+    if (root_epoch != nullptr && PrepareInvalidation())
         (void)__atomic_add_fetch(&root_epoch[first_byte], 1u, __ATOMIC_ACQ_REL);
 }
 
 void PrefixCache::InvalidateAll()
 {
-    if (global_epoch != nullptr)
+    if (global_epoch != nullptr && PrepareInvalidation())
         (void)__atomic_add_fetch(global_epoch, 1u, __ATOMIC_ACQ_REL);
 }
 
@@ -615,6 +654,9 @@ int PrefixCache::GetDepth(const uint8_t* key, int len, PrefixCacheEntry& out) co
 // Uses release-ordering on tag/valid to publish after the entry body is written.
 void PrefixCache::Put(const uint8_t* key, int len, const PrefixCacheEntry& in)
 {
+    if (CacheDisabled())
+        return;
+
     PrefixCacheEntry seeded = in;
     seeded.cache_epoch = CurrentEpoch(key, len);
 
@@ -665,6 +707,9 @@ void PrefixCache::Put(const uint8_t* key, int len, const PrefixCacheEntry& in)
 // Used by writer to seed canonical boundaries and mid-edge seeds.
 void PrefixCache::PutAtDepth(const uint8_t* key, int depth, const PrefixCacheEntry& in)
 {
+    if (CacheDisabled())
+        return;
+
     PrefixCacheEntry seeded = in;
     seeded.cache_epoch = CurrentEpoch(key, depth);
 
@@ -746,15 +791,15 @@ void PrefixCache::Clear()
 {
     size_t c2 = (cap2 ? cap2 : 1);
     for (size_t i = 0; i < c2; ++i)
-        tag2[i].store(0u, std::memory_order_relaxed);
+        tag2[i].store(0u, std::memory_order_release);
     if (cap3) {
         for (size_t i = 0; i < cap3; ++i)
-            tag3[i].store(0u, std::memory_order_relaxed);
+            tag3[i].store(0u, std::memory_order_release);
     }
     if (cap4) {
         for (size_t i = 0; i < cap4; ++i) {
-            valid4[i].store(0u, std::memory_order_relaxed);
-            tag4[i].store(0u, std::memory_order_relaxed);
+            valid4[i].store(0u, std::memory_order_release);
+            tag4[i].store(0u, std::memory_order_release);
         }
     }
 }

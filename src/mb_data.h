@@ -67,6 +67,8 @@ typedef struct _EdgePtrs {
 // Data class for find and remove
 // All memeber variable in this class should be kept public so that it can
 // be easily accessed by the caller to get the data/value buffer and buffer len.
+// MBData is an output/scratch object that may own its data buffer.
+// Copying or assigning MBData is unsupported; pass it by reference.
 class MBData {
 public:
     MBData();

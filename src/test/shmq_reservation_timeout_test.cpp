@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <iostream>
 #include <memory>
+#include <signal.h>
 #include <string>
 #include <system_error>
 #include <thread>
@@ -41,6 +42,11 @@ int Fail(std::unique_ptr<DB>& db, const std::string& db_dir,
 
 int main()
 {
+    if (signal(SIGPIPE, SIG_IGN) == SIG_ERR) {
+        std::cerr << "failed to ignore SIGPIPE\n";
+        return 1;
+    }
+
     std::string db_dir = "/var/tmp/mabain_shmq_timeout_test_" + std::to_string(getpid());
     std::string db_path = db_dir + "/";
     std::error_code ec;

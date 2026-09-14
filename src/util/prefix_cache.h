@@ -138,6 +138,8 @@ private:
     inline bool build3(const uint8_t* key, int len, uint32_t& p3) const;
     inline bool build4(const uint8_t* key, int len, uint32_t& p4) const;
     uint32_t CurrentEpoch(const uint8_t* key, int len) const;
+    bool PrepareInvalidation();
+    bool CacheDisabled() const;
 
     const size_t cap2;
     const size_t cap3;
@@ -164,9 +166,12 @@ private:
     uint32_t* global_epoch = nullptr;
     uint32_t* root_epoch = nullptr;
     uint32_t* prefix2_epoch = nullptr;
+    uint16_t* cache_flags = nullptr;
+    uint32_t* invalidation_count = nullptr;
 
     static constexpr size_t ROOT_EPOCH_COUNT = 256;
     static constexpr size_t PREFIX2_EPOCH_COUNT = 65536;
+    static constexpr uint16_t CACHE_DISABLED_FLAG = 0x1u;
 
     // Hit/miss counters removed; keep only put_count for write diagnostics
     mutable uint64_t put_count = 0;

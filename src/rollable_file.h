@@ -37,7 +37,11 @@ namespace mabain {
 class RollableFile {
 public:
     RollableFile(const std::string& fpath, size_t blocksize,
-        size_t memcap, int access_mode, long max_block = 0, int rc_offset_percentage = 75);
+        size_t memcap, int access_mode, long max_block = 0,
+        int rc_offset_percentage = 75);
+    RollableFile(const std::string& fpath, size_t blocksize,
+        size_t memcap, int access_mode, long max_block,
+        int rc_offset_percentage, mode_t create_mode);
     ~RollableFile();
 
     // memory management using jemalloc
@@ -128,6 +132,7 @@ private:
 
     int rc_offset_percentage;
     size_t mem_used;
+    mode_t create_mode;
 
     // jemalloc only
     static std::unordered_map<unsigned, RollableFile*> arena_manager_map;

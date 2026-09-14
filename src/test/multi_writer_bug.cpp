@@ -1,6 +1,7 @@
 #include <assert.h>
 #include <iostream>
 #include <mutex>
+#include <signal.h>
 #include <thread>
 #include <unistd.h>
 
@@ -106,6 +107,11 @@ static void overwrite_test()
 
 int main()
 {
+    if (signal(SIGPIPE, SIG_IGN) == SIG_ERR) {
+        std::cerr << "failed to ignore SIGPIPE\n";
+        return 1;
+    }
+
     int nthread = 32;
     std::thread thr[256];
     assert(nthread <= 256);

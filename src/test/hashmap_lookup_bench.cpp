@@ -10,13 +10,14 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <random>
 #include <string>
 #include <vector>
 
 #include "../error.h"
-#include "../hash_map.h"
+#include "../hash_map_api.h"
 #include "../mabain_consts.h"
 
 using namespace mabain;
@@ -45,6 +46,19 @@ int main(int argc, char** argv)
     if (load_factor <= 0.1 || load_factor > 0.95)
         load_factor = 0.5;
     bool compact64 = (argc >= 7) ? (std::strtoull(argv[6], nullptr, 10) != 0) : true;
+
+    // This benchmark always measures a freshly built writer map. Reusing a
+    // file from an older or differently configured run can fail layout
+    // validation before the benchmark starts and would make results
+    // incomparable even when the layout happened to match.
+    const std::filesystem::path backing_file = mbdir + "_hashmap0";
+    std::error_code cleanup_error;
+    std::filesystem::remove(backing_file, cleanup_error);
+    if (cleanup_error) {
+        std::cerr << "Failed to remove benchmark backing file "
+                  << backing_file << ": " << cleanup_error.message() << "\n";
+        return 1;
+    }
 
     const uint32_t inline_key = 24; // inline first 16 bytes for quick screening
     const size_t desired_capacity = std::max<size_t>(1024, ceil_pow2((size_t)std::ceil(n / load_factor)));

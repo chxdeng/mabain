@@ -3,6 +3,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <signal.h>
 #include <stdlib.h>
 #include <time.h>
 #include <unistd.h>
@@ -153,6 +154,11 @@ static void SetTestStatus(bool success)
 
 int main(int argc, char* argv[])
 {
+    if (signal(SIGPIPE, SIG_IGN) == SIG_ERR) {
+        std::cerr << "failed to ignore SIGPIPE\n";
+        return 1;
+    }
+
     if (argc > 1) {
         mbdir = argv[1];
         std::cout << "Test db directory is " << mbdir << "\n";

@@ -94,7 +94,7 @@ private:
 inline size_t FreeList::GetAlignmentSize(size_t size) const
 {
 #ifdef __DEBUG__
-    assert(size > 0 && size < max_num_buffer * alignment);
+    assert(size > 0);
 #endif
     size_t alignment_mod = size % alignment;
     if (alignment_mod == 0)
@@ -105,16 +105,15 @@ inline size_t FreeList::GetAlignmentSize(size_t size) const
 inline size_t FreeList::GetBufferIndex(size_t size) const
 {
 #ifdef __DEBUG__
-    assert(size > 0 && size < max_num_buffer * alignment);
+    assert(size > 0);
 #endif
     return ((size - 1) / alignment);
 }
 
 inline uint64_t FreeList::GetBufferCountByIndex(size_t buf_index) const
 {
-#ifdef __DEBUG__
-    assert(buf_index < max_num_buffer);
-#endif
+    if (buf_index >= max_num_buffer)
+        return 0;
     return buffer_free_list[buf_index]->Count();
 }
 
@@ -155,9 +154,13 @@ inline size_t FreeList::RemoveBufferByIndex(size_t buf_index)
 inline int FreeList::ReleaseBuffer(size_t offset, size_t size)
 {
 #ifdef __DEBUG__
-    assert(size > 0 && size < max_num_buffer * alignment);
+    assert(size > 0);
 #endif
     size_t buf_index = GetBufferIndex(size);
+    // Oversized buffers are intentionally not cached. Their callers account
+    // for the unreachable space so resource collection can reclaim it.
+    if (buf_index >= max_num_buffer)
+        return MBError::SUCCESS;
     return AddBufferByIndex(buf_index, offset);
 }
 

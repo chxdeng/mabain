@@ -37,7 +37,10 @@ namespace mabain {
 // Memory mapped file class
 class MmapFileIO : public FileIO {
 public:
-    MmapFileIO(const std::string& fpath, int mode, off_t filesize, bool sync = false);
+    MmapFileIO(const std::string& fpath, int mode, off_t filesize,
+        bool sync = false);
+    MmapFileIO(const std::string& fpath, int mode, off_t filesize,
+        bool sync, mode_t create_mode);
     ~MmapFileIO();
 
     uint8_t* MapFile(size_t size, off_t offset, bool sliding = false);
