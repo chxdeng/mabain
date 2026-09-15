@@ -236,8 +236,11 @@ public:
     static bool PrefixCacheConfigured(int options) { return (options & CONSTS::OPTION_PREFIX_CACHE) != 0; }
 
 private:
-    uint64_t BeginReaderEpochGuard() const;
-    void EndReaderEpochGuard(uint64_t epoch) const;
+    // Positive values identify an acquired guard, zero means no guard is
+    // needed, and negative values encode the MBError that prevented guarding.
+    int64_t BeginReaderEpochGuard() const;
+    int64_t AcquireReaderEpochBarrierFallback() const;
+    void EndReaderEpochGuard(int64_t epoch) const;
     int EnsureRebuildBarrier() const;
     int AcquireRebuildBarrierShared() const;
     void ReleaseRebuildBarrierShared() const;

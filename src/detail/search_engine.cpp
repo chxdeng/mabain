@@ -522,6 +522,10 @@ namespace {
 #endif
             int edge_len = edge_ptrs.len_ptr[0];
             int edge_len_m1 = edge_len - 1;
+            if (edge_len > len) {
+                rval = MBError::NOT_EXIST;
+                break;
+            }
             rval = compareCurrEdgeTail(edge_ptrs, data, key_cursor, key_buff, edge_len, edge_len_m1);
             if (rval == MBError::READ_ERROR)
                 break;
@@ -605,6 +609,10 @@ namespace {
 #endif
             int edge_len = edge_ptrs.len_ptr[0];
             int edge_len_m1 = edge_len - 1;
+            if (edge_len > len) {
+                rval = MBError::NOT_EXIST;
+                break;
+            }
             // match edge string
             if (edge_len > LOCAL_EDGE_LEN) {
                 size_t edge_str_off = Get5BInteger(edge_ptrs.ptr);
@@ -645,19 +653,27 @@ namespace {
         return rval;
     }
 
-    void SearchEngine::appendEdgeKey(std::string* key, int edge_key, const EdgePtrs& edge_ptrs) const
+    int SearchEngine::appendEdgeKey(std::string* key, int edge_key, const EdgePtrs& edge_ptrs,
+        MBData& data) const
     {
+        const size_t initial_size = key->size();
         key->push_back((char)edge_key);
         int edge_len_m1 = edge_ptrs.len_ptr[0] - 1;
         if (edge_len_m1 + 1 > LOCAL_EDGE_LEN) {
             size_t edge_str_off = Get5BInteger(edge_ptrs.ptr);
             uint8_t* edge_str_buff = dict.mm.GetShmPtr(edge_str_off, edge_len_m1);
-            if (edge_str_buff != nullptr) {
-                key->append((const char*)edge_str_buff, edge_len_m1);
+            if (edge_str_buff == nullptr) {
+                if (dict.mm.ReadData(data.node_buff, edge_len_m1, edge_str_off) != edge_len_m1) {
+                    key->resize(initial_size);
+                    return MBError::READ_ERROR;
+                }
+                edge_str_buff = data.node_buff;
             }
+            key->append((const char*)edge_str_buff, edge_len_m1);
         } else if (edge_len_m1 > 0) {
             key->append(reinterpret_cast<const char*>(edge_ptrs.ptr), edge_len_m1);
         }
+        return MBError::SUCCESS;
     }
 
     int SearchEngine::readLowerBound(EdgePtrs& edge_ptrs, MBData& data, std::string* bound_key,
@@ -675,7 +691,9 @@ namespace {
         int max_key = -1;
         while (!(edge_ptrs.flag_ptr[0] & EDGE_FLAG_DATA_OFF)) {
             if (bound_key != nullptr && le_edge_key >= 0) {
-                appendEdgeKey(bound_key, le_edge_key, edge_ptrs);
+                int append_rval = appendEdgeKey(bound_key, le_edge_key, edge_ptrs, data);
+                if (append_rval != MBError::SUCCESS)
+                    return lf_guard.stopOrReturn(edge_ptrs.offset, append_rval);
                 le_edge_key = -1;
             }
             max_key = -1;
@@ -690,7 +708,9 @@ namespace {
         }
 
         if (bound_key != nullptr && le_edge_key >= 0 && (edge_ptrs.flag_ptr[0] & EDGE_FLAG_DATA_OFF)) {
-            appendEdgeKey(bound_key, le_edge_key, edge_ptrs);
+            int append_rval = appendEdgeKey(bound_key, le_edge_key, edge_ptrs, data);
+            if (append_rval != MBError::SUCCESS)
+                return lf_guard.stopOrReturn(edge_ptrs.offset, append_rval);
         }
 
         if (rval == MBError::SUCCESS || rval == MBError::NOT_EXIST) {
@@ -778,6 +798,11 @@ namespace {
 
             int edge_len = edge_ptrs.len_ptr[0];
             int edge_label_len = edge_len - 1;
+            if (edge_label_len < 0 || len <= 0) {
+                // Malformed edge or exhausted query; neither can match here.
+                return lf_guard.stopOrReturn(
+                    edge_ptrs.offset, MBError::NOT_EXIST);
+            }
 
             // Load edge label tail (inline or overflow) for comparison.
             if (edge_len > LOCAL_EDGE_LEN) {
@@ -792,8 +817,10 @@ namespace {
             // Compare the remainder of the edge label with the remaining key bytes.
             // Any divergence returns NOT_EXIST to the caller, carrying the best
             // candidate captured so far in bound_edge_ptrs.
-            if (edge_label_len > 0) {
-                int label_cmp = memcmp(edge_label_ptr, key + 1, edge_label_len);
+            const int compare_len
+                = edge_len > len ? len - 1 : edge_label_len;
+            if (compare_len > 0) {
+                int label_cmp = memcmp(edge_label_ptr, key + 1, compare_len);
                 if (label_cmp != 0) {
                     // If the edge label is strictly less than the key suffix, signal
                     // that the current subtree itself is a valid lower-bound pivot.
@@ -806,8 +833,10 @@ namespace {
                     }
                     return lf_guard.stopOrReturn(edge_ptrs.offset, MBError::NOT_EXIST);
                 }
-            } else if (edge_label_len < 0) {
-                // Malformed edge; treat as not found.
+            }
+            if (edge_len > len) {
+                // The query is a strict prefix only after all available bytes
+                // matched, so this longer edge is greater than the query.
                 return lf_guard.stopOrReturn(edge_ptrs.offset, MBError::NOT_EXIST);
             }
 

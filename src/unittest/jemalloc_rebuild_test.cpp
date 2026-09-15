@@ -172,12 +172,12 @@ public:
         return db.RunStartupRebuild();
     }
 
-    static uint64_t BeginReaderEpochGuard(DB& db)
+    static int64_t BeginReaderEpochGuard(DB& db)
     {
         return db.BeginReaderEpochGuard();
     }
 
-    static void EndReaderEpochGuard(DB& db, uint64_t epoch)
+    static void EndReaderEpochGuard(DB& db, int64_t epoch)
     {
         db.EndReaderEpochGuard(epoch);
     }
@@ -190,6 +190,16 @@ public:
     static void ReleaseRebuildBarrierShared(DB& db)
     {
         db.ReleaseRebuildBarrierShared();
+    }
+
+    static void ResetRebuildBarrier(DB& db)
+    {
+        db.rebuild_barrier.reset();
+    }
+
+    static void SetOptions(DB& db, int options)
+    {
+        db.options = options;
     }
 };
 
@@ -324,8 +334,8 @@ TEST_F(JemallocRebuildMetadataTest, ReaderEpochGuardUsesFastSlotWhenAvailable)
 
     const uint64_t fast_before = reader_db.GetReaderGuardFastSlotCount();
     const uint64_t fallback_before = reader_db.GetReaderGuardBarrierFallbackCount();
-    const uint64_t token = mabain::DBTestPeer::BeginReaderEpochGuard(reader_db);
-    EXPECT_NE(token, 0u);
+    const int64_t token = mabain::DBTestPeer::BeginReaderEpochGuard(reader_db);
+    EXPECT_GT(token, 0);
     EXPECT_EQ(reader_db.GetReaderGuardFastSlotCount(), fast_before + 1);
     EXPECT_EQ(reader_db.GetReaderGuardBarrierFallbackCount(), fallback_before);
     EXPECT_EQ(header->reader_epoch_slot[token - 1].connect_id.load(MEMORY_ORDER_READER), 77u);
@@ -351,8 +361,8 @@ TEST_F(JemallocRebuildMetadataTest, ReaderEpochGuardFallsBackToBarrierWhenSlotsB
 
     const uint64_t fast_before = reader_db.GetReaderGuardFastSlotCount();
     const uint64_t fallback_before = reader_db.GetReaderGuardBarrierFallbackCount();
-    const uint64_t token = mabain::DBTestPeer::BeginReaderEpochGuard(reader_db);
-    EXPECT_NE(token, 0u);
+    const int64_t token = mabain::DBTestPeer::BeginReaderEpochGuard(reader_db);
+    EXPECT_GT(token, 0);
     EXPECT_EQ(reader_db.GetReaderGuardFastSlotCount(), fast_before);
     EXPECT_EQ(reader_db.GetReaderGuardBarrierFallbackCount(), fallback_before + 1);
     mabain::DBTestPeer::EndReaderEpochGuard(reader_db, token);
@@ -373,13 +383,56 @@ TEST_F(JemallocRebuildMetadataTest, ReaderEpochGuardEndClearsClaimedSlot)
     ASSERT_TRUE(reader_db.is_open());
     header->reader_epoch_tracking_active.store(1, MEMORY_ORDER_WRITER);
 
-    const uint64_t token = mabain::DBTestPeer::BeginReaderEpochGuard(reader_db);
-    ASSERT_NE(token, 0u);
+    const int64_t token = mabain::DBTestPeer::BeginReaderEpochGuard(reader_db);
+    ASSERT_GT(token, 0);
     mabain::DBTestPeer::EndReaderEpochGuard(reader_db, token);
     EXPECT_EQ(header->reader_epoch_slot[token - 1].connect_id.load(MEMORY_ORDER_READER), 0u);
     EXPECT_EQ(header->reader_epoch_slot[token - 1].pid.load(MEMORY_ORDER_READER), 0u);
     EXPECT_EQ(header->reader_epoch_slot[token - 1].proc_start_time.load(MEMORY_ORDER_READER), 0u);
     EXPECT_EQ(header->reader_epoch_slot[token - 1].epoch.load(MEMORY_ORDER_READER), 0u);
+}
+
+TEST_F(JemallocRebuildMetadataTest, LookupFailsWhenReaderGuardCannotBeAcquired)
+{
+    MBConfig writer_config = MakeJemallocRebuildConfig(
+        CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, false);
+    DB writer_db(writer_config);
+    ASSERT_TRUE(writer_db.is_open());
+    ASSERT_EQ(writer_db.Add("seed", "value"), MBError::SUCCESS);
+    auto* header = writer_db.GetDictPtr()->GetHeaderPtr();
+    ASSERT_NE(header, nullptr);
+
+    MBConfig reader_config = MakeJemallocRebuildConfig(
+        CONSTS::ACCESS_MODE_READER | CONSTS::OPTION_JEMALLOC, false);
+    DB reader_db(reader_config);
+    ASSERT_TRUE(reader_db.is_open());
+
+    header->reader_epoch_tracking_active.store(1, MEMORY_ORDER_WRITER);
+    for (uint32_t i = 0; i < MB_MAX_READER_EPOCH_SLOT; ++i)
+        header->reader_epoch_slot[i].connect_id.store(i + 1, MEMORY_ORDER_WRITER);
+
+    // Force the barrier fallback to fail after all epoch slots are exhausted.
+    // Before the fix, this failure was treated as an unguarded lookup and the
+    // existing entry was returned successfully.
+    const int original_options = reader_db.GetDBOptions();
+    mabain::DBTestPeer::ResetRebuildBarrier(reader_db);
+    mabain::DBTestPeer::SetOptions(reader_db,
+        original_options | CONSTS::MEMORY_ONLY_MODE);
+
+    MBData data;
+    EXPECT_EQ(reader_db.Find("seed", data), MBError::NOT_INITIALIZED);
+
+    int err = MBError::SUCCESS;
+    EXPECT_FALSE(reader_db.InDB("seed", 4, err));
+    EXPECT_EQ(err, MBError::NOT_INITIALIZED);
+
+    std::string bound_key;
+    EXPECT_EQ(reader_db.FindLowerBound("seed", 4, data, &bound_key),
+        MBError::NOT_INITIALIZED);
+    EXPECT_EQ(reader_db.FindLongestPrefix("seed", 4, data),
+        MBError::NOT_INITIALIZED);
+
+    mabain::DBTestPeer::SetOptions(reader_db, original_options);
 }
 
 TEST_F(JemallocRebuildMetadataTest, StaleReaderClearRejectsReusedProcessIdentity)

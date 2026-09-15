@@ -339,4 +339,26 @@ TEST_F(FreeListTest, StoreLoadHalfFilling_test)
     EXPECT_EQ(rval, MBError::NO_MEMORY);
 }
 
+TEST_F(FreeListTest, SaturatedSmallestBucketDoesNotUnderflow)
+{
+    EXPECT_EXIT(
+        {
+            FreeList flist("./freelist", 1, 4, 1);
+            bool valid = flist.AddBuffer(10, 1) == MBError::SUCCESS;
+            valid &= flist.AddBuffer(20, 1) == MBError::SUCCESS;
+            // The third entry exceeds the configured bucket limit and cannot
+            // be reused by a smaller bucket, so it must be discarded safely.
+            valid &= flist.AddBuffer(30, 1) == MBError::SUCCESS;
+            valid &= flist.Count() == 2;
+            valid &= flist.GetTotSize() == 2;
+
+            size_t offset = 0;
+            valid &= flist.RemoveBuffer(offset, 1) == MBError::SUCCESS && offset == 10;
+            valid &= flist.RemoveBuffer(offset, 1) == MBError::SUCCESS && offset == 20;
+            valid &= flist.RemoveBuffer(offset, 1) == MBError::NO_MEMORY;
+            _exit(valid ? 0 : 3);
+        },
+        ::testing::ExitedWithCode(0), "");
+}
+
 }

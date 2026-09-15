@@ -29,15 +29,21 @@ struct HashMapValueConfig {
 
 class HashMap {
 public:
-    // Create or open reference-storage mode. One writer process and multiple
-    // reader processes may use the map. Opening a writer resets an existing
-    // compatible map; all processes must use matching layout arguments.
+    // Create or open fast in-index reference mode. One writer process and
+    // multiple reader processes may use the map. Full buckets compare the key
+    // bytes that fit in inline_key; longer keys and compact buckets retain
+    // probabilistic hash identity. Use the value-storage constructor with
+    // Put/Get when complete-key reference identity is required. Opening a
+    // writer resets an existing compatible map; all processes must use matching
+    // layout arguments.
     HashMap(const std::string& mbdir, size_t capacity, int options,
         uint32_t num_stripes = 64, uint32_t inline_key = 16,
         size_t memcap_mb = 32, bool compact64 = false);
 
     // Create or open value-storage mode. Immutable key/value records are held
-    // in generation-named jemalloc files separate from the fixed index.
+    // in generation-named jemalloc files separate from the fixed index. Put/Get
+    // may also be used in this mode to store an exact-key size_t reference. Do
+    // not mix reference and arbitrary-value APIs for the same key.
     HashMap(const std::string& mbdir, size_t capacity, int options,
         const HashMapValueConfig& config, size_t index_memcap_mb = 32);
     ~HashMap();
@@ -47,6 +53,8 @@ public:
     HashMap(HashMap&&) noexcept;
     HashMap& operator=(HashMap&&) noexcept;
 
+    // In value-storage mode, Put/Get keep the reference in the immutable record
+    // and verify the complete key after the index hash fingerprint matches.
     int Put(const uint8_t* key, int len, size_t ref_offset,
         bool overwrite = true);
     bool Get(const uint8_t* key, int len, size_t& ref_offset) const;

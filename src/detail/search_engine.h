@@ -90,7 +90,8 @@ namespace detail {
 
         // Lower-bound internals
         int lowerBoundAttempt(const uint8_t* key, int len, MBData& data, std::string* bound_key);
-        void appendEdgeKey(std::string* key, int edge_key, const EdgePtrs& edge_ptrs) const;
+        int appendEdgeKey(std::string* key, int edge_key, const EdgePtrs& edge_ptrs,
+            MBData& data) const;
         int readLowerBound(EdgePtrs& edge_ptrs, MBData& data, std::string* bound_key,
             int le_edge_key, ReaderLFGuard& lf_guard) const;
         int readBoundFromRootEdge(EdgePtrs& edge_ptrs, MBData& data,

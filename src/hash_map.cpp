@@ -317,6 +317,8 @@ bool HashMapImpl::write_full_body(BucketFull& bucket, const uint8_t* key,
 
 bool HashMapImpl::Get(const uint8_t* key, int len, size_t& ref_offset) const
 {
+    if (storage_mode_ == StorageMode::VALUE)
+        return get_stored_reference(key, len, ref_offset);
     if (storage_mode_ != StorageMode::REFERENCE)
         return false;
     if (key == nullptr || len <= 0 || hdr_ == nullptr)
@@ -426,6 +428,8 @@ bool HashMapImpl::Get(const uint8_t* key, int len, size_t& ref_offset) const
 
 int HashMapImpl::Put(const uint8_t* key, int len, size_t ref_offset, bool overwrite)
 {
+    if (storage_mode_ == StorageMode::VALUE)
+        return put_stored_reference(key, len, ref_offset, overwrite);
     if (storage_mode_ != StorageMode::REFERENCE)
         return MBError::NOT_ALLOWED;
     if (!(options_ & CONSTS::ACCESS_MODE_WRITER))

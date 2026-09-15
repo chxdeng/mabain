@@ -85,6 +85,8 @@ AsyncWriter::AsyncWriter(DB* db_ptr)
 
 AsyncWriter::~AsyncWriter()
 {
+    if (writer_instance == this)
+        writer_instance = NULL;
 }
 
 int AsyncWriter::StopAsyncThread()
