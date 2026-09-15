@@ -68,6 +68,10 @@ FreeList::~FreeList()
 int FreeList::ReuseBuffer(size_t buf_index, size_t offset)
 {
     int rval = MBError::BUFFER_LOST;
+    // Bucket zero is already the smallest size class, so a saturated buffer
+    // cannot be moved to a smaller bucket.
+    if (buf_index == 0)
+        return rval;
     for (size_t i = buf_index - 1; i > 0; i--) {
         if (buffer_free_list[i]->Count() > max_buffer_per_list)
             continue;

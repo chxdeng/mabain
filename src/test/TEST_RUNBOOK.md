@@ -113,11 +113,12 @@ Pass criteria:
 - `hashmap_concurrency_test` passes its compact and full-bucket probe-chain,
   overwrite, erase/reinsert, writer-restart, and four-reader process checks
   with zero incorrect offsets or forbidden misses.
-- `hashmap_value_concurrency_test` validates binary key/value ownership,
-  overwrite, erase/reinsert, owner-only files, writer restart, and 32 lookup
-  threads across four reader processes. It must report zero unexpected misses,
-  wrong/torn values, or other read errors. Bounded `TRY_AGAIN` results during
-  generation/epoch churn are reported separately and are permitted.
+- `hashmap_value_concurrency_test` validates binary key/value ownership, exact
+  full-key reference lookup through value storage (including fingerprint false
+  positives), overwrite, erase/reinsert, owner-only files, writer restart, and
+  32 lookup threads across four reader processes. It must report zero unexpected
+  misses, wrong/torn values, or other read errors. Bounded `TRY_AGAIN` results
+  during generation/epoch churn are reported separately and are permitted.
 - `prefix_cache_snapshot_concurrency_test` reports nonzero hits and no torn or
   invalid stable snapshot.
 - `shared_prefix_cache_concurrency_test` reports `Post-remove verification OK`

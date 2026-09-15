@@ -63,7 +63,7 @@ MBPipe::~MBPipe()
 
 void MBPipe::Close()
 {
-    if (fd > 0)
+    if (fd >= 0)
         close(fd);
     fd = -1;
 }
@@ -73,7 +73,7 @@ void MBPipe::Wait(int timeout)
     if (fd < 0) {
         fd = open(fifo_path.c_str(), O_RDONLY | O_NONBLOCK);
         if (fd < 0) {
-            Logger::Log(LOG_LEVEL_DEBUG, "failed to open fifo %s %d",
+            Logger::Log(LOG_LEVEL_DEBUG, "failed to open fifo %s %s",
                 fifo_path.c_str(), strerror(errno));
             usleep(timeout * 1000);
             return;

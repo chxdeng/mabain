@@ -19,6 +19,7 @@
 #include <fcntl.h>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <sstream>
 #include <sys/syscall.h>
 #include <unistd.h>
@@ -46,7 +47,7 @@ namespace mabain {
 
 namespace {
 
-const uint64_t kRebuildBarrierGuardToken = static_cast<uint64_t>(-1);
+const int64_t kRebuildBarrierGuardToken = std::numeric_limits<int64_t>::max();
 const uint32_t kReaderEpochGuardMaxStabilizeRetries = 32;
 
 #ifdef __linux__
@@ -153,7 +154,7 @@ int DB::UpdateNumHandlers(int mode, int delta)
     return rval;
 }
 
-uint64_t DB::BeginReaderEpochGuard() const
+int64_t DB::BeginReaderEpochGuard() const
 {
     if (dict == NULL)
         return 0;
@@ -185,11 +186,19 @@ uint64_t DB::BeginReaderEpochGuard() const
         break;
     }
 
-    if (AcquireRebuildBarrierShared() != MBError::SUCCESS) {
-        Logger::Log(LOG_LEVEL_ERROR, "failed to acquire rebuild reader barrier fallback");
-        return 0;
+    return AcquireReaderEpochBarrierFallback();
+}
+
+int64_t DB::AcquireReaderEpochBarrierFallback() const
+{
+    int rval = AcquireRebuildBarrierShared();
+    if (rval != MBError::SUCCESS) {
+        Logger::Log(LOG_LEVEL_ERROR,
+            "failed to acquire rebuild reader barrier fallback: %d", rval);
+        return -static_cast<int64_t>(rval);
     }
-    header = dict->GetHeaderPtr();
+
+    IndexHeader* header = dict->GetHeaderPtr();
     if (header == NULL
         || !header->reader_epoch_tracking_active.load(MEMORY_ORDER_READER)) {
         ReleaseRebuildBarrierShared();
@@ -199,9 +208,9 @@ uint64_t DB::BeginReaderEpochGuard() const
     return kRebuildBarrierGuardToken;
 }
 
-void DB::EndReaderEpochGuard(uint64_t epoch) const
+void DB::EndReaderEpochGuard(int64_t epoch) const
 {
-    if (epoch == 0)
+    if (epoch <= 0)
         return;
 
     if (epoch == kRebuildBarrierGuardToken) {
@@ -216,7 +225,7 @@ void DB::EndReaderEpochGuard(uint64_t epoch) const
     if (header == NULL)
         return;
 
-    const uint64_t slot_index = epoch - 1;
+    const uint64_t slot_index = static_cast<uint64_t>(epoch - 1);
     if (slot_index < header->reader_epoch_slot_count)
         header->reader_epoch_slot[slot_index].Clear();
 }
@@ -888,7 +897,11 @@ bool DB::InDB(const char* key, int len, int& err)
         return false;
     }
     MBData data(0, CONSTS::OPTION_FIND_AND_STORE_PARENT);
-    uint64_t reader_epoch = BeginReaderEpochGuard();
+    int64_t reader_epoch = BeginReaderEpochGuard();
+    if (reader_epoch < 0) {
+        err = static_cast<int>(-reader_epoch);
+        return false;
+    }
     detail::SearchEngine engine(*dict);
     int rval = engine.find(reinterpret_cast<const uint8_t*>(key), len, data);
     EndReaderEpochGuard(reader_epoch);
@@ -910,7 +923,9 @@ int DB::Find(const char* key, int len, MBData& mdata) const
     if (options & CONSTS::ASYNC_WRITER_MODE)
         return MBError::NOT_ALLOWED;
 
-    uint64_t reader_epoch = BeginReaderEpochGuard();
+    int64_t reader_epoch = BeginReaderEpochGuard();
+    if (reader_epoch < 0)
+        return static_cast<int>(-reader_epoch);
     detail::SearchEngine engine(*dict);
     int rval = engine.find(reinterpret_cast<const uint8_t*>(key), len, mdata);
     EndReaderEpochGuard(reader_epoch);
@@ -937,9 +952,13 @@ int DB::FindLowerBound(const char* key, int len, MBData& data, std::string* boun
         return MBError::NOT_ALLOWED;
 
     data.options = 0;
-    if (bound_key != nullptr)
+    if (bound_key != nullptr) {
+        bound_key->clear();
         bound_key->reserve(CONSTS::MAX_KEY_LENGHTH);
-    uint64_t reader_epoch = BeginReaderEpochGuard();
+    }
+    int64_t reader_epoch = BeginReaderEpochGuard();
+    if (reader_epoch < 0)
+        return static_cast<int>(-reader_epoch);
     detail::SearchEngine engine(*dict);
     int rval = engine.lowerBound(reinterpret_cast<const uint8_t*>(key), len, data, bound_key);
     EndReaderEpochGuard(reader_epoch);
@@ -957,7 +976,9 @@ int DB::FindLongestPrefix(const char* key, int len, MBData& data) const
         return MBError::NOT_ALLOWED;
 
     data.match_len = 0;
-    uint64_t reader_epoch = BeginReaderEpochGuard();
+    int64_t reader_epoch = BeginReaderEpochGuard();
+    if (reader_epoch < 0)
+        return static_cast<int>(-reader_epoch);
     detail::SearchEngine engine(*dict);
     int rval = engine.findPrefix(reinterpret_cast<const uint8_t*>(key), len, data);
     EndReaderEpochGuard(reader_epoch);
@@ -981,6 +1002,8 @@ int DB::WriteDataByOffset(size_t offset, const char* data, int data_len) const
 {
     if (status != MBError::SUCCESS)
         return MBError::NOT_INITIALIZED;
+    if (!(options & CONSTS::ACCESS_MODE_WRITER))
+        return MBError::NOT_ALLOWED;
 
     try {
         dict->WriteData(reinterpret_cast<const uint8_t*>(data), data_len, offset);

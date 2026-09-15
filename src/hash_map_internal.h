@@ -20,6 +20,7 @@
 namespace mabain {
 
 class HashMapValueState;
+class HashMapCollisionTestAccess;
 
 class HashMapImpl {
 public:
@@ -42,9 +43,11 @@ public:
         const HashMapValueConfig& config, size_t index_memcap_mb = 32);
     ~HashMapImpl();
 
-    // Insert or update an entry. overwrite=true replaces existing ref_offset on match.
+    // Insert or update a reference. Value-storage mode owns the complete key
+    // and reference record; overwrite=true replaces it on an exact match.
     int Put(const uint8_t* key, int len, size_t ref_offset, bool overwrite = true);
-    // Lookup; returns true on hit and sets ref_offset.
+    // Lookup; returns true on hit and sets ref_offset. Value-storage mode
+    // verifies the complete key after the index fingerprint matches.
     bool Get(const uint8_t* key, int len, size_t& ref_offset) const;
     // Value-mode insert/update and copying lookup. GetValue always leaves
     // value.data_len zero on non-success.
@@ -59,6 +62,7 @@ public:
 
 private:
     friend class HashMapValueState;
+    friend class HashMapCollisionTestAccess;
 
     enum class StorageMode : uint8_t {
         REFERENCE,
@@ -176,6 +180,10 @@ private:
     void validate_header(size_t capacity, uint32_t inline_key) const;
     void reset_for_writer();
     int erase_value(const uint8_t* key, int len);
+    int put_stored_reference(const uint8_t* key, int len, size_t ref_offset,
+        bool overwrite);
+    bool get_stored_reference(
+        const uint8_t* key, int len, size_t& ref_offset) const;
     void print_value_stats(std::ostream& os) const;
     void flush_value() const;
 

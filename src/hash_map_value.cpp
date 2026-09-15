@@ -5,6 +5,7 @@
 #include "hash_map_internal.h"
 
 #include <algorithm>
+#include <array>
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
@@ -702,6 +703,19 @@ public:
         return MBError::SUCCESS;
     }
 
+    int PutReference(const uint8_t* key, int key_length, size_t ref_offset,
+        bool overwrite)
+    {
+        std::array<uint8_t, sizeof(uint64_t)> stored_reference {};
+        const uint64_t reference = static_cast<uint64_t>(ref_offset);
+        for (size_t byte = 0; byte < stored_reference.size(); ++byte) {
+            stored_reference[byte]
+                = static_cast<uint8_t>(reference >> (byte * 8));
+        }
+        return Put(key, key_length, stored_reference.data(),
+            static_cast<int>(stored_reference.size()), overwrite);
+    }
+
     int Get(const uint8_t* key, int key_length, MBData& value)
     {
         value.data_len = 0;
@@ -766,6 +780,71 @@ public:
             return lookup_result;
         }
         value.data_len = 0;
+        return MBError::TRY_AGAIN;
+    }
+
+    int GetReference(
+        const uint8_t* key, int key_length, size_t& ref_offset)
+    {
+        if (key == nullptr || key_length <= 0
+            || key_length > CONSTS::MAX_KEY_LENGHTH) {
+            return MBError::INVALID_ARG;
+        }
+
+        ClaimedSlot slot_entry {};
+        int claim_result = GetThreadSlot(slot_entry);
+        if (claim_result != MBError::SUCCESS)
+            return claim_result;
+        HashMapImpl::ValueReaderSlot& slot
+            = header_->reader_slots[slot_entry.slot_index];
+
+        for (unsigned attempt = 0; attempt < kLookupRetries; ++attempt) {
+            const uint64_t map_generation
+                = header_->map_generation.load(std::memory_order_acquire);
+            if ((map_generation & 1U) != 0)
+                continue;
+            const uint64_t value_generation
+                = header_->value_generation.load(std::memory_order_acquire);
+            if (value_generation == 0)
+                continue;
+            ValueGenerationView* view = EnsureView(value_generation);
+            if (view == nullptr)
+                continue;
+            const uint64_t epoch
+                = header_->reader_epoch.load(std::memory_order_seq_cst);
+
+            ActiveSlotGuard guard(slot);
+            guard.Publish(value_generation, epoch);
+            if (header_->reader_epoch.load(std::memory_order_seq_cst) != epoch
+                || header_->map_generation.load(std::memory_order_acquire)
+                    != map_generation
+                || header_->value_generation.load(std::memory_order_acquire)
+                    != value_generation
+                || current_view_.load(std::memory_order_seq_cst) != view) {
+                guard.Clear();
+                RetireOldViews();
+                continue;
+            }
+
+            size_t candidate = 0;
+            const int lookup_result
+                = LookupReference(view, key, key_length, candidate);
+            const bool stable
+                = header_->map_generation.load(std::memory_order_acquire)
+                        == map_generation
+                && (map_generation & 1U) == 0
+                && header_->value_generation.load(std::memory_order_acquire)
+                        == value_generation
+                && current_view_.load(std::memory_order_seq_cst) == view;
+            if (!stable) {
+                guard.Clear();
+                RetireOldViews();
+                continue;
+            }
+            if (lookup_result == MBError::SUCCESS)
+                ref_offset = candidate;
+            return lookup_result;
+        }
         return MBError::TRY_AGAIN;
     }
 
@@ -1012,7 +1091,8 @@ private:
 
     RecordMatch InspectRecord(ValueGenerationView* view, size_t offset,
         const uint8_t* key, int key_length, MBData* output,
-        size_t& record_size, uint32_t& value_length)
+        size_t* reference_output, size_t& record_size,
+        uint32_t& value_length)
     {
         record_size = 0;
         value_length = 0;
@@ -1045,7 +1125,21 @@ private:
         }
 
         value_length = header.value_length;
-        if (output != nullptr) {
+        if (reference_output != nullptr) {
+            if (header.value_length != sizeof(uint64_t))
+                return RecordMatch::ERROR;
+            uint64_t stored_reference = 0;
+            const size_t value_offset
+                = sizeof(header) + static_cast<size_t>(header.key_length);
+            for (size_t byte = 0; byte < sizeof(stored_reference); ++byte) {
+                stored_reference |= static_cast<uint64_t>(
+                    record[value_offset + byte])
+                    << (byte * 8);
+            }
+            if (stored_reference > std::numeric_limits<size_t>::max())
+                return RecordMatch::ERROR;
+            *reference_output = static_cast<size_t>(stored_reference);
+        } else if (output != nullptr) {
             if (output->Resize(static_cast<int>(header.value_length))
                 != MBError::SUCCESS) {
                 return RecordMatch::NO_MEMORY;
@@ -1156,7 +1250,7 @@ private:
             size_t record_size = 0;
             uint32_t ignored_length = 0;
             const RecordMatch match = InspectRecord(view, offset, key,
-                key_length, nullptr, record_size, ignored_length);
+                key_length, nullptr, nullptr, record_size, ignored_length);
             if (match == RecordMatch::ERROR)
                 return MBError::READ_ERROR;
             if (match == RecordMatch::MATCH) {
@@ -1201,13 +1295,52 @@ private:
             size_t ignored_size = 0;
             uint32_t value_length = 0;
             const RecordMatch match = InspectRecord(view, offset, key,
-                key_length, &output, ignored_size, value_length);
+                key_length, &output, nullptr, ignored_size, value_length);
             if (match == RecordMatch::NO_MEMORY)
                 return MBError::NO_MEMORY;
             if (match == RecordMatch::ERROR)
                 return MBError::READ_ERROR;
             if (match == RecordMatch::MATCH) {
                 copied_length = value_length;
+                return MBError::SUCCESS;
+            }
+        }
+        return MBError::NOT_EXIST;
+    }
+
+    int LookupReference(ValueGenerationView* view, const uint8_t* key,
+        int key_length, size_t& ref_offset)
+    {
+        const uint64_t hash = HashMapImpl::normalize_hash(
+            HashMapImpl::fnv1a64(key, key_length));
+        const size_t start = static_cast<size_t>(hash) & header_->mask;
+        for (size_t probe = 0; probe < header_->capacity; ++probe) {
+            const size_t index = (start + probe) & header_->mask;
+            if (probe >= 4 && probe + 2 < header_->capacity) {
+                const size_t prefetch = (start + probe + 2) & header_->mask;
+                __builtin_prefetch(Bucket(prefetch), 0, 1);
+            }
+            HashMapImpl::ValueBucket* bucket = Bucket(index);
+            const uint64_t bucket_entry
+                = bucket->entry.load(std::memory_order_acquire);
+            if (bucket_entry == kEmptyValueEntry)
+                return MBError::NOT_EXIST;
+            if (bucket_entry == kTombstoneValueEntry
+                || !ValueEntryHashMatches(bucket_entry, hash)) {
+                continue;
+            }
+
+            const size_t offset = ValueEntryOffset(bucket_entry);
+            size_t ignored_size = 0;
+            uint32_t ignored_length = 0;
+            size_t candidate = 0;
+            const RecordMatch match = InspectRecord(view, offset, key,
+                key_length, nullptr, &candidate, ignored_size,
+                ignored_length);
+            if (match == RecordMatch::ERROR)
+                return MBError::READ_ERROR;
+            if (match == RecordMatch::MATCH) {
+                ref_offset = candidate;
                 return MBError::SUCCESS;
             }
         }
@@ -1739,6 +1872,24 @@ int HashMapImpl::GetValue(const uint8_t* key, int key_length, MBData& value) con
     if (storage_mode_ != StorageMode::VALUE || value_state_ == nullptr)
         return MBError::NOT_ALLOWED;
     return value_state_->Get(key, key_length, value);
+}
+
+int HashMapImpl::put_stored_reference(const uint8_t* key, int key_length,
+    size_t ref_offset, bool overwrite)
+{
+    return value_state_ == nullptr
+        ? MBError::NOT_ALLOWED
+        : value_state_->PutReference(
+            key, key_length, ref_offset, overwrite);
+}
+
+bool HashMapImpl::get_stored_reference(
+    const uint8_t* key, int key_length, size_t& ref_offset) const
+{
+    if (value_state_ == nullptr)
+        return false;
+    return value_state_->GetReference(key, key_length, ref_offset)
+        == MBError::SUCCESS;
 }
 
 int HashMapImpl::erase_value(const uint8_t* key, int length)

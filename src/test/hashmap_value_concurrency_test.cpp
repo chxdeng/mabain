@@ -16,16 +16,30 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <thread>
+#include <unordered_map>
 #include <unistd.h>
 #include <vector>
 
 #include "../error.h"
 #include "../hash_map_api.h"
+#include "../hash_map_internal.h"
 #include "../mabain_consts.h"
 #include "../mb_data.h"
 #include "../resource_pool.h"
 
 using namespace mabain;
+
+namespace mabain {
+
+class HashMapCollisionTestAccess {
+public:
+    static uint64_t Hash(const uint8_t* key, int length)
+    {
+        return HashMapImpl::normalize_hash(HashMapImpl::fnv1a64(key, length));
+    }
+};
+
+} // namespace mabain
 
 namespace {
 
@@ -292,6 +306,113 @@ bool TestBasicValueMode()
         return false;
     } catch (...) {
         return BasicFailure("unknown exception");
+    }
+    return true;
+}
+
+std::string ReferenceKey(size_t key_id)
+{
+    std::string key(40, static_cast<char>(0x6B));
+    Store64(key, 32, static_cast<uint64_t>(key_id));
+    return key;
+}
+
+bool TestExactReferenceMode()
+{
+    constexpr uint64_t kFingerprintMask = 0xFFFF000000000000ULL;
+    constexpr uint64_t kHomeMask = 1023;
+    constexpr size_t kCollisionSearchLimit = 100000;
+    const std::string base
+        = "/var/tmp/mabain_hashmap_exact_reference_"
+        + std::to_string(getpid());
+    Cleanup cleanup(base);
+    const HashMapValueConfig config = TestConfig();
+
+    try {
+        std::unordered_map<uint64_t, size_t> signatures;
+        size_t first_key_id = 0;
+        size_t second_key_id = 0;
+        bool collision_found = false;
+        for (size_t key_id = 0; key_id < kCollisionSearchLimit; ++key_id) {
+            const std::string key = ReferenceKey(key_id);
+            const uint64_t hash = HashMapCollisionTestAccess::Hash(
+                reinterpret_cast<const uint8_t*>(key.data()),
+                static_cast<int>(key.size()));
+            const uint64_t signature
+                = (hash & kFingerprintMask) | (hash & kHomeMask);
+            const auto inserted = signatures.emplace(signature, key_id);
+            if (!inserted.second) {
+                first_key_id = inserted.first->second;
+                second_key_id = key_id;
+                collision_found = true;
+                break;
+            }
+        }
+        if (!collision_found)
+            return BasicFailure("exact-reference collision search");
+
+        HashMap writer(base, 1024, CONSTS::ACCESS_MODE_WRITER, config,
+            kIndexMemcapMb);
+        const std::string first_key = ReferenceKey(first_key_id);
+        const std::string second_key = ReferenceKey(second_key_id);
+        if (writer.Put(reinterpret_cast<const uint8_t*>(first_key.data()),
+                static_cast<int>(first_key.size()), 101)
+                != MBError::SUCCESS
+            || writer.Put(
+                reinterpret_cast<const uint8_t*>(second_key.data()),
+                static_cast<int>(second_key.size()), 202)
+                != MBError::SUCCESS) {
+            return BasicFailure("exact-reference colliding insert");
+        }
+
+        HashMap reader(base, 1024, CONSTS::ACCESS_MODE_READER, config,
+            kIndexMemcapMb);
+        size_t reference = 0;
+        if (!reader.Get(reinterpret_cast<const uint8_t*>(first_key.data()),
+                static_cast<int>(first_key.size()), reference)
+            || reference != 101
+            || !reader.Get(reinterpret_cast<const uint8_t*>(second_key.data()),
+                static_cast<int>(second_key.size()), reference)
+            || reference != 202) {
+            return BasicFailure("exact-reference colliding lookup");
+        }
+
+        if (writer.Put(reinterpret_cast<const uint8_t*>(second_key.data()),
+                static_cast<int>(second_key.size()), 9001, false)
+                != MBError::SUCCESS) {
+            return BasicFailure("exact-reference no-overwrite");
+        }
+        if (!reader.Get(reinterpret_cast<const uint8_t*>(second_key.data()),
+                static_cast<int>(second_key.size()), reference)
+            || reference != 202) {
+            return BasicFailure("exact-reference no-overwrite value");
+        }
+        if (writer.Put(reinterpret_cast<const uint8_t*>(second_key.data()),
+                static_cast<int>(second_key.size()), 9001, true)
+                != MBError::SUCCESS
+            || !reader.Get(
+                reinterpret_cast<const uint8_t*>(second_key.data()),
+                static_cast<int>(second_key.size()), reference)
+            || reference != 9001) {
+            return BasicFailure("exact-reference overwrite");
+        }
+        if (writer.Erase(reinterpret_cast<const uint8_t*>(first_key.data()),
+                static_cast<int>(first_key.size()))
+                != MBError::SUCCESS
+            || reader.Get(reinterpret_cast<const uint8_t*>(first_key.data()),
+                static_cast<int>(first_key.size()), reference)
+            || !reader.Get(
+                reinterpret_cast<const uint8_t*>(second_key.data()),
+                static_cast<int>(second_key.size()), reference)
+            || reference != 9001) {
+            return BasicFailure("exact-reference erase");
+        }
+    } catch (int error) {
+        std::cerr << "exact-reference exception: "
+                  << MBError::get_error_str(error) << " (" << error << ")\n";
+        return false;
+    } catch (...) {
+        return BasicFailure("exact-reference unknown exception");
     }
     return true;
 }
@@ -747,13 +868,17 @@ int main()
         std::cerr << "HashMap dead-reader slot recovery test failed\n";
         return 2;
     }
+    if (!TestExactReferenceMode()) {
+        std::cerr << "HashMap exact-reference test failed\n";
+        return 3;
+    }
     if (!TestEraseCompaction()) {
         std::cerr << "HashMap erase-compaction test failed\n";
-        return 3;
+        return 4;
     }
     if (!TestConcurrentValues()) {
         std::cerr << "HashMap concurrent value-mode test failed\n";
-        return 4;
+        return 5;
     }
     std::cout << "HashMap value-mode validation passed\n";
     return 0;
