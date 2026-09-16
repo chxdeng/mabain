@@ -154,6 +154,13 @@ Dict::Dict(const std::string& mbdir, bool init_header, int datasize,
     if (want_cache) {
         try {
             prefix_cache = std::unique_ptr<PrefixCache>(new PrefixCache(mbdir_, header, /*capacity hint*/65536));
+
+            // Prefix-cache entries persist across process restarts. A previous writer may
+            // have stopped between publishing a DB update and refreshing the cache, so a
+            // non-jemalloc writer invalidates the previous cache generation on startup.
+            if ((options & CONSTS::ACCESS_MODE_WRITER)
+                && !(options & CONSTS::OPTION_JEMALLOC))
+                prefix_cache->InvalidateAll();
         } catch (...) {
             // Leave cache disabled on failure; DB remains operational.
         }

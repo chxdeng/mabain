@@ -1114,10 +1114,9 @@ private:
             || offset > config_.value_memcap - record_size) {
             return RecordMatch::ERROR;
         }
-        const size_t block_offset = offset % config_.value_block_size;
-        if (record_size > config_.value_block_size - block_offset)
+        uint8_t* record = view->Resolve(offset, record_size);
+        if (record == nullptr)
             return RecordMatch::ERROR;
-        uint8_t* record = raw_header;
         if (header.key_length != static_cast<uint32_t>(key_length)
             || std::memcmp(record + sizeof(header), key,
                    static_cast<size_t>(key_length))

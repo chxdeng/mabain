@@ -143,6 +143,8 @@ int main(int argc, char** argv)
     std::atomic<bool> inconsistent { false };
     std::atomic<int> ready { 0 };
     std::atomic<uint64_t> successful_lookups { 0 };
+    std::atomic<uint64_t> overlapping_lookups { 0 };
+    std::atomic<uint64_t> write_epoch { 0 };
     std::vector<std::thread> readers;
     readers.reserve(static_cast<size_t>(reader_count));
 
@@ -163,7 +165,9 @@ int main(int argc, char** argv)
             MBData data;
             while (!stop.load(std::memory_order_relaxed)
                 && !inconsistent.load(std::memory_order_relaxed)) {
+                const uint64_t before = write_epoch.load(std::memory_order_acquire);
                 const int rc = reader.Find(kKey, data);
+                const uint64_t after = write_epoch.load(std::memory_order_acquire);
                 if (rc == MBError::TRY_AGAIN)
                     continue;
                 if (rc != MBError::SUCCESS || !IsCompletePattern(data)) {
@@ -174,6 +178,8 @@ int main(int argc, char** argv)
                     break;
                 }
                 successful_lookups.fetch_add(1, std::memory_order_relaxed);
+                if ((before & 1u) != 0 && after == before)
+                    overlapping_lookups.fetch_add(1, std::memory_order_relaxed);
             }
         });
     }
@@ -185,7 +191,9 @@ int main(int argc, char** argv)
     for (int i = 0; i < iterations
          && !inconsistent.load(std::memory_order_relaxed); ++i) {
         const std::string& value = (i & 1) == 0 ? value_b : value_a;
+        write_epoch.fetch_add(1, std::memory_order_release);
         const int rc = writer.Add(kKey, value, true);
+        write_epoch.fetch_add(1, std::memory_order_release);
         if (rc != MBError::SUCCESS) {
             std::cerr << "overwrite failed: rc=" << rc << '\n';
             inconsistent.store(true, std::memory_order_relaxed);
@@ -203,9 +211,15 @@ int main(int argc, char** argv)
         std::cerr << "no successful concurrent lookups\n";
         return 2;
     }
+    if (overlapping_lookups.load(std::memory_order_relaxed) == 0) {
+        std::cerr << "no lookup remained within an active value overwrite\n";
+        return 2;
+    }
 
     std::cout << "value overwrite concurrency test passed: "
               << successful_lookups.load(std::memory_order_relaxed)
-              << " consistent lookups\n";
+              << " consistent lookups, "
+              << overlapping_lookups.load(std::memory_order_relaxed)
+              << " overlapped complete overwrite calls\n";
     return 0;
 }
