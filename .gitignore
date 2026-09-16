@@ -30,5 +30,6 @@ src/test/jemalloc_restart_rebuild_test_local
 /src/test/shmq_queue_full_stress_test
 /src/test/shmq_reservation_timeout_test
 /src/test/sigbus_disk_pressure_test
+/src/test/value_overwrite_concurrency_test
 src/test/run_test*
 tmp/*

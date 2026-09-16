@@ -22,6 +22,7 @@
 #include <fcntl.h>
 #include <iostream>
 #include <stdint.h>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -73,6 +74,33 @@ int acquire_file_lock_wait_n(const std::string& lock_file_path, int ntry)
     return fd;
 }
 
+int acquire_init_file_lock(const std::string& lock_file_path, bool shared)
+{
+    int fd = open(lock_file_path.c_str(), O_RDWR | O_CREAT,
+        S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+    if (fd < 0) {
+        std::cerr << "failed to open lock file " << lock_file_path
+                  << " errno: " << errno << std::endl;
+        return fd;
+    }
+
+    const int operation = (shared ? LOCK_SH : LOCK_EX) | LOCK_NB;
+    const int result = flock(fd, operation);
+
+    if (result != 0) {
+        const int lock_errno = errno;
+        close(fd);
+        errno = lock_errno;
+        if (lock_errno != EWOULDBLOCK && lock_errno != EAGAIN) {
+            std::cerr << "failed to lock file " << lock_file_path
+                      << " errno: " << lock_errno << std::endl;
+        }
+        return -1;
+    }
+
+    return fd;
+}
+
 void release_file_lock(int& fd)
 {
     if (fd < 0)
@@ -119,9 +147,26 @@ static int remove_matched_files(const std::string& dpath, const std::string& pat
     return MBError::SUCCESS;
 }
 
-int remove_db_files(const std::string& db_dir)
+void remove_db_queue_file(const std::string& db_dir, const char* queue_dir)
 {
-    remove_matched_files("/dev/shm", "_mabain_q");
+    // The queue ID is the header file's inode. Resolve it before deleting
+    // the database files and remove only this database's queue.
+    const std::string header_path = db_dir.empty() || db_dir.back() == '/'
+        ? db_dir + "_mabain_h"
+        : db_dir + "/_mabain_h";
+    const uint64_t queue_id = get_file_inode(header_path);
+    if (queue_id == 0)
+        return;
+
+    const std::string qdir = queue_dir != NULL ? queue_dir : "/dev/shm";
+    const std::string queue_path = qdir + "/_mabain_q" + std::to_string(queue_id);
+    if (std::remove(queue_path.c_str()) != 0 && errno != ENOENT)
+        std::cerr << "failed to remove " << queue_path << std::endl;
+}
+
+int remove_db_files(const std::string& db_dir, const char* queue_dir)
+{
+    remove_db_queue_file(db_dir, queue_dir);
     remove_matched_files(db_dir, "_mabain_");
     return 0;
 }

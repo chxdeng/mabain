@@ -165,4 +165,58 @@ TEST_F(UpdateTest, Update_random)
     delete[] added;
 }
 
+TEST_F(UpdateTest, LeafOverwriteDoesNotReuseLiveValueBuffer)
+{
+    const std::string key = "leaf-key";
+    const std::string old_value(256, 'A');
+    const std::string new_value(256, 'B');
+
+    ASSERT_EQ(db->Add(key, old_value), MBError::SUCCESS);
+    MBData before;
+    ASSERT_EQ(db->Find(key, before), MBError::SUCCESS);
+    const size_t old_offset = before.data_offset;
+
+    ASSERT_EQ(db->Add(key, new_value, true), MBError::SUCCESS);
+    MBData after;
+    ASSERT_EQ(db->Find(key, after), MBError::SUCCESS);
+    EXPECT_NE(after.data_offset, old_offset);
+    EXPECT_EQ(std::string(reinterpret_cast<char*>(after.buff), after.data_len),
+        new_value);
+
+    // The old buffer is released only after publication and remains reusable.
+    const std::string reuse_key = "z";
+    const std::string reuse_value(256, 'C');
+    ASSERT_EQ(db->Add(reuse_key, reuse_value), MBError::SUCCESS);
+    MBData reused;
+    ASSERT_EQ(db->Find(reuse_key, reused), MBError::SUCCESS);
+    EXPECT_EQ(reused.data_offset, old_offset);
+}
+
+TEST_F(UpdateTest, NodeValueOverwriteDoesNotReuseLiveValueBuffer)
+{
+    const std::string parent_key = "a";
+    const std::string child_key = "ab";
+    const std::string old_value(256, 'A');
+    const std::string new_value(256, 'B');
+
+    ASSERT_EQ(db->Add(parent_key, old_value), MBError::SUCCESS);
+    ASSERT_EQ(db->Add(child_key, "child-value"), MBError::SUCCESS);
+
+    MBData before;
+    ASSERT_EQ(db->Find(parent_key, before), MBError::SUCCESS);
+    const size_t old_offset = before.data_offset;
+
+    ASSERT_EQ(db->Add(parent_key, new_value, true), MBError::SUCCESS);
+    MBData after;
+    ASSERT_EQ(db->Find(parent_key, after), MBError::SUCCESS);
+    EXPECT_NE(after.data_offset, old_offset);
+    EXPECT_EQ(std::string(reinterpret_cast<char*>(after.buff), after.data_len),
+        new_value);
+
+    MBData child;
+    ASSERT_EQ(db->Find(child_key, child), MBError::SUCCESS);
+    EXPECT_EQ(std::string(reinterpret_cast<char*>(child.buff), child.data_len),
+        "child-value");
+}
+
 }

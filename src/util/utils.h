@@ -25,10 +25,12 @@ namespace mabain {
 
 int acquire_file_lock(const std::string& lock_file_path);
 int acquire_file_lock_wait_n(const std::string& lock_file_path, int ntry);
+int acquire_init_file_lock(const std::string& lock_file_path, bool shared);
 void release_file_lock(int& fd);
 uint64_t get_file_inode(const std::string& path);
 bool directory_exists(const std::string& path);
-int remove_db_files(const std::string& db_dir);
+void remove_db_queue_file(const std::string& db_dir, const char* queue_dir);
+int remove_db_files(const std::string& db_dir, const char* queue_dir);
 
 }
 

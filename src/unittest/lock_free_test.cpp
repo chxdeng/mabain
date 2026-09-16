@@ -285,4 +285,60 @@ TEST_F(LockFreeTest, ReaderLockFreeStop_test_6)
     EXPECT_FALSE(mbd.options & CONSTS::OPTION_READ_SAVED_EDGE);
 }
 
+TEST_F(LockFreeTest, ValueUpdateNeverUsesSavedEdge)
+{
+    const size_t offset = 54321;
+    LockFreeData snapshot;
+    MBData mbd;
+
+    lfree.WriterLockFreeValueUpdateStart(offset);
+
+    lfree.ReaderLockFreeStart(snapshot);
+    EXPECT_EQ(lfree.ReaderLockFreeStop(snapshot, offset, mbd),
+        MBError::TRY_AGAIN);
+    EXPECT_FALSE(mbd.options & CONSTS::OPTION_READ_SAVED_EDGE);
+
+    lfree.ReaderLockFreeStart(snapshot);
+    EXPECT_EQ(lfree.ReaderLockFreeStop(snapshot, offset, mbd),
+        MBError::TRY_AGAIN);
+    EXPECT_FALSE(mbd.options & CONSTS::OPTION_READ_SAVED_EDGE);
+
+    // Readers of a different edge remain lock-free.
+    lfree.ReaderLockFreeStart(snapshot);
+    EXPECT_EQ(lfree.ReaderLockFreeStop(snapshot, offset + 1, mbd),
+        MBError::SUCCESS);
+
+    lfree.WriterLockFreeStop();
+    EXPECT_EQ(lock_free_data.offset_cache[0], offset);
+}
+
+TEST_F(LockFreeTest, WriterRestartPreservesReaderGeneration)
+{
+    const size_t reader_offset = 100;
+    LockFreeData snapshot;
+    MBData mbd;
+
+    // Model a reader that began before a writer process restarted.
+    lock_free_data.counter.store(2, MEMORY_ORDER_WRITER);
+    lfree.ReaderLockFreeStart(snapshot);
+
+    LockFree restarted_writer;
+    restarted_writer.LockFreeInit(
+        &lock_free_data, &header, CONSTS::ACCESS_MODE_WRITER);
+
+    // Model three completed relocation updates during startup rebuild. The
+    // reader's edge is moved first, followed by two unrelated edges.
+    restarted_writer.WriterLockFreeStart(reader_offset);
+    restarted_writer.WriterLockFreeStop();
+    restarted_writer.WriterLockFreeStart(reader_offset + 1);
+    restarted_writer.WriterLockFreeStop();
+    restarted_writer.WriterLockFreeStart(reader_offset + 2);
+    restarted_writer.WriterLockFreeStop();
+
+    // The pre-restart reader must observe that its edge was relocated.
+    EXPECT_EQ(snapshot.counter, 2u);
+    EXPECT_EQ(restarted_writer.ReaderLockFreeStop(snapshot, reader_offset, mbd),
+        MBError::TRY_AGAIN);
+}
+
 }

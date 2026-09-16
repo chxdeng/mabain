@@ -50,6 +50,9 @@ namespace {
 const int64_t kRebuildBarrierGuardToken = std::numeric_limits<int64_t>::max();
 const uint32_t kReaderEpochGuardMaxStabilizeRetries = 32;
 
+// MEMORY_ONLY_MODE owns the process-local writer marker without an OS lock fd.
+const int kMemoryOnlyWriterMarkerFd = -2;
+
 #ifdef __linux__
 bool ReadProcStartTimeFromStatPath(const std::string& stat_path, uint64_t& start_time)
 {
@@ -134,9 +137,14 @@ int DB::Close()
 
     status = MBError::DB_CLOSED;
     if (options & CONSTS::ACCESS_MODE_WRITER) {
+        const bool owns_writer_marker = writer_lock_fd >= 0
+            || writer_lock_fd == kMemoryOnlyWriterMarkerFd;
         release_file_lock(writer_lock_fd);
-        std::string lock_file = mb_dir + "_lock";
-        ResourcePool::getInstance().RemoveResourceByPath(lock_file);
+        writer_lock_fd = -1;
+        if (owns_writer_marker) {
+            std::string lock_file = mb_dir + "_lock";
+            ResourcePool::getInstance().RemoveResourceByPath(lock_file);
+        }
     }
     Logger::Log(LOG_LEVEL_DEBUG, "connector %u disconnected from DB", identifier);
     return rval;
@@ -333,7 +341,7 @@ DB::DB(MBConfig& config)
 
 int DB::ValidateConfig(MBConfig& config)
 {
-    if (config.mbdir == NULL)
+    if (config.mbdir == NULL || config.mbdir[0] == '\0')
         return MBError::INVALID_ARG;
 
     if (config.memcap_index == 0)
@@ -402,11 +410,17 @@ void DB::PreCheckDB(const MBConfig& config, bool& init_header, bool& update_head
         // internal check first
         int ret = ResourcePool::getInstance().AddResourceByPath(lock_file, NULL);
         if (ret == MBError::SUCCESS) {
-            if (!(config.options & CONSTS::MEMORY_ONLY_MODE)) {
+            if (config.options & CONSTS::MEMORY_ONLY_MODE) {
+                writer_lock_fd = kMemoryOnlyWriterMarkerFd;
+            } else {
                 // process check by file lock
                 writer_lock_fd = acquire_file_lock_wait_n(lock_file, 1);
-                if (writer_lock_fd < 0)
+                if (writer_lock_fd < 0) {
+                    // This handle inserted the process-local marker but failed
+                    // to acquire cross-process ownership; release only its marker.
+                    ResourcePool::getInstance().RemoveResourceByPath(lock_file);
                     status = MBError::WRITER_EXIST;
+                }
             }
         } else {
             status = MBError::WRITER_EXIST;
@@ -501,8 +515,17 @@ void DB::PostDBUpdate(const MBConfig& config, bool init_header, bool update_head
     UpdateNumHandlers(config.options, 1);
 
     if (config.options & CONSTS::ACCESS_MODE_WRITER) {
-        if (config.options & CONSTS::ASYNC_WRITER_MODE)
-            async_writer = AsyncWriter::CreateInstance(this);
+        if (config.options & CONSTS::ASYNC_WRITER_MODE) {
+            try {
+                async_writer = AsyncWriter::CreateInstance(this);
+            } catch (int error) {
+                Logger::Log(LOG_LEVEL_ERROR,
+                    "failed to initialize async writer: %s",
+                    MBError::get_error_str(error));
+                status = error;
+                return;
+            }
+        }
     }
 
     if (!(init_header || update_header)) {
@@ -740,7 +763,7 @@ void DB::ReInit(MBConfig& config)
     std::cout << "erase corrupted DB and retry\n";
     Close();
     std::string db_dir = std::string(config.mbdir);
-    remove_db_files(db_dir);
+    remove_db_files(db_dir, config.queue_dir);
     status = MBError::NOT_INITIALIZED;
     InitDBEx(config);
 }
@@ -763,9 +786,23 @@ void DB::InitDB(MBConfig& config)
         lock_file = db_dir + "/_mbh_lock";
     }
 
-    int fd = acquire_file_lock_wait_n(lock_file, 5000);
+    const bool shared_lock
+        = !(config.options & CONSTS::ACCESS_MODE_WRITER);
+    int fd = acquire_init_file_lock(lock_file, shared_lock);
+    if (fd < 0) {
+        const int lock_errno = errno;
+        status = (lock_errno == EWOULDBLOCK || lock_errno == EAGAIN)
+            ? MBError::TRY_AGAIN
+            : MBError::OPEN_FAILURE;
+        return;
+    }
+
     InitDBEx(config);
-    if ((config.options & CONSTS::ACCESS_MODE_WRITER) && !is_open()
+    if (status == MBError::THREAD_FAILED) {
+        const int startup_status = status;
+        Close();
+        status = startup_status;
+    } else if ((config.options & CONSTS::ACCESS_MODE_WRITER) && !is_open()
         && status != MBError::WRITER_EXIST && status != MBError::NOT_ALLOWED) {
         ReInit(config);
     }
@@ -896,7 +933,7 @@ bool DB::InDB(const char* key, int len, int& err)
         err = MBError::NOT_ALLOWED;
         return false;
     }
-    MBData data(0, CONSTS::OPTION_FIND_AND_STORE_PARENT);
+    MBData data(0, CONSTS::OPTION_KEY_ONLY);
     int64_t reader_epoch = BeginReaderEpochGuard();
     if (reader_epoch < 0) {
         err = static_cast<int>(-reader_epoch);
@@ -905,7 +942,7 @@ bool DB::InDB(const char* key, int len, int& err)
     detail::SearchEngine engine(*dict);
     int rval = engine.find(reinterpret_cast<const uint8_t*>(key), len, data);
     EndReaderEpochGuard(reader_epoch);
-    if (rval == MBError::IN_DICT) {
+    if (rval == MBError::SUCCESS) {
         return true; // found it
     } else if (rval != MBError::NOT_EXIST) {
         err = rval; // error
@@ -1004,6 +1041,8 @@ int DB::WriteDataByOffset(size_t offset, const char* data, int data_len) const
         return MBError::NOT_INITIALIZED;
     if (!(options & CONSTS::ACCESS_MODE_WRITER))
         return MBError::NOT_ALLOWED;
+    if (data == NULL || data_len <= 0)
+        return MBError::INVALID_ARG;
 
     try {
         dict->WriteData(reinterpret_cast<const uint8_t*>(data), data_len, offset);
@@ -1334,11 +1373,14 @@ void DB::GetDBConfig(MBConfig& config) const
 
 bool DB::AsyncWriterEnabled() const
 {
-    return true;
+    return status == MBError::SUCCESS && dict != NULL;
 }
 
 bool DB::AsyncWriterBusy() const
 {
+    if (status != MBError::SUCCESS || dict == NULL)
+        return false;
+
     return dict->SHMQ_Busy();
 }
 

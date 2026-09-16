@@ -118,10 +118,38 @@ Dict::Dict(const std::string& mbdir, bool init_header, int datasize,
                 Destroy();
                 throw (int)MBError::INVALID_ARG;
             }
+
+            // Jemalloc-backed data is rebuilt or reset by DB startup. For the
+            // regular allocator, finish any dictionary update interrupted by
+            // the previous writer before making this Dict available.
+            if (!(options & CONSTS::OPTION_JEMALLOC) && mm.IsValid()) {
+                int rval = ExceptionRecovery();
+                if (rval != MBError::SUCCESS) {
+                    status = rval;
+                    return;
+                }
+                header->excep_lf_offset = 0;
+                header->excep_offset = 0;
+            }
         }
-        // Self-consistency: if DB lacks embedded cache region, ignore option.
-        if (!(header->pfxcache_size > 0) && (options & CONSTS::OPTION_PREFIX_CACHE)) {
-            Logger::Log(LOG_LEVEL_WARN, "Prefix cache option set but DB has no embedded cache; disabling.");
+        const bool cache_configured = header->pfxcache_size > 0;
+        const bool cache_requested = (options & CONSTS::OPTION_PREFIX_CACHE) != 0;
+        if (options & CONSTS::ACCESS_MODE_WRITER) {
+            // Prefix-cache storage is fixed when the DB is created. Writers must
+            // maintain that persisted configuration even when the caller omits
+            // or incorrectly supplies the creation-time option on reopen.
+            if (cache_configured != cache_requested) {
+                Logger::Log(LOG_LEVEL_WARN,
+                    "prefix-cache option does not match database header; "
+                    "using the persisted database setting");
+            }
+            if (cache_configured)
+                options |= CONSTS::OPTION_PREFIX_CACHE;
+            else
+                options &= ~CONSTS::OPTION_PREFIX_CACHE;
+        } else if (!cache_configured && cache_requested) {
+            Logger::Log(LOG_LEVEL_WARN,
+                "prefix cache option set but DB has no embedded cache; disabling");
             options &= ~CONSTS::OPTION_PREFIX_CACHE;
         }
     }
@@ -141,8 +169,21 @@ Dict::Dict(const std::string& mbdir, bool init_header, int datasize,
     if (want_cache) {
         try {
             prefix_cache = std::unique_ptr<PrefixCache>(new PrefixCache(mbdir_, header, /*capacity hint*/65536));
+
+            // Prefix-cache entries persist across process restarts. A previous writer may
+            // have stopped between publishing a DB update and refreshing the cache, so a
+            // writer invalidates the previous cache generation on startup.
+            if (options & CONSTS::ACCESS_MODE_WRITER)
+                prefix_cache->InvalidateAll();
         } catch (...) {
-            // Leave cache disabled on failure; DB remains operational.
+            // Readers can safely fall back to the radix tree. A writer cannot
+            // continue without maintaining a cache configured in the DB header.
+            if (options & CONSTS::ACCESS_MODE_WRITER) {
+                Logger::Log(LOG_LEVEL_ERROR,
+                    "writer failed to attach configured prefix cache");
+                status = MBError::NOT_ALLOWED;
+                return;
+            }
         }
     }
     if (mm.IsValid())
@@ -1132,15 +1173,17 @@ int Dict::UpdateDataBuffer(EdgePtrs& edge_ptrs, bool overwrite, MBData& mbd, boo
         mbd.data_offset = Get6BInteger(edge_ptrs.offset_ptr);
         if (!overwrite)
             return MBError::IN_DICT;
-        if (ReleaseBuffer(mbd.data_offset) != MBError::SUCCESS)
-            Logger::Log(LOG_LEVEL_WARN, "failed to release data buffer: %llu", mbd.data_offset);
+        const size_t old_data_offset = mbd.data_offset;
+
+        // Keep the currently published value alive until its complete
+        // replacement has been written and linked into the tree.
         ReserveData(mbd.buff, mbd.data_len, mbd.data_offset);
         Write6BInteger(edge_ptrs.offset_ptr, mbd.data_offset);
 
         memcpy(header->excep_buff, edge_ptrs.offset_ptr, OFFSET_SIZE);
 #ifdef __LOCK_FREE__
         header->excep_lf_offset = edge_ptrs.offset;
-        lfree.WriterLockFreeStart(edge_ptrs.offset);
+        lfree.WriterLockFreeValueUpdateStart(edge_ptrs.offset);
 #endif
         header->excep_updating_status = EXCEP_STATUS_ADD_DATA_OFF;
         mm.WriteData(edge_ptrs.offset_ptr, OFFSET_SIZE, edge_ptrs.offset + EDGE_NODE_LEADING_POS);
@@ -1148,6 +1191,8 @@ int Dict::UpdateDataBuffer(EdgePtrs& edge_ptrs, bool overwrite, MBData& mbd, boo
         lfree.WriterLockFreeStop();
 #endif
         header->excep_updating_status = EXCEP_STATUS_NONE;
+        if (ReleaseBuffer(old_data_offset) != MBError::SUCCESS)
+            Logger::Log(LOG_LEVEL_WARN, "failed to release data buffer: %zu", old_data_offset);
     } else {
         uint8_t* node_buff = header->excep_buff;
         size_t node_off = Get6BInteger(edge_ptrs.offset_ptr);
@@ -1155,13 +1200,15 @@ int Dict::UpdateDataBuffer(EdgePtrs& edge_ptrs, bool overwrite, MBData& mbd, boo
         if (mm.ReadData(node_buff, NODE_EDGE_KEY_FIRST, node_off) != NODE_EDGE_KEY_FIRST)
             return MBError::READ_ERROR;
 
+        bool value_update = false;
+        size_t old_data_offset = 0;
         if (node_buff[0] & FLAG_NODE_MATCH) {
             inc_count = false;
             mbd.data_offset = Get6BInteger(node_buff + 2);
             if (!overwrite)
                 return MBError::IN_DICT;
-            if (ReleaseBuffer(mbd.data_offset) != MBError::SUCCESS)
-                Logger::Log(LOG_LEVEL_WARN, "failed to release data buffer %llu", mbd.data_offset);
+            value_update = true;
+            old_data_offset = mbd.data_offset;
             node_buff[NODE_EDGE_KEY_FIRST] = 0;
         } else {
             // set the match flag
@@ -1175,8 +1222,13 @@ int Dict::UpdateDataBuffer(EdgePtrs& edge_ptrs, bool overwrite, MBData& mbd, boo
 
         header->excep_offset = node_off;
 #ifdef __LOCK_FREE__
-        header->excep_lf_offset = edge_ptrs.offset;
-        lfree.WriterLockFreeStart(edge_ptrs.offset);
+        if (value_update) {
+            header->excep_lf_offset = edge_ptrs.offset;
+            lfree.WriterLockFreeValueUpdateStart(edge_ptrs.offset);
+        } else {
+            header->excep_lf_offset = edge_ptrs.offset;
+            lfree.WriterLockFreeStart(edge_ptrs.offset);
+        }
 #endif
         header->excep_updating_status = EXCEP_STATUS_ADD_NODE;
         mm.WriteData(node_buff, NODE_EDGE_KEY_FIRST, node_off);
@@ -1184,6 +1236,8 @@ int Dict::UpdateDataBuffer(EdgePtrs& edge_ptrs, bool overwrite, MBData& mbd, boo
         lfree.WriterLockFreeStop();
 #endif
         header->excep_updating_status = EXCEP_STATUS_NONE;
+        if (value_update && ReleaseBuffer(old_data_offset) != MBError::SUCCESS)
+            Logger::Log(LOG_LEVEL_WARN, "failed to release data buffer %zu", old_data_offset);
     }
 
     return MBError::SUCCESS;
@@ -1375,9 +1429,12 @@ int Dict::ExceptionRecovery()
 #ifdef __LOCK_FREE__
         lfree.WriterLockFreeStart(header->excep_lf_offset);
 #endif
-        Write6BInteger(header->excep_buff, header->excep_offset);
-        mm.WriteData(header->excep_buff, OFFSET_SIZE,
-            header->excep_lf_offset + EDGE_NODE_LEADING_POS);
+        // The one-child removal path changes both the parent edge flag and
+        // offset. Restore the complete pre-removal link to the old node.
+        header->excep_buff[0] = 0;
+        Write6BInteger(header->excep_buff + 1, header->excep_offset);
+        mm.WriteData(header->excep_buff, OFFSET_SIZE + 1,
+            header->excep_lf_offset + EDGE_FLAG_POS);
         break;
     case EXCEP_STATUS_CLEAR_EDGE:
 #ifdef __LOCK_FREE__
@@ -1446,7 +1503,9 @@ int Dict::ReadDataByOffset(size_t offset, MBData& data) const
     // store bucket index
     data.bucket_index = hdr[1];
     // resize data buffer using size from header
-    data.Resize(hdr[0]);
+    int rval = data.Resize(hdr[0]);
+    if (rval != MBError::SUCCESS)
+        return rval;
     offset += DATA_HDR_BYTE;
     if (ReadData(data.buff, hdr[0], offset) != hdr[0]) {
         return MBError::READ_ERROR;
