@@ -22,6 +22,7 @@
 
 #include "../dict.h"
 #include "../dict_mem.h"
+#include "../integer_4b_5b.h"
 #include "../mb_rc.h"
 #include "../resource_pool.h"
 #include "./test_key.h"
@@ -299,6 +300,123 @@ TEST_F(AbnormalExitTest, KEY_TYPE_SHA1_ADD_DATA_OFF_test)
 
     failed_cnt = CheckDBConcistency(count);
     EXPECT_EQ(failed_cnt, 0);
+}
+
+TEST_F(AbnormalExitTest, DICT_RECOVERY_ON_WRITER_REOPEN_test)
+{
+    const int count = 2000;
+    key_type = MABAIN_TEST_KEY_TYPE_INT;
+
+    Populate(count);
+    SimulateAbnormalExit(EXCEP_STATUS_ADD_DATA_OFF);
+    ASSERT_NE(db->GetDictPtr()->GetHeaderPtr()->excep_updating_status,
+        EXCEP_STATUS_NONE);
+
+    db->Close();
+    delete db;
+    db = NULL;
+
+    db = new DB("/var/tmp/mabain_test", CONSTS::ACCESS_MODE_WRITER);
+    ASSERT_TRUE(db->is_open()) << db->StatusStr();
+
+    IndexHeader* header = db->GetDictPtr()->GetHeaderPtr();
+    ASSERT_NE(header, nullptr);
+    EXPECT_EQ(header->excep_updating_status, EXCEP_STATUS_NONE);
+    EXPECT_EQ(header->excep_lf_offset, 0U);
+    EXPECT_EQ(header->excep_offset, 0U);
+
+    EXPECT_EQ(CheckDBConcistency(count), 0);
+}
+
+TEST_F(AbnormalExitTest, REMOVE_EDGE_SIZE_ONE_RECOVERY_test)
+{
+    ASSERT_EQ(db->Add("a", "value-a"), MBError::SUCCESS);
+    ASSERT_EQ(db->Add("ab", "value-ab"), MBError::SUCCESS);
+
+    MBData remove_data(0, CONSTS::OPTION_FIND_AND_STORE_PARENT);
+    ASSERT_EQ(db->Find("ab", remove_data), MBError::IN_DICT);
+
+    Dict* dict = db->GetDictPtr();
+    DictMem* dmm = dict->GetMM();
+    IndexHeader* header = dict->GetHeaderPtr();
+    const size_t old_node_offset = remove_data.edge_ptrs.curr_node_offset;
+    const size_t parent_edge_offset = remove_data.edge_ptrs.parent_offset;
+
+    uint8_t old_node[NODE_EDGE_KEY_FIRST] = {};
+    ASSERT_EQ(dmm->ReadData(old_node, NODE_EDGE_KEY_FIRST, old_node_offset),
+        NODE_EDGE_KEY_FIRST);
+    ASSERT_NE(old_node[0] & FLAG_NODE_MATCH, 0);
+
+    // Reproduce a crash after RemoveEdgeSizeOne converted the parent edge
+    // from a node link into a direct data link, but before status was cleared.
+    uint8_t replacement[OFFSET_SIZE + 1] = {};
+    replacement[0] = EDGE_FLAG_DATA_OFF;
+    Write6BInteger(replacement + 1, Get6BInteger(old_node + 2));
+    header->excep_offset = old_node_offset;
+    header->excep_lf_offset = parent_edge_offset;
+    header->excep_updating_status = EXCEP_STATUS_REMOVE_EDGE;
+    dmm->WriteData(replacement, sizeof(replacement),
+        parent_edge_offset + EDGE_FLAG_POS);
+
+    ASSERT_EQ(dict->ExceptionRecovery(), MBError::SUCCESS);
+
+    EdgePtrs root_edge = {};
+    ASSERT_EQ(dmm->GetRootEdge(0, static_cast<uint8_t>('a'), root_edge),
+        MBError::SUCCESS);
+    EXPECT_EQ(root_edge.flag_ptr[0], 0);
+    EXPECT_EQ(Get6BInteger(root_edge.offset_ptr), old_node_offset);
+
+    MBData a_data;
+    ASSERT_EQ(db->Find("a", a_data), MBError::SUCCESS);
+    EXPECT_EQ(std::string(reinterpret_cast<char*>(a_data.buff), a_data.data_len),
+        "value-a");
+    MBData ab_data;
+    ASSERT_EQ(db->Find("ab", ab_data), MBError::SUCCESS);
+    EXPECT_EQ(std::string(reinterpret_cast<char*>(ab_data.buff), ab_data.data_len),
+        "value-ab");
+}
+
+TEST_F(AbnormalExitTest, REMOVE_EDGE_SIZE_N_RECOVERY_test)
+{
+    ASSERT_EQ(db->Add("a0", "value-a0"), MBError::SUCCESS);
+    ASSERT_EQ(db->Add("a1", "value-a1"), MBError::SUCCESS);
+    ASSERT_EQ(db->Add("a2", "value-a2"), MBError::SUCCESS);
+
+    MBData remove_data(0, CONSTS::OPTION_FIND_AND_STORE_PARENT);
+    ASSERT_EQ(db->Find("a2", remove_data), MBError::IN_DICT);
+
+    Dict* dict = db->GetDictPtr();
+    DictMem* dmm = dict->GetMM();
+    IndexHeader* header = dict->GetHeaderPtr();
+    const size_t old_node_offset = remove_data.edge_ptrs.curr_node_offset;
+    const size_t parent_edge_offset = remove_data.edge_ptrs.parent_offset;
+
+    // Reproduce a crash after RemoveEdgeSizeN redirected the parent edge to
+    // a replacement node. Recovery must restore the original node link.
+    uint8_t replacement_offset[OFFSET_SIZE] = {};
+    Write6BInteger(replacement_offset, old_node_offset + 1);
+    header->excep_offset = old_node_offset;
+    header->excep_lf_offset = parent_edge_offset;
+    header->excep_updating_status = EXCEP_STATUS_REMOVE_EDGE;
+    dmm->WriteData(replacement_offset, sizeof(replacement_offset),
+        parent_edge_offset + EDGE_NODE_LEADING_POS);
+
+    ASSERT_EQ(dict->ExceptionRecovery(), MBError::SUCCESS);
+
+    EdgePtrs root_edge = {};
+    ASSERT_EQ(dmm->GetRootEdge(0, static_cast<uint8_t>('a'), root_edge),
+        MBError::SUCCESS);
+    EXPECT_EQ(root_edge.flag_ptr[0], 0);
+    EXPECT_EQ(Get6BInteger(root_edge.offset_ptr), old_node_offset);
+
+    const char* keys[] = { "a0", "a1", "a2" };
+    const char* values[] = { "value-a0", "value-a1", "value-a2" };
+    for (size_t i = 0; i < 3; ++i) {
+        MBData found;
+        ASSERT_EQ(db->Find(keys[i], found), MBError::SUCCESS);
+        EXPECT_EQ(std::string(reinterpret_cast<char*>(found.buff), found.data_len),
+            values[i]);
+    }
 }
 
 TEST_F(AbnormalExitTest, KEY_TYPE_INT_ADD_NODE_test)

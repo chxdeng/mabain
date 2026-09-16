@@ -173,6 +173,46 @@ TEST_F(PrefixCacheTest, NoPutOnFind)
     EXPECT_EQ(n, 3);
 }
 
+TEST_F(PrefixCacheTest, InDBPreservesExactMatchSemanticsWithAndWithoutCache)
+{
+    const std::string key = "cached-exact-key";
+    ASSERT_EQ(db->Add(key, "value", false), MBError::SUCCESS);
+
+    int err = MBError::UNKNOWN_ERROR;
+    EXPECT_TRUE(db->InDB(key.data(), static_cast<int>(key.size()), err));
+    EXPECT_EQ(err, MBError::SUCCESS);
+
+    err = MBError::UNKNOWN_ERROR;
+    EXPECT_FALSE(db->InDB("cached-exact", 12, err));
+    EXPECT_EQ(err, MBError::SUCCESS);
+
+    ASSERT_EQ(db->Remove(key), MBError::SUCCESS);
+    err = MBError::UNKNOWN_ERROR;
+    EXPECT_FALSE(db->InDB(key.data(), static_cast<int>(key.size()), err));
+    EXPECT_EQ(err, MBError::SUCCESS);
+
+    db->Close();
+    delete db;
+    db = nullptr;
+    ResourcePool::getInstance().RemoveAll();
+
+    std::string cmd = std::string("rm -f ") + MB_DIR + "_*";
+    ASSERT_EQ(system(cmd.c_str()), 0);
+
+    DB no_cache_db(MB_DIR, CONSTS::WriterOptions());
+    ASSERT_TRUE(no_cache_db.is_open());
+    ASSERT_EQ(no_cache_db.Add(key, "value", false), MBError::SUCCESS);
+
+    err = MBError::UNKNOWN_ERROR;
+    EXPECT_TRUE(no_cache_db.InDB(
+        key.data(), static_cast<int>(key.size()), err));
+    EXPECT_EQ(err, MBError::SUCCESS);
+
+    err = MBError::UNKNOWN_ERROR;
+    EXPECT_FALSE(no_cache_db.InDB("cached-exact", 12, err));
+    EXPECT_EQ(err, MBError::SUCCESS);
+}
+
 TEST_F(PrefixCacheTest, SeedFromCache_GetDepth)
 {
     Dict* dict = db->GetDictPtr();

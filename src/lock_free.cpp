@@ -41,8 +41,9 @@ void LockFree::LockFreeInit(LockFreeShmData* lock_free_ptr, IndexHeader* hdr, in
     shm_data_ptr = lock_free_ptr;
     header = hdr;
     if (mode & CONSTS::ACCESS_MODE_WRITER) {
-        // Clear the lock free data
-        shm_data_ptr->counter.store(0, MEMORY_ORDER_WRITER);
+        // Preserve the counter and completed-offset history across writer
+        // restarts so readers with pre-restart snapshots can detect updates.
+        // A newly created header already initializes this state to zero.
         shm_data_ptr->offset.store(MAX_6B_OFFSET, MEMORY_ORDER_WRITER);
     }
 }
@@ -52,8 +53,11 @@ void LockFree::LockFreeInit(LockFreeShmData* lock_free_ptr, IndexHeader* hdr, in
 //////////////////////////////////////////////////
 void LockFree::WriterLockFreeStop()
 {
+    size_t writer_offset = shm_data_ptr->offset.load(MEMORY_ORDER_READER);
+    writer_offset &= ~VALUE_UPDATE_FLAG;
+
     int index = shm_data_ptr->counter % MAX_OFFSET_CACHE;
-    shm_data_ptr->offset_cache[index].store(shm_data_ptr->offset, MEMORY_ORDER_WRITER);
+    shm_data_ptr->offset_cache[index].store(writer_offset, MEMORY_ORDER_WRITER);
 
     shm_data_ptr->counter.fetch_add(1, MEMORY_ORDER_WRITER);
     shm_data_ptr->offset.store(MAX_6B_OFFSET, MEMORY_ORDER_WRITER);
@@ -70,6 +74,14 @@ int LockFree::ReaderLockFreeStop(const LockFreeData& snapshot, size_t reader_off
 {
     size_t curr_offset = shm_data_ptr->offset.load(MEMORY_ORDER_READER);
     uint32_t curr_counter = shm_data_ptr->counter.load(MEMORY_ORDER_READER);
+
+    if (curr_offset & VALUE_UPDATE_FLAG) {
+        curr_offset &= ~VALUE_UPDATE_FLAG;
+        if (curr_offset == reader_offset) {
+            mbdata.options &= ~CONSTS::OPTION_READ_SAVED_EDGE;
+            return MBError::TRY_AGAIN;
+        }
+    }
 
     if (curr_offset == reader_offset) {
         if (mbdata.options & CONSTS::OPTION_READ_SAVED_EDGE) {

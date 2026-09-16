@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
+#include <memory>
 #include <new>
 #include <signal.h>
 #include <sstream>
@@ -45,6 +46,19 @@ struct ReturnStats {
     uint64_t try_again = 0;
     uint64_t other = 0;
 };
+
+std::unique_ptr<DB> OpenDbWithRetry(const std::string& db_dir, int options)
+{
+    constexpr int max_attempts = 10000;
+    std::unique_ptr<DB> db;
+    for (int attempt = 0; attempt < max_attempts; ++attempt) {
+        db = std::make_unique<DB>(db_dir.c_str(), options);
+        if (db->is_open() || db->Status() != MBError::TRY_AGAIN)
+            return db;
+        usleep(1000);
+    }
+    return db;
+}
 
 std::string HotKey(int i)
 {
@@ -121,9 +135,9 @@ int WriterMain(const TestConfig& cfg, SharedState* state)
 {
     WaitForStart(state);
 
-    DB db(cfg.db_dir.c_str(), CONSTS::WriterOptions());
-    if (!db.is_open()) {
-        std::cerr << "writer open failed: " << db.StatusStr() << std::endl;
+    auto db = OpenDbWithRetry(cfg.db_dir, CONSTS::WriterOptions());
+    if (!db->is_open()) {
+        std::cerr << "writer open failed: " << db->StatusStr() << std::endl;
         return 2;
     }
 
@@ -132,14 +146,14 @@ int WriterMain(const TestConfig& cfg, SharedState* state)
         const std::string key = HotKey(index);
         int rc;
         if (((op / cfg.key_count) & 1) == 0) {
-            rc = db.Remove(key);
+            rc = db->Remove(key);
             if (rc != MBError::SUCCESS && rc != MBError::NOT_EXIST) {
                 std::cerr << "Remove failed for " << key << ": " << MBError::get_error_str(rc) << std::endl;
                 return 3;
             }
         } else {
             const std::string value = ValueForKey(key);
-            rc = db.Add(key, value, true);
+            rc = db->Add(key, value, true);
             if (rc != MBError::SUCCESS) {
                 std::cerr << "Add failed for " << key << ": " << MBError::get_error_str(rc) << std::endl;
                 return 4;
@@ -147,7 +161,7 @@ int WriterMain(const TestConfig& cfg, SharedState* state)
         }
     }
 
-    db.Close();
+    db->Close();
     return 0;
 }
 
@@ -204,9 +218,9 @@ int ReaderMain(const TestConfig& cfg, const std::vector<std::string>& queries, S
 {
     WaitForStart(state);
 
-    DB db(cfg.db_dir.c_str(), CONSTS::ReaderOptions());
-    if (!db.is_open()) {
-        std::cerr << "reader " << reader_index << " open failed: " << db.StatusStr() << std::endl;
+    auto db = OpenDbWithRetry(cfg.db_dir, CONSTS::ReaderOptions());
+    if (!db->is_open()) {
+        std::cerr << "reader " << reader_index << " open failed: " << db->StatusStr() << std::endl;
         return 5;
     }
 
@@ -216,7 +230,7 @@ int ReaderMain(const TestConfig& cfg, const std::vector<std::string>& queries, S
     while (!state->stop.load(std::memory_order_acquire)) {
         const std::string& query = queries[pos];
         std::string bound_key;
-        int rc = db.FindLowerBound(query, data, &bound_key);
+        int rc = db->FindLowerBound(query, data, &bound_key);
         CountReturnValue(stats, rc);
         if (rc == MBError::SUCCESS) {
             ValidateLowerBoundResult(query, bound_key, data);
@@ -232,7 +246,7 @@ int ReaderMain(const TestConfig& cfg, const std::vector<std::string>& queries, S
     if (reader_index == 0)
         PrintReturnStats(reader_index, stats);
 
-    db.Close();
+    db->Close();
     return 0;
 }
 

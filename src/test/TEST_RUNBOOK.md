@@ -92,6 +92,7 @@ cd ~/mabain/src/test
 ./shmq_queue_full_stress_test
 ./hashmap_concurrency_test
 ./hashmap_value_concurrency_test
+./value_overwrite_concurrency_test 100000 8
 ./prefix_cache_snapshot_concurrency_test 1000000 4
 ./shared_prefix_cache_concurrency_test 200000 4
 ./find_lower_bound_concurrency_test \
@@ -119,10 +120,16 @@ Pass criteria:
   32 lookup threads across four reader processes. It must report zero unexpected
   misses, wrong/torn values, or other read errors. Bounded `TRY_AGAIN` results
   during generation/epoch churn are reported separately and are permitted.
+- `value_overwrite_concurrency_test` verifies that concurrent readers observe
+  either the complete old value or the complete new value during same-size
+  overwrites. It also verifies that its async queue is created under its
+  isolated test directory; the directory and queue are removed when the test
+  exits.
 - `prefix_cache_snapshot_concurrency_test` reports nonzero hits and no torn or
   invalid stable snapshot.
-- `shared_prefix_cache_concurrency_test` reports `Post-remove verification OK`
-  and no value mismatch. The fourth argument is best omitted: the current test
+- `shared_prefix_cache_concurrency_test` reports `Post-remove verification OK`,
+  a nonzero total lookup count, and no value mismatch. The fourth argument is
+  best omitted: the current test
   parses it both as cache capacity and as prefix depth.
 - `find_lower_bound_concurrency_test` reports success for the writer and all
   reader processes. `TRY_AGAIN` is an accepted transient result.
@@ -143,6 +150,12 @@ The prefix-cache snapshot test accepts:
 
 ```text
 ./prefix_cache_snapshot_concurrency_test [writer_iterations] [reader_threads]
+```
+
+The value-overwrite concurrency test accepts:
+
+```text
+./value_overwrite_concurrency_test [writer_iterations] [reader_threads]
 ```
 
 ## 5. Jemalloc restart and rebuild tests

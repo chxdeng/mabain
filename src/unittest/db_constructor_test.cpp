@@ -36,6 +36,8 @@ TEST(DBConstructorTest, NullPathLeavesObjectSafeToDestroy)
     const int options = db->GetDBOptions();
     Dict* const dict = db->GetDictPtr();
     const bool db_dir_empty = db->GetDBDir().empty();
+    const bool async_writer_enabled = db->AsyncWriterEnabled();
+    const bool async_writer_busy = db->AsyncWriterBusy();
     MBConfig config;
     db->GetDBConfig(config);
 
@@ -46,6 +48,8 @@ TEST(DBConstructorTest, NullPathLeavesObjectSafeToDestroy)
     EXPECT_EQ(options, 0);
     EXPECT_EQ(dict, nullptr);
     EXPECT_TRUE(db_dir_empty);
+    EXPECT_FALSE(async_writer_enabled);
+    EXPECT_FALSE(async_writer_busy);
     EXPECT_EQ(config.mbdir, nullptr);
     EXPECT_EQ(config.options, 0);
     EXPECT_EQ(config.memcap_index, 0u);
@@ -56,4 +60,14 @@ TEST(DBConstructorTest, NullPathLeavesObjectSafeToDestroy)
     EXPECT_EQ(config.queue_dir, nullptr);
     EXPECT_FALSE(config.jemalloc_keep_db);
     EXPECT_EQ(config.async_queue_reservation_timeout_sec, 0u);
+}
+
+TEST(DBConstructorTest, EmptyPathIsRejected)
+{
+    DB db("", CONSTS::WriterOptions());
+
+    EXPECT_EQ(db.Status(), MBError::INVALID_ARG);
+    EXPECT_FALSE(db.is_open());
+    EXPECT_FALSE(db.AsyncWriterEnabled());
+    EXPECT_FALSE(db.AsyncWriterBusy());
 }

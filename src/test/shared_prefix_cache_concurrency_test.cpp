@@ -10,6 +10,7 @@
 #include <functional>
 #include <iomanip>
 #include <iostream>
+#include <memory>
 #include <mutex>
 #include <random>
 #include <string>
@@ -60,6 +61,19 @@ struct Metrics {
     std::atomic<uint64_t> us { 0 };
 };
 
+static std::unique_ptr<DB> open_db_with_retry(const std::string& dbdir, int options)
+{
+    constexpr int max_attempts = 10000;
+    std::unique_ptr<DB> db;
+    for (int attempt = 0; attempt < max_attempts; ++attempt) {
+        db = std::make_unique<DB>(dbdir.c_str(), options);
+        if (db->is_open() || db->Status() != MBError::TRY_AGAIN)
+            return db;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return db;
+}
+
 static void ensure_clean_db(const std::string& dbdir)
 {
     namespace fs = std::filesystem;
@@ -98,10 +112,12 @@ static std::vector<std::string> generate_keys(int n)
 
 static void reader_thread_fn(const TestConfig& cfg, const std::vector<std::string>& keys, Metrics& m, const std::atomic<int>* last_added)
 {
-    DB rdb(cfg.dbdir.c_str(),
+    auto rdb = open_db_with_retry(cfg.dbdir,
         CONSTS::ReaderOptions() | CONSTS::OPTION_PREFIX_CACHE);
-    if (!rdb.is_open()) {
-        std::cerr << "reader open failed" << std::endl;
+    if (!rdb->is_open()) {
+        std::cerr << "reader open failed: " << rdb->StatusStr() << std::endl;
+        m.validation_failed.store(true, std::memory_order_relaxed);
+        m.stop_read.store(true, std::memory_order_relaxed);
         return;
     }
     // Shared prefix cache is configured via DB creation options.
@@ -128,7 +144,7 @@ static void reader_thread_fn(const TestConfig& cfg, const std::vector<std::strin
             i = dist_all(rng);
         }
         auto t0 = std::chrono::steady_clock::now();
-        int rc = rdb.Find(keys[i], md);
+        int rc = rdb->Find(keys[i], md);
         auto t1 = std::chrono::steady_clock::now();
         uint64_t dur_us = (uint64_t)std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
         m.us.fetch_add(dur_us, std::memory_order_relaxed);
@@ -168,10 +184,10 @@ static void stop_readers(Metrics& m, std::vector<std::thread>& readers)
 
 static bool run_interleaved_workload(const TestConfig& cfg, const std::vector<std::string>& keys, double& work_sec, std::atomic<int>& last_added)
 {
-    DB writer(cfg.dbdir.c_str(),
+    auto writer = open_db_with_retry(cfg.dbdir,
         CONSTS::WriterOptions() | CONSTS::OPTION_PREFIX_CACHE);
-    if (!writer.is_open()) {
-        std::cerr << "writer open failed: " << writer.StatusStr() << std::endl;
+    if (!writer->is_open()) {
+        std::cerr << "writer open failed: " << writer->StatusStr() << std::endl;
         return false;
     }
     // Shared prefix cache is configured via DB creation options.
@@ -181,14 +197,14 @@ static bool run_interleaved_workload(const TestConfig& cfg, const std::vector<st
     for (int i = 0; i < cfg.nkeys; ++i) {
         // Value equals key for validation
         const std::string& value = keys[i];
-        int rc = writer.Add(keys[i], value, /*overwrite*/ false);
+        int rc = writer->Add(keys[i], value, /*overwrite*/ false);
         if (rc != MBError::SUCCESS && rc != MBError::IN_DICT) {
             std::cerr << "Add failed at i=" << i << " rc=" << MBError::get_error_str(rc) << std::endl;
             break;
         }
         last_added.store(i, std::memory_order_relaxed);
         if (i >= cfg.window) {
-            int rrc = writer.Remove(keys[i - cfg.window]);
+            int rrc = writer->Remove(keys[i - cfg.window]);
             if (rrc != MBError::SUCCESS && rrc != MBError::NOT_EXIST) {
                 std::cerr << "Remove failed at i=" << (i - cfg.window) << " rc=" << MBError::get_error_str(rrc) << std::endl;
                 break;
@@ -196,12 +212,12 @@ static bool run_interleaved_workload(const TestConfig& cfg, const std::vector<st
         }
     }
     for (int i = std::max(0, cfg.nkeys - cfg.window); i < cfg.nkeys; ++i) {
-        int rrc = writer.Remove(keys[i]);
+        int rrc = writer->Remove(keys[i]);
         if (rrc != MBError::SUCCESS && rrc != MBError::NOT_EXIST) {
             std::cerr << "Final remove failed at i=" << i << " rc=" << MBError::get_error_str(rrc) << std::endl;
         }
     }
-    writer.Flush();
+    writer->Flush();
     work_sec = t.sec();
     return true;
 }
@@ -298,6 +314,10 @@ int main(int argc, char** argv)
         return 1;
     if (m.validation_failed.load())
         return 2;
+    if (m.ops.load() == 0) {
+        std::cerr << "No reader lookups were executed" << std::endl;
+        return 2;
+    }
 
     // Open a fresh handle to dump shared prefix cache; use reader to avoid resetting the cache
     DB verify_db(cfg.dbdir.c_str(), CONSTS::ReaderOptions());

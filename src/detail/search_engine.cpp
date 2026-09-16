@@ -100,7 +100,20 @@ namespace {
 
         // Prefer the longer match: copy value and match_len when rc-path wins.
         if (data_rc.match_len > data.match_len) {
-            data_rc.TransferValueTo(data.buff, data.data_len);
+            uint8_t* value = nullptr;
+            int value_len = 0;
+            int transfer_status = data_rc.TransferValueTo(value, value_len);
+            if (transfer_status != MBError::SUCCESS)
+                return transfer_status;
+
+            transfer_status = data.TransferValueFrom(value, value_len);
+            if (transfer_status != MBError::SUCCESS) {
+                // TransferValueTo gives ownership to this scope until the
+                // destination accepts it.
+                free(value);
+                return transfer_status;
+            }
+
             // Preserve the longer match length from rc-path.
             data.match_len = data_rc.match_len;
             rval = MBError::SUCCESS;

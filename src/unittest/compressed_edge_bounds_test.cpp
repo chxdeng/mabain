@@ -11,6 +11,7 @@
 #include <gtest/gtest.h>
 
 #include "../db.h"
+#include "../dict.h"
 #include "../error.h"
 #include "../resource_pool.h"
 
@@ -159,6 +160,40 @@ TEST_F(CompressedEdgeBoundsTest, LowerBoundUsesLongerEdgeThatDivergesLower)
     EXPECT_EQ(std::string(reinterpret_cast<const char*>(data.buff),
                   static_cast<size_t>(data.data_len)),
         "long");
+}
+
+TEST_F(CompressedEdgeBoundsTest, RcPrefixWinnerPreservesBufferMetadata)
+{
+    Dict* dict = db->GetDictPtr();
+    ASSERT_NE(dict, nullptr);
+    IndexHeader* header = dict->GetHeaderPtr();
+    ASSERT_NE(header, nullptr);
+
+    const size_t rc_root_offset = dict->GetMM()->InitRootNode_RC();
+    ASSERT_NE(rc_root_offset, 0U);
+    header->rc_root_offset.store(rc_root_offset, MEMORY_ORDER_WRITER);
+
+    const std::string rc_key = "ab";
+    const std::string rc_value = "rc-value";
+    MBData rc_data;
+    rc_data.options = CONSTS::OPTION_RC_MODE;
+    rc_data.buff = reinterpret_cast<uint8_t*>(
+        const_cast<char*>(rc_value.data()));
+    rc_data.data_len = static_cast<int>(rc_value.size());
+    ASSERT_EQ(dict->Add(reinterpret_cast<const uint8_t*>(rc_key.data()),
+                  static_cast<int>(rc_key.size()), rc_data, false),
+        MBError::SUCCESS);
+
+    // The main tree matches "a", but the longer "ab" match comes from the
+    // resource-collection tree and must replace this preallocated buffer.
+    MBData result(128, 0);
+    ASSERT_EQ(db->FindLongestPrefix("abz", 3, result), MBError::SUCCESS);
+    EXPECT_EQ(result.match_len, 2);
+    ASSERT_EQ(result.data_len, static_cast<int>(rc_value.size()));
+    EXPECT_EQ(std::string(reinterpret_cast<const char*>(result.buff),
+                  static_cast<size_t>(result.data_len)),
+        rc_value);
+    EXPECT_EQ(result.buff_len, static_cast<int>(rc_value.size()));
 }
 
 } // namespace

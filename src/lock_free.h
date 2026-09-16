@@ -23,6 +23,7 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "integer_4b_5b.h"
 #include "mb_data.h"
 
 namespace mabain {
@@ -54,6 +55,7 @@ public:
 
     void LockFreeInit(LockFreeShmData* lock_free_ptr, IndexHeader* hdr, int mode = 0);
     inline void WriterLockFreeStart(size_t offset);
+    inline void WriterLockFreeValueUpdateStart(size_t offset);
     void WriterLockFreeStop();
     inline void ReaderLockFreeStart(LockFreeData& snapshot);
     // If there was race condition, this function returns MBError::TRY_AGAIN.
@@ -61,6 +63,11 @@ public:
         MBData& mbdata);
 
 private:
+    // The first bit above the six-byte persistent offset range marks a value
+    // buffer rewrite for which the saved-edge shortcut is unsafe.
+    static constexpr size_t VALUE_UPDATE_FLAG =
+        static_cast<size_t>(MAX_6B_OFFSET) + 1;
+
     LockFreeShmData* shm_data_ptr;
     const IndexHeader* header;
 };
@@ -68,6 +75,13 @@ private:
 inline void LockFree::WriterLockFreeStart(size_t offset)
 {
     shm_data_ptr->offset.store(offset, MEMORY_ORDER_WRITER);
+}
+
+inline void LockFree::WriterLockFreeValueUpdateStart(size_t offset)
+{
+    WriterLockFreeStart(offset | VALUE_UPDATE_FLAG);
+    // Publish the marker before the old buffer can be freed or rewritten.
+    std::atomic_thread_fence(std::memory_order_seq_cst);
 }
 
 inline void LockFree::ReaderLockFreeStart(LockFreeData& snapshot)

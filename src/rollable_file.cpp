@@ -210,6 +210,11 @@ int RollableFile::CheckAndOpenFile(size_t order, bool create_file)
 {
     int rval = MBError::SUCCESS;
 
+    // Reject invalid offsets before growing the descriptor table. The same
+    // bound is also enforced by OpenAndMapBlockFile().
+    if (order >= static_cast<size_t>(max_num_block))
+        return MBError::NO_RESOURCE;
+
     if (order >= static_cast<size_t>(files.size()))
         files.resize(order + 3, NULL);
 

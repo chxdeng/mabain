@@ -1,4 +1,5 @@
 #include <iostream>
+#include <limits>
 #include <string>
 #include <thread>
 
@@ -62,6 +63,38 @@ TEST_F(WriterLockTest, test_lock)
     EXPECT_TRUE(db5.is_open());
 }
 
+TEST_F(WriterLockTest, FailedWriterCloseKeepsActiveWriterMarker)
+{
+    const int options = CONSTS::WriterOptions();
+    DB active_writer(MB_DIR, options);
+    ASSERT_TRUE(active_writer.is_open());
+
+    {
+        DB rejected_writer(MB_DIR, options);
+        ASSERT_EQ(rejected_writer.Status(), MBError::WRITER_EXIST);
+    }
+
+    DB still_rejected_writer(MB_DIR, options);
+    ASSERT_EQ(still_rejected_writer.Status(), MBError::WRITER_EXIST);
+
+    ASSERT_EQ(active_writer.Close(), MBError::SUCCESS);
+
+    DB replacement_writer(MB_DIR, options);
+    EXPECT_TRUE(replacement_writer.is_open());
+}
+
+TEST_F(WriterLockTest, AsyncWriterStatusMethodsAreSafeAfterClose)
+{
+    DB writer(MB_DIR, CONSTS::WriterOptions());
+    ASSERT_TRUE(writer.is_open());
+    EXPECT_TRUE(writer.AsyncWriterEnabled());
+    EXPECT_FALSE(writer.AsyncWriterBusy());
+
+    ASSERT_EQ(writer.Close(), MBError::SUCCESS);
+    EXPECT_FALSE(writer.AsyncWriterEnabled());
+    EXPECT_FALSE(writer.AsyncWriterBusy());
+}
+
 TEST_F(WriterLockTest, RawOffsetMutationRequiresWriterMode)
 {
     DB writer(MB_DIR, CONSTS::WriterOptions());
@@ -98,6 +131,24 @@ TEST_F(WriterLockTest, RawOffsetMutationRequiresWriterMode)
     EXPECT_EQ(std::string(reinterpret_cast<const char*>(unchanged.buff),
                   static_cast<size_t>(unchanged.data_len)),
         "Value");
+}
+
+TEST_F(WriterLockTest, RawOffsetAPIsRejectInvalidInput)
+{
+    DB writer(MB_DIR, CONSTS::WriterOptions());
+    ASSERT_TRUE(writer.is_open());
+
+    EXPECT_EQ(writer.WriteDataByOffset(0, nullptr, 1),
+        MBError::INVALID_ARG);
+    EXPECT_EQ(writer.WriteDataByOffset(0, "X", 0),
+        MBError::INVALID_ARG);
+    EXPECT_EQ(writer.WriteDataByOffset(0, "X", -1),
+        MBError::INVALID_ARG);
+
+    MBData data;
+    EXPECT_EQ(writer.ReadDataByOffset(
+                  std::numeric_limits<size_t>::max(), data),
+        MBError::READ_ERROR);
 }
 
 }
