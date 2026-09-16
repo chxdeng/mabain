@@ -132,9 +132,24 @@ Dict::Dict(const std::string& mbdir, bool init_header, int datasize,
                 header->excep_offset = 0;
             }
         }
-        // Self-consistency: if DB lacks embedded cache region, ignore option.
-        if (!(header->pfxcache_size > 0) && (options & CONSTS::OPTION_PREFIX_CACHE)) {
-            Logger::Log(LOG_LEVEL_WARN, "Prefix cache option set but DB has no embedded cache; disabling.");
+        const bool cache_configured = header->pfxcache_size > 0;
+        const bool cache_requested = (options & CONSTS::OPTION_PREFIX_CACHE) != 0;
+        if (options & CONSTS::ACCESS_MODE_WRITER) {
+            // Prefix-cache storage is fixed when the DB is created. Writers must
+            // maintain that persisted configuration even when the caller omits
+            // or incorrectly supplies the creation-time option on reopen.
+            if (cache_configured != cache_requested) {
+                Logger::Log(LOG_LEVEL_WARN,
+                    "prefix-cache option does not match database header; "
+                    "using the persisted database setting");
+            }
+            if (cache_configured)
+                options |= CONSTS::OPTION_PREFIX_CACHE;
+            else
+                options &= ~CONSTS::OPTION_PREFIX_CACHE;
+        } else if (!cache_configured && cache_requested) {
+            Logger::Log(LOG_LEVEL_WARN,
+                "prefix cache option set but DB has no embedded cache; disabling");
             options &= ~CONSTS::OPTION_PREFIX_CACHE;
         }
     }
@@ -157,12 +172,18 @@ Dict::Dict(const std::string& mbdir, bool init_header, int datasize,
 
             // Prefix-cache entries persist across process restarts. A previous writer may
             // have stopped between publishing a DB update and refreshing the cache, so a
-            // non-jemalloc writer invalidates the previous cache generation on startup.
-            if ((options & CONSTS::ACCESS_MODE_WRITER)
-                && !(options & CONSTS::OPTION_JEMALLOC))
+            // writer invalidates the previous cache generation on startup.
+            if (options & CONSTS::ACCESS_MODE_WRITER)
                 prefix_cache->InvalidateAll();
         } catch (...) {
-            // Leave cache disabled on failure; DB remains operational.
+            // Readers can safely fall back to the radix tree. A writer cannot
+            // continue without maintaining a cache configured in the DB header.
+            if (options & CONSTS::ACCESS_MODE_WRITER) {
+                Logger::Log(LOG_LEVEL_ERROR,
+                    "writer failed to attach configured prefix cache");
+                status = MBError::NOT_ALLOWED;
+                return;
+            }
         }
     }
     if (mm.IsValid())
