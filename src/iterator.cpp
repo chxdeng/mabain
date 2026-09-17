@@ -203,13 +203,8 @@ int DB::iterator::get_node_offset(const std::string& node_key,
     node_offset = 0;
     value.options |= CONSTS::OPTION_FIND_AND_STORE_PARENT;
     detail::SearchEngine engine(*db_ref.dict);
-    while (true) {
-        rval = engine.find(reinterpret_cast<const uint8_t*>(node_key.data()),
-            static_cast<int>(node_key.size()), value);
-        if (rval != MBError::TRY_AGAIN)
-            break;
-        detail::PauseLockFreeRetry();
-    }
+    rval = engine.find(reinterpret_cast<const uint8_t*>(node_key.data()),
+        static_cast<int>(node_key.size()), value);
 
     if (rval == MBError::IN_DICT) {
         parent_edge_off = edge_ptrs.parent_offset;
@@ -304,7 +299,7 @@ int DB::iterator::load_kv_for_node(const std::string& curr_node_key)
 {
     int rval;
     MBlsq child_node_list(free_iterator_node);
-    size_t parent_edge_off;
+    size_t parent_edge_off = 0;
 
     if (lfree == NULL) {
         rval = load_node(curr_node_key, parent_edge_off);
@@ -314,18 +309,27 @@ int DB::iterator::load_kv_for_node(const std::string& curr_node_key)
 #ifdef __LOCK_FREE__
         LockFreeData snapshot;
         int lf_ret;
+        int attempts = 0;
 #endif
         while (true) {
 #ifdef __LOCK_FREE__
             lfree->ReaderLockFreeStart(snapshot);
 #endif
             rval = load_node(curr_node_key, parent_edge_off);
+#ifdef __LOCK_FREE__
+            // SearchEngine::find() has already exhausted its bounded retries.
+            if (rval == MBError::TRY_AGAIN)
+                break;
+#endif
             if (rval == MBError::SUCCESS) {
                 rval = load_kvs(curr_node_key, &child_node_list);
 #ifdef __LOCK_FREE__
                 if (rval == MBError::TRY_AGAIN) {
                     kv_per_node->Clear();
                     child_node_list.Clear();
+                    if (++attempts >= CONSTS::LOCK_FREE_RETRY_LIMIT)
+                        break;
+                    detail::PauseLockFreeRetry();
                     continue;
                 }
 #endif
@@ -335,6 +339,10 @@ int DB::iterator::load_kv_for_node(const std::string& curr_node_key)
             if (lf_ret == MBError::TRY_AGAIN) {
                 kv_per_node->Clear();
                 child_node_list.Clear();
+                rval = lf_ret;
+                if (++attempts >= CONSTS::LOCK_FREE_RETRY_LIMIT)
+                    break;
+                detail::PauseLockFreeRetry();
                 continue;
             }
 #endif
