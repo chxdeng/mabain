@@ -318,6 +318,7 @@ public:
     inline int ReadData(uint8_t* buff, unsigned len, size_t offset) const;
     inline size_t GetJemallocAllocSize() const;
     inline int ReseedJemalloc(size_t alloc_size) const;
+    inline int ReseedJemalloc(size_t alloc_size, size_t next_unused_block) const;
     inline int ResetJemalloc() const;
     inline int AllocateJemalloc(size_t size, size_t& offset, uint8_t*& ptr) const;
     inline size_t GetExistingBlockEnd() const;
@@ -424,6 +425,12 @@ inline size_t DRMBase::GetJemallocAllocSize() const
 inline int DRMBase::ReseedJemalloc(size_t alloc_size) const
 {
     return kv_file == nullptr ? MBError::NOT_INITIALIZED : kv_file->ReseedJemalloc(alloc_size);
+}
+
+inline int DRMBase::ReseedJemalloc(size_t alloc_size, size_t next_unused_block) const
+{
+    return kv_file == nullptr ? MBError::NOT_INITIALIZED
+                              : kv_file->ReseedJemalloc(alloc_size, next_unused_block);
 }
 
 inline int DRMBase::ResetJemalloc() const

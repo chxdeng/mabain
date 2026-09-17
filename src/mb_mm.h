@@ -32,6 +32,7 @@ public:
         : alloc_size(0)
         , extent_hooks(nullptr)
         , arena_index(0)
+        , next_unused_block(0)
         , active_reusable_block_order(-1)
         , active_reusable_block_offset(0)
     {
@@ -47,6 +48,9 @@ public:
     size_t alloc_size;
     extent_hooks_t* extent_hooks;
     unsigned arena_index;
+    // One past the highest existing block reserved by startup rebuild. This is
+    // process-local allocator state and is not part of the persisted DB format.
+    uint32_t next_unused_block;
 
     std::vector<uint32_t> reusable_block_order;
     int active_reusable_block_order;
