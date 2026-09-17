@@ -921,7 +921,8 @@ const char* DB::StatusStr() const
 bool DB::InDB(const char* key, int len, int& err)
 {
     err = MBError::SUCCESS;
-    if (key == nullptr || len == 0) {
+    if (key == nullptr || len <= 0) {
+        err = MBError::INVALID_ARG;
         return false;
     }
     if (status != MBError::SUCCESS) {
@@ -953,7 +954,7 @@ bool DB::InDB(const char* key, int len, int& err)
 // Find the exact key match (delegate to SearchEngine)
 int DB::Find(const char* key, int len, MBData& mdata) const
 {
-    if (key == NULL)
+    if (key == NULL || len <= 0)
         return MBError::INVALID_ARG;
     if (status != MBError::SUCCESS)
         return MBError::NOT_INITIALIZED;
@@ -981,7 +982,7 @@ int DB::FindLowerBound(const std::string& key, MBData& data, std::string* bound_
 
 int DB::FindLowerBound(const char* key, int len, MBData& data, std::string* bound_key) const
 {
-    if (key == NULL)
+    if (key == NULL || len <= 0)
         return MBError::INVALID_ARG;
     if (status != MBError::SUCCESS)
         return MBError::NOT_INITIALIZED;
@@ -1005,7 +1006,7 @@ int DB::FindLowerBound(const char* key, int len, MBData& data, std::string* boun
 // Find the longest prefix match
 int DB::FindLongestPrefix(const char* key, int len, MBData& data) const
 {
-    if (key == NULL)
+    if (key == NULL || len <= 0)
         return MBError::INVALID_ARG;
     if (status != MBError::SUCCESS)
         return MBError::NOT_INITIALIZED;
@@ -1087,6 +1088,8 @@ int DB::Add(const char* key, int len, MBData& mbdata, bool overwrite)
     if (len <= 0 || len > CONSTS::MAX_KEY_LENGHTH
         || mbdata.data_len <= 0 || mbdata.data_len > CONSTS::MAX_DATA_SIZE)
         return MBError::OUT_OF_BOUND;
+    if (options & CONSTS::READ_ONLY_DB)
+        return MBError::NOT_ALLOWED;
 
     if (async_writer == NULL && (options & CONSTS::ACCESS_MODE_WRITER)) {
         rval = dict->Add(reinterpret_cast<const uint8_t*>(key), len, mbdata, overwrite);
@@ -1153,7 +1156,7 @@ int DB::Remove(const char* key, int len)
 {
     int rval = MBError::SUCCESS;
 
-    if (key == NULL)
+    if (key == NULL || len <= 0)
         return MBError::INVALID_ARG;
     if (status != MBError::SUCCESS)
         return MBError::NOT_INITIALIZED;
@@ -1277,6 +1280,8 @@ int DB::CollectResource(int64_t min_index_rc_size, int64_t min_data_rc_size,
 {
     if (status != MBError::SUCCESS)
         return status;
+    if (options & CONSTS::READ_ONLY_DB)
+        return MBError::NOT_ALLOWED;
 
     try {
         if (async_writer == NULL && (options & CONSTS::ACCESS_MODE_WRITER)) {

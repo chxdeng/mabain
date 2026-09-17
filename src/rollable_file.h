@@ -51,6 +51,7 @@ public:
     int GetLastAllocError() const;
     size_t GetJemallocAllocSize() const;
     int ReseedJemalloc(size_t alloc_size);
+    int ReseedJemalloc(size_t alloc_size, size_t next_unused_block);
     int AddReusableBlock(size_t block_order);
     size_t GetReusableBlockCount() const;
     size_t GetExistingBlockEnd() const;

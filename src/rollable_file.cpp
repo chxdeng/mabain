@@ -558,8 +558,16 @@ size_t RollableFile::GetJemallocAllocSize() const
 // or reset arena before new allocations are issued.
 int RollableFile::ReseedJemalloc(size_t alloc_size)
 {
+    return ReseedJemalloc(alloc_size, 0);
+}
+
+int RollableFile::ReseedJemalloc(size_t alloc_size, size_t next_unused_block)
+{
     if (!(mode & CONSTS::OPTION_JEMALLOC)) {
         return MBError::INVALID_ARG;
+    }
+    if (next_unused_block > max_num_block) {
+        return MBError::OUT_OF_BOUND;
     }
 
     int rval = CheckAndOpenFile(0, true);
@@ -580,6 +588,7 @@ int RollableFile::ReseedJemalloc(size_t alloc_size)
     }
 
     files[0]->mm_meta->alloc_size = alloc_size;
+    files[0]->mm_meta->next_unused_block = static_cast<uint32_t>(next_unused_block);
     return MBError::SUCCESS;
 }
 
@@ -827,15 +836,19 @@ void* RollableFile::custom_extent_alloc(void* new_addr, size_t size, size_t alig
                 mm_meta->active_reusable_block_offset = size;
                 ptr = mgr->files[block_order]->GetMapAddr();
             } else {
-                // Try next tail block
-                block_order++;
-                if ((size_t)block_order >= mgr->max_num_block) {
+                // Try the next tail block, but never enter an existing block
+                // reserved by a keep-db startup rebuild.
+                size_t next_block_order = static_cast<size_t>(block_order) + 1;
+                if (mm_meta->next_unused_block > next_block_order)
+                    next_block_order = mm_meta->next_unused_block;
+                if (next_block_order >= mgr->max_num_block) {
                     Logger::Log(LOG_LEVEL_ERROR, "custom_extent_alloc: arena %u max block number exceeded"
                                                  " new memory (aligned offset: %zu, used: %zu, size: %zu)",
                         arena_ind, aligned_offset, mm_meta->alloc_size, size);
                     g_jemalloc_alloc_error = MBError::NO_MEMORY;
                     return nullptr;
                 }
+                block_order = static_cast<int>(next_block_order);
                 int rval = mgr->CheckAndOpenFile(block_order, true);
                 if (rval != MBError::SUCCESS) {
                     Logger::Log(LOG_LEVEL_ERROR, "custom_extent_alloc: arena %u failed to open"
@@ -852,6 +865,7 @@ void* RollableFile::custom_extent_alloc(void* new_addr, size_t size, size_t alig
                     g_jemalloc_alloc_error = MBError::NO_MEMORY;
                     return nullptr;
                 }
+                mm_meta->next_unused_block = static_cast<uint32_t>(next_block_order + 1);
                 mm_meta->alloc_size = block_order * mgr->block_size + aligned_offset + size;
                 ptr = mgr->files[block_order]->GetMapAddr() + aligned_offset;
             }

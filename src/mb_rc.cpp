@@ -42,6 +42,13 @@ inline size_t AlignUpToBlock(size_t offset, uint32_t block_size)
     return block_size == 0 ? offset : ((offset + block_size - 1) / block_size) * block_size;
 }
 
+inline size_t BlocksCoveringRange(size_t end_offset, uint32_t block_size)
+{
+    if (block_size == 0)
+        return 0;
+    return end_offset / block_size + (end_offset % block_size != 0);
+}
+
 #ifdef __linux__
 bool ReadProcStartTimeForPid(pid_t pid, uint64_t& start_time)
 {
@@ -330,13 +337,15 @@ int ResourceCollection::StartupEvacuate()
         rval = dmm->ResetJemalloc();
         if (rval != MBError::SUCCESS)
             return rval;
-        rval = dmm->ReseedJemalloc(index_boundary);
+        rval = dmm->ReseedJemalloc(index_boundary,
+            BlocksCoveringRange(index_source_end, header->index_block_size));
         if (rval != MBError::SUCCESS)
             return rval;
         rval = dict->ResetJemalloc();
         if (rval != MBError::SUCCESS)
             return rval;
-        rval = dict->ReseedJemalloc(data_boundary);
+        rval = dict->ReseedJemalloc(data_boundary,
+            BlocksCoveringRange(data_source_end, header->data_block_size));
         if (rval != MBError::SUCCESS)
             return rval;
 

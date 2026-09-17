@@ -1010,7 +1010,7 @@ int Dict::RemoveAll()
 
 pthread_mutex_t* Dict::GetShmLockPtr() const
 {
-    return &(slaq->lock);
+    return slaq == nullptr ? nullptr : &slaq->lock;
 }
 
 AsyncNode* Dict::GetAsyncQueuePtr() const
