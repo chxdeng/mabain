@@ -3,6 +3,7 @@
  */
 
 #include "util/prefix_cache.h"
+#include "file_io.h"
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
@@ -255,30 +256,29 @@ bool PrefixCache::map_embedded(const std::string& mbdir)
     // Resolve data file block0 path and open.
     std::string data_path0 = mbdir + std::string("_mabain_d0");
     // Create the first data block file if it does not exist yet
-    int fd = ::open(data_path0.c_str(), O_CREAT | O_RDWR, 0666);
-    if (fd < 0) return false;
+    FileIO file(data_path0, O_CREAT | O_RDWR,
+        S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH, false);
+    if (file.Open() < 0)
+        return false;
     struct stat st;
-    if (fstat(fd, &st) != 0) { ::close(fd); return false; }
+    if (::fstat(file.GetFD(), &st) != 0)
+        return false;
     // Ensure file is at least large enough to cover the cache region
     size_t end_needed = hdr_->pfxcache_offset + hdr_->pfxcache_size;
-    if ((size_t)st.st_size < end_needed) {
-        // Prefer posix_fallocate to avoid sparse files; fall back to ftruncate if unavailable
-        int rc = 0;
-#ifdef _XOPEN_SOURCE
-        rc = posix_fallocate(fd, 0, static_cast<off_t>(end_needed));
-#endif
-        if (rc != 0) {
-            if (ftruncate(fd, static_cast<off_t>(end_needed)) != 0) { ::close(fd); return false; }
-        }
-    }
+    if (static_cast<size_t>(st.st_size) < end_needed
+        && file.AllocateFile(static_cast<off_t>(end_needed)) != 0)
+        return false;
     size_t map_len = std::max<size_t>(end_needed, (size_t)st.st_size);
-    void* base = ::mmap(nullptr, map_len, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    if (base == MAP_FAILED) { ::close(fd); return false; }
+    void* base = ::mmap(nullptr, map_len, PROT_READ | PROT_WRITE,
+        MAP_SHARED, file.GetFD(), 0);
+    if (base == MAP_FAILED)
+        return false;
 
     shm_base = base;
     shm_size = map_len;
     shm_delta = hdr_->pfxcache_offset;
-    shm_fd = fd;
+    // The mapping remains valid after FileIO closes its descriptor.
+    shm_fd = -1;
 
     // Recreate the same header and tables layout offsets as map_shared, but relative to base+delta
     const uint32_t MAGIC = 0x50434632; // 'PCF2'
@@ -298,7 +298,6 @@ bool PrefixCache::map_embedded(const std::string& mbdir)
         // Capacity mismatch vs header; clear mapped region and try to proceed if space allows
         // to keep running. Readers/writers can still function without cache.
         ::munmap(shm_base, shm_size);
-        ::close(fd);
         shm_base = nullptr;
         shm_fd = -1;
         return false;

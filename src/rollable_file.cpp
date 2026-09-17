@@ -638,16 +638,18 @@ size_t RollableFile::GetExistingBlockEnd() const
 // offset is the total offset. It is used to find the block order and relative offset within the block.
 size_t RollableFile::MemWrite(const void* src, size_t size, size_t offset)
 {
-    int block_order = offset / block_size;
+    size_t block_order = offset / block_size;
     size_t relative_offset = offset % block_size;
-    if (relative_offset + size > block_size) {
-        throw (int)MBError::OUT_OF_BOUND;
+    if (size > block_size - relative_offset) {
+        throw static_cast<int>(MBError::OUT_OF_BOUND);
     }
     // Ensure the target block is opened/mapped in jemalloc mode
-    if (block_order >= (int)files.size() || files[block_order] == nullptr) {
+    if (block_order >= files.size() || files[block_order] == nullptr) {
         int rval = CheckAndOpenFile(block_order, false);
-        if (rval != MBError::SUCCESS || files[block_order] == nullptr) {
-            throw (int)MBError::MMAP_FAILED;
+        if (rval != MBError::SUCCESS
+            || block_order >= files.size()
+            || files[block_order] == nullptr) {
+            throw static_cast<int>(MBError::MMAP_FAILED);
         }
     }
     memcpy(files[block_order]->GetMapAddr() + relative_offset, src, size);
@@ -656,15 +658,17 @@ size_t RollableFile::MemWrite(const void* src, size_t size, size_t offset)
 
 size_t RollableFile::MemRead(void* dst, size_t size, size_t offset)
 {
-    int block_order = offset / block_size;
+    size_t block_order = offset / block_size;
     size_t relative_offset = offset % block_size;
-    if (relative_offset + size > block_size) {
-        throw (int)MBError::OUT_OF_BOUND;
+    if (size > block_size - relative_offset) {
+        throw static_cast<int>(MBError::OUT_OF_BOUND);
     }
     // Ensure the source block is opened/mapped in jemalloc mode
-    if (block_order >= (int)files.size() || files[block_order] == nullptr) {
+    if (block_order >= files.size() || files[block_order] == nullptr) {
         int rval = CheckAndOpenFile(block_order, false);
-        if (rval != MBError::SUCCESS || files[block_order] == nullptr) {
+        if (rval != MBError::SUCCESS
+            || block_order >= files.size()
+            || files[block_order] == nullptr) {
             return 0; // signal read error to caller
         }
     }

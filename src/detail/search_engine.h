@@ -32,11 +32,21 @@ struct BoundSearchState {
 
 namespace detail {
 
+    // Most writer conflicts clear quickly. Retry four times without a syscall,
+    // then retain the existing backoff for sustained contention.
+    constexpr int IMMEDIATE_LOCK_FREE_RETRY_LIMIT = 4;
+
     // Shared pause for lock-free lookup retry loops.
     inline void PauseLockFreeRetry()
     {
         const struct timespec retry_pause = { 0, 10L };
         nanosleep(&retry_pause, nullptr);
+    }
+
+    inline void BackoffLockFreeRetry(int attempts)
+    {
+        if (attempts > IMMEDIATE_LOCK_FREE_RETRY_LIMIT)
+            PauseLockFreeRetry();
     }
 
     class SearchEngine {
@@ -120,7 +130,7 @@ namespace detail {
         int attempts = 0;
         while (r == MBError::TRY_AGAIN && attempts < CONSTS::LOCK_FREE_RETRY_LIMIT) {
             ++attempts;
-            PauseLockFreeRetry();
+            BackoffLockFreeRetry(attempts);
             r = findInternal(root_off, key, len, data);
         }
 #endif

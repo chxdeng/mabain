@@ -151,4 +151,27 @@ TEST_F(WriterLockTest, RawOffsetAPIsRejectInvalidInput)
         MBError::READ_ERROR);
 }
 
+TEST_F(WriterLockTest, JemallocRawReadRejectsCrossBlockOffset)
+{
+    constexpr uint32_t block_size = 1024 * 1024;
+    constexpr int max_blocks = 4;
+    MBConfig config = {};
+    config.mbdir = MB_DIR;
+    config.options = CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC;
+    config.block_size_index = block_size;
+    config.block_size_data = block_size;
+    config.max_num_index_block = max_blocks;
+    config.max_num_data_block = max_blocks;
+    config.memcap_index = static_cast<size_t>(block_size) * max_blocks;
+    config.memcap_data = static_cast<size_t>(block_size) * max_blocks;
+    config.num_entry_per_bucket = 500;
+
+    DB writer(config);
+    ASSERT_TRUE(writer.is_open());
+
+    MBData data;
+    EXPECT_EQ(writer.ReadDataByOffset(block_size - 1, data),
+        MBError::READ_ERROR);
+}
+
 }

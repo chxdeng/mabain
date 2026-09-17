@@ -312,6 +312,32 @@ TEST_F(LockFreeTest, ValueUpdateNeverUsesSavedEdge)
     EXPECT_EQ(lock_free_data.offset_cache[0], offset);
 }
 
+TEST_F(LockFreeTest, WriterRestartPreservesActiveUpdate)
+{
+    const size_t active_offset = 54321;
+    LockFreeData snapshot;
+    MBData mbd;
+
+    lock_free_data.counter.store(17, MEMORY_ORDER_WRITER);
+    lock_free_data.offset.store(active_offset, MEMORY_ORDER_WRITER);
+    for (int i = 0; i < MAX_OFFSET_CACHE; ++i)
+        lock_free_data.offset_cache[i].store(1000 + i, MEMORY_ORDER_WRITER);
+
+    lfree.ReaderLockFreeStart(snapshot);
+
+    LockFree restarted_writer;
+    restarted_writer.LockFreeInit(
+        &lock_free_data, &header, CONSTS::ACCESS_MODE_WRITER);
+
+    EXPECT_EQ(lock_free_data.counter.load(MEMORY_ORDER_READER), 17u);
+    EXPECT_EQ(lock_free_data.offset.load(MEMORY_ORDER_READER), active_offset);
+    for (int i = 0; i < MAX_OFFSET_CACHE; ++i)
+        EXPECT_EQ(lock_free_data.offset_cache[i].load(MEMORY_ORDER_READER),
+            static_cast<size_t>(1000 + i));
+    EXPECT_EQ(restarted_writer.ReaderLockFreeStop(snapshot, active_offset, mbd),
+        MBError::TRY_AGAIN);
+}
+
 TEST_F(LockFreeTest, WriterRestartPreservesReaderGeneration)
 {
     const size_t reader_offset = 100;

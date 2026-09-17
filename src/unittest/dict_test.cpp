@@ -140,6 +140,84 @@ TEST_F(DictTest, Constructor_test)
     InitDict(false, CONSTS::ACCESS_MODE_READER, 32 * ONE_MEGA, 100);
 }
 
+TEST_F(DictTest, NewWriterInitializesLockFreeOffset)
+{
+    const int opts = CONSTS::ACCESS_MODE_WRITER | CONSTS::USE_SLIDING_WINDOW;
+    dict = new Dict(std::string(DICT_TEST_DIR), true, 0,
+        opts, 256LL * ONE_MEGA, 256LL * ONE_MEGA,
+        32 * ONE_MEGA, 32 * ONE_MEGA, 100, 150, 100, 0, NULL);
+    header = dict->GetHeaderPtr();
+
+    ASSERT_NE(header, nullptr);
+    EXPECT_EQ(header->lock_free.offset.load(MEMORY_ORDER_READER),
+        static_cast<size_t>(MAX_6B_OFFSET));
+}
+
+TEST_F(DictTest, WriterRestartRetiresActiveOffsetWithoutRecovery)
+{
+    const int opts = CONSTS::ACCESS_MODE_WRITER | CONSTS::USE_SLIDING_WINDOW;
+    const uint32_t counter = 7;
+    const size_t active_offset = 12345;
+
+    InitDict(true, opts, 32 * ONE_MEGA, 100);
+    header->lock_free.counter.store(counter, MEMORY_ORDER_WRITER);
+    header->lock_free.offset.store(active_offset, MEMORY_ORDER_WRITER);
+    header->excep_updating_status = EXCEP_STATUS_NONE;
+    DestroyDict();
+
+    InitDict(false, opts, 32 * ONE_MEGA, 100);
+    ASSERT_EQ(dict->Status(), MBError::SUCCESS);
+    EXPECT_EQ(header->lock_free.counter.load(MEMORY_ORDER_READER), counter + 1);
+    EXPECT_EQ(header->lock_free.offset_cache[counter % MAX_OFFSET_CACHE].load(
+                  MEMORY_ORDER_READER),
+        active_offset);
+    EXPECT_EQ(header->lock_free.offset.load(MEMORY_ORDER_READER),
+        static_cast<size_t>(MAX_6B_OFFSET));
+}
+
+TEST_F(DictTest, WriterRestartCompletesPendingRecovery)
+{
+    const int opts = CONSTS::ACCESS_MODE_WRITER | CONSTS::USE_SLIDING_WINDOW;
+    const uint32_t counter = 11;
+
+    InitDict(true, opts, 32 * ONE_MEGA, 100);
+    ASSERT_EQ(AddKV(10, 100, false), MBError::SUCCESS);
+    ASSERT_EQ(AddKV(10, 100, true), MBError::SUCCESS);
+
+    const size_t active_offset = header->excep_lf_offset;
+    ASSERT_NE(active_offset, static_cast<size_t>(MAX_6B_OFFSET));
+    header->lock_free.counter.store(counter, MEMORY_ORDER_WRITER);
+    header->lock_free.offset.store(active_offset, MEMORY_ORDER_WRITER);
+    header->excep_updating_status = EXCEP_STATUS_ADD_DATA_OFF;
+    DestroyDict();
+
+    InitDict(false, opts, 32 * ONE_MEGA, 100);
+    ASSERT_EQ(dict->Status(), MBError::SUCCESS);
+    EXPECT_EQ(header->excep_updating_status, EXCEP_STATUS_NONE);
+    EXPECT_EQ(header->lock_free.counter.load(MEMORY_ORDER_READER), counter + 1);
+    EXPECT_EQ(header->lock_free.offset_cache[counter % MAX_OFFSET_CACHE].load(
+                  MEMORY_ORDER_READER),
+        active_offset);
+    EXPECT_EQ(header->lock_free.offset.load(MEMORY_ORDER_READER),
+        static_cast<size_t>(MAX_6B_OFFSET));
+}
+
+TEST_F(DictTest, ReaderOpenDoesNotMutateActiveOffset)
+{
+    const int writer_opts = CONSTS::ACCESS_MODE_WRITER | CONSTS::USE_SLIDING_WINDOW;
+    const uint32_t counter = 19;
+    const size_t active_offset = 23456;
+
+    InitDict(true, writer_opts, 32 * ONE_MEGA, 100);
+    header->lock_free.counter.store(counter, MEMORY_ORDER_WRITER);
+    header->lock_free.offset.store(active_offset, MEMORY_ORDER_WRITER);
+    DestroyDict();
+
+    InitDict(false, CONSTS::ACCESS_MODE_READER, 32 * ONE_MEGA, 100);
+    EXPECT_EQ(header->lock_free.counter.load(MEMORY_ORDER_READER), counter);
+    EXPECT_EQ(header->lock_free.offset.load(MEMORY_ORDER_READER), active_offset);
+}
+
 TEST_F(DictTest, PrintHeader_test)
 {
     InitDict(true, CONSTS::ACCESS_MODE_WRITER, 32 * ONE_MEGA, 128);

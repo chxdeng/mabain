@@ -74,6 +74,24 @@ Dict::Dict(const std::string& mbdir, bool init_header, int datasize,
     }
     lfree.LockFreeInit(&header->lock_free, header, db_options);
     mm.InitLockFreePtr(&lfree);
+
+    if (db_options & CONSTS::ACCESS_MODE_WRITER) {
+        if (init_header) {
+            header->lock_free.offset.store(MAX_6B_OFFSET, MEMORY_ORDER_WRITER);
+        } else if (db_options & CONSTS::OPTION_JEMALLOC) {
+            // Jemalloc uses reset/rebuild instead of Dict::ExceptionRecovery().
+            header->lock_free.offset.store(MAX_6B_OFFSET, MEMORY_ORDER_WRITER);
+        } else {
+            const size_t startup_offset =
+                header->lock_free.offset.load(MEMORY_ORDER_READER);
+
+            if (header->excep_updating_status == EXCEP_STATUS_NONE
+                && startup_offset != MAX_6B_OFFSET) {
+                lfree.WriterLockFreeStop();
+            }
+        }
+    }
+
     mbp = MBPipe(mbdir, 0);
     mbdir_ = mbdir;
 
@@ -172,7 +190,9 @@ Dict::Dict(const std::string& mbdir, bool init_header, int datasize,
 
             // Prefix-cache entries persist across process restarts. A previous writer may
             // have stopped between publishing a DB update and refreshing the cache, so a
-            // writer invalidates the previous cache generation on startup.
+            // writer invalidates the previous cache generation on startup. Readers that
+            // remain active during writer restart may observe that previous generation
+            // until the new writer reaches this point; this startup window is accepted.
             if (options & CONSTS::ACCESS_MODE_WRITER)
                 prefix_cache->InvalidateAll();
         } catch (...) {
@@ -1480,10 +1500,11 @@ void Dict::WriteData(const uint8_t* buff, unsigned len, size_t offset) const
     if (options & CONSTS::OPTION_JEMALLOC) {
         kv_file->MemWrite(buff, len, offset);
     } else {
-        if (offset + len > header->m_data_offset) {
+        if (offset > header->m_data_offset
+            || static_cast<size_t>(len) > header->m_data_offset - offset) {
             std::cerr << "invalid dict write: " << offset << " " << len << " "
                       << header->m_data_offset << "\n";
-            throw (int)MBError::OUT_OF_BOUND;
+            throw static_cast<int>(MBError::OUT_OF_BOUND);
         }
 
         if (kv_file->RandomWrite(buff, len, offset) != len)

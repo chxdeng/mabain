@@ -1031,8 +1031,14 @@ int DB::ReadDataByOffset(size_t offset, MBData& data) const
 {
     if (status != MBError::SUCCESS)
         return MBError::NOT_INITIALIZED;
+    if (offset > static_cast<size_t>(MAX_6B_OFFSET))
+        return MBError::READ_ERROR;
 
-    return dict->ReadDataByOffset(offset, data);
+    try {
+        return dict->ReadDataByOffset(offset, data);
+    } catch (int) {
+        return MBError::READ_ERROR;
+    }
 }
 
 int DB::WriteDataByOffset(size_t offset, const char* data, int data_len) const
@@ -1043,6 +1049,12 @@ int DB::WriteDataByOffset(size_t offset, const char* data, int data_len) const
         return MBError::NOT_ALLOWED;
     if (data == NULL || data_len <= 0)
         return MBError::INVALID_ARG;
+
+    const size_t size = static_cast<size_t>(data_len);
+    if (offset > static_cast<size_t>(MAX_6B_OFFSET)
+        || size > static_cast<size_t>(MAX_6B_OFFSET) - offset) {
+        return MBError::OUT_OF_BOUND;
+    }
 
     try {
         dict->WriteData(reinterpret_cast<const uint8_t*>(data), data_len, offset);
@@ -1055,6 +1067,8 @@ int DB::WriteDataByOffset(size_t offset, const char* data, int data_len) const
 uint8_t* DB::GetDataPtrByOffset(size_t offset) const
 {
     if (status != MBError::SUCCESS)
+        return nullptr;
+    if (offset > static_cast<size_t>(MAX_6B_OFFSET))
         return nullptr;
     return dict->GetShmPtr(offset, 0);
 }

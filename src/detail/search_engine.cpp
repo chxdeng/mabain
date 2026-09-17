@@ -133,7 +133,7 @@ namespace {
         int attempts = 0;
         while (rval == MBError::TRY_AGAIN && attempts < CONSTS::LOCK_FREE_RETRY_LIMIT) {
             ++attempts;
-            PauseLockFreeRetry();
+            BackoffLockFreeRetry(attempts);
             ResetLowerBoundAttemptState(data, original_options, bound_key, bound_key_size);
             rval = lowerBoundAttempt(key, len, data, bound_key);
         }

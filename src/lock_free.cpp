@@ -36,16 +36,10 @@ LockFree::~LockFree()
 {
 }
 
-void LockFree::LockFreeInit(LockFreeShmData* lock_free_ptr, IndexHeader* hdr, int mode)
+void LockFree::LockFreeInit(LockFreeShmData* lock_free_ptr, IndexHeader* hdr, int)
 {
     shm_data_ptr = lock_free_ptr;
     header = hdr;
-    if (mode & CONSTS::ACCESS_MODE_WRITER) {
-        // Preserve the counter and completed-offset history across writer
-        // restarts so readers with pre-restart snapshots can detect updates.
-        // A newly created header already initializes this state to zero.
-        shm_data_ptr->offset.store(MAX_6B_OFFSET, MEMORY_ORDER_WRITER);
-    }
 }
 
 //////////////////////////////////////////////////
