@@ -119,6 +119,11 @@ int Dict::SHMQ_CollectResource(int64_t m_index_rc_size,
 
 AsyncNode* Dict::SHMQ_AcquireSlot(int& err) const
 {
+    if (slaq == nullptr || queue == nullptr) {
+        err = MBError::NOT_ALLOWED;
+        return nullptr;
+    }
+
     uint32_t index = header->queue_index.load(std::memory_order_acquire);
     for (;;) {
         uint32_t writer_index = header->writer_index.load(std::memory_order_acquire);

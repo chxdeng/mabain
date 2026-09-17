@@ -133,6 +133,74 @@ TEST_F(WriterLockTest, RawOffsetMutationRequiresWriterMode)
         "Value");
 }
 
+TEST_F(WriterLockTest, ReadOnlyDBOpensWithoutSharedQueue)
+{
+    DB writer(MB_DIR, CONSTS::WriterOptions());
+    ASSERT_TRUE(writer.is_open());
+    ASSERT_EQ(writer.Add("key", "value"), MBError::SUCCESS);
+
+    DB read_only(
+        MB_DIR, CONSTS::ReaderOptions() | CONSTS::READ_ONLY_DB);
+    ASSERT_TRUE(read_only.is_open());
+
+    MBData found;
+    ASSERT_EQ(read_only.Find("key", found), MBError::SUCCESS);
+    ASSERT_EQ(found.data_len, 5);
+    EXPECT_EQ(std::string(reinterpret_cast<const char*>(found.buff),
+                  static_cast<size_t>(found.data_len)),
+        "value");
+
+    EXPECT_EQ(read_only.Add("new-key", "new-value"), MBError::NOT_ALLOWED);
+    EXPECT_EQ(read_only.Remove("key"), MBError::NOT_ALLOWED);
+    EXPECT_EQ(read_only.RemoveAll(), MBError::NOT_ALLOWED);
+    EXPECT_EQ(read_only.CollectResource(), MBError::NOT_ALLOWED);
+}
+
+TEST_F(WriterLockTest, RawKeyAPIsRejectNonpositiveLengths)
+{
+    DB writer(MB_DIR, CONSTS::WriterOptions());
+    ASSERT_TRUE(writer.is_open());
+    ASSERT_EQ(writer.Add("key", "value"), MBError::SUCCESS);
+
+    const char* key = "key";
+    MBData data;
+    std::string bound_key;
+
+    EXPECT_EQ(writer.Find(nullptr, 1, data), MBError::INVALID_ARG);
+    EXPECT_EQ(writer.Find(key, 0, data), MBError::INVALID_ARG);
+    EXPECT_EQ(writer.Find(key, -1, data), MBError::INVALID_ARG);
+
+    EXPECT_EQ(writer.FindLowerBound(nullptr, 1, data, &bound_key),
+        MBError::INVALID_ARG);
+    EXPECT_EQ(writer.FindLowerBound(key, 0, data, &bound_key),
+        MBError::INVALID_ARG);
+    EXPECT_EQ(writer.FindLowerBound(key, -1, data, &bound_key),
+        MBError::INVALID_ARG);
+
+    EXPECT_EQ(writer.FindLongestPrefix(nullptr, 1, data),
+        MBError::INVALID_ARG);
+    EXPECT_EQ(writer.FindLongestPrefix(key, 0, data),
+        MBError::INVALID_ARG);
+    EXPECT_EQ(writer.FindLongestPrefix(key, -1, data),
+        MBError::INVALID_ARG);
+
+    auto expect_invalid_indb = [&](const char* input, int len) {
+        int err = MBError::SUCCESS;
+        EXPECT_FALSE(writer.InDB(input, len, err));
+        EXPECT_EQ(err, MBError::INVALID_ARG);
+    };
+    expect_invalid_indb(nullptr, 1);
+    expect_invalid_indb(key, 0);
+    expect_invalid_indb(key, -1);
+
+    EXPECT_EQ(writer.Remove(nullptr, 1), MBError::INVALID_ARG);
+    EXPECT_EQ(writer.Remove(key, 0), MBError::INVALID_ARG);
+    EXPECT_EQ(writer.Remove(key, -1), MBError::INVALID_ARG);
+
+    MBData found;
+    EXPECT_EQ(writer.Find(key, 3, found), MBError::SUCCESS);
+}
+
 TEST_F(WriterLockTest, RawOffsetAPIsRejectInvalidInput)
 {
     DB writer(MB_DIR, CONSTS::WriterOptions());
