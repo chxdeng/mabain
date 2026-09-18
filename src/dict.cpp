@@ -17,6 +17,7 @@
 // @author Changxue Deng <chadeng@cisco.com>
 
 #include <errno.h>
+#include <atomic>
 #include <iostream>
 #include <stdlib.h>
 
@@ -33,6 +34,41 @@
 #define DATA_HEADER_SIZE 32
 
 namespace mabain {
+
+#ifdef MABAIN_PREFIX_CACHE_CONSISTENCY_TEST_HOOKS
+namespace {
+std::atomic<Dict::PrefixCacheConsistencyTestHook> before_prefix_cache_seed_hook { nullptr };
+std::atomic<Dict::PrefixCacheConsistencyTestHook> after_prefix_cache_hit_hook { nullptr };
+}
+
+void Dict::SetBeforePrefixCacheSeedHookForTest(
+    PrefixCacheConsistencyTestHook hook)
+{
+    before_prefix_cache_seed_hook.store(hook, std::memory_order_release);
+}
+
+void Dict::SetAfterPrefixCacheHitHookForTest(
+    PrefixCacheConsistencyTestHook hook)
+{
+    after_prefix_cache_hit_hook.store(hook, std::memory_order_release);
+}
+
+void Dict::RunBeforePrefixCacheSeedHookForTest()
+{
+    PrefixCacheConsistencyTestHook hook =
+        before_prefix_cache_seed_hook.load(std::memory_order_acquire);
+    if (hook != nullptr)
+        hook();
+}
+
+void Dict::RunAfterPrefixCacheHitHookForTest()
+{
+    PrefixCacheConsistencyTestHook hook =
+        after_prefix_cache_hit_hook.load(std::memory_order_acquire);
+    if (hook != nullptr)
+        hook();
+}
+#endif
 
 Dict::Dict(const std::string& mbdir, bool init_header, int datasize,
     int db_options, size_t memsize_index, size_t memsize_data,
@@ -423,7 +459,8 @@ int Dict::Add(const uint8_t* key, int len, MBData& data, bool overwrite)
                     rval = mm.InsertNode(edge_ptrs, match_len, data.data_offset, data);
                 }
             } else if (len == 0) {
-                rval = UpdateDataBuffer(edge_ptrs, overwrite, data, inc_count);
+                rval = UpdateDataBuffer(edge_ptrs, overwrite, data, inc_count,
+                    key, orig_len);
             }
         } else {
             ReserveData(data.buff, data.data_len, data.data_offset);
@@ -442,7 +479,8 @@ int Dict::Add(const uint8_t* key, int len, MBData& data, bool overwrite)
                 ReserveData(data.buff, data.data_len, data.data_offset);
                 rval = mm.InsertNode(edge_ptrs, i, data.data_offset, data);
             } else {
-                rval = UpdateDataBuffer(edge_ptrs, overwrite, data, inc_count);
+                rval = UpdateDataBuffer(edge_ptrs, overwrite, data, inc_count,
+                    key, orig_len);
             }
         }
     }
@@ -458,6 +496,9 @@ int Dict::Add(const uint8_t* key, int len, MBData& data, bool overwrite)
     }
     // After a successful add, seed prefix cache at canonical 2/3-byte boundaries.
     if (rval == MBError::SUCCESS && prefix_cache) {
+#ifdef MABAIN_PREFIX_CACHE_CONSISTENCY_TEST_HOOKS
+        RunBeforePrefixCacheSeedHookForTest();
+#endif
         SeedCanonicalBoundariesAfterAdd(key, orig_len);
     }
     return rval;
@@ -917,6 +958,14 @@ void Dict::InvalidatePrefixCacheForRemove(const uint8_t* key, int len,
     }
 }
 
+void Dict::InvalidatePrefixCacheForValueUpdate(const uint8_t* key, int len) const
+{
+    if (!prefix_cache || key == nullptr || len < 2)
+        return;
+
+    prefix_cache->InvalidateKey(key, len);
+}
+
 int Dict::Remove(const uint8_t* key, int len, MBData& data)
 {
     if (!(options & CONSTS::ACCESS_MODE_WRITER)) {
@@ -1185,7 +1234,8 @@ int Dict::ReleaseBuffer(size_t offset)
     }
 }
 
-int Dict::UpdateDataBuffer(EdgePtrs& edge_ptrs, bool overwrite, MBData& mbd, bool& inc_count)
+int Dict::UpdateDataBuffer(EdgePtrs& edge_ptrs, bool overwrite, MBData& mbd,
+    bool& inc_count, const uint8_t* key, int key_len)
 {
     if (edge_ptrs.flag_ptr[0] & EDGE_FLAG_DATA_OFF) {
         inc_count = false;
@@ -1198,6 +1248,7 @@ int Dict::UpdateDataBuffer(EdgePtrs& edge_ptrs, bool overwrite, MBData& mbd, boo
         // Keep the currently published value alive until its complete
         // replacement has been written and linked into the tree.
         ReserveData(mbd.buff, mbd.data_len, mbd.data_offset);
+        InvalidatePrefixCacheForValueUpdate(key, key_len);
         Write6BInteger(edge_ptrs.offset_ptr, mbd.data_offset);
 
         memcpy(header->excep_buff, edge_ptrs.offset_ptr, OFFSET_SIZE);
@@ -1238,6 +1289,7 @@ int Dict::UpdateDataBuffer(EdgePtrs& edge_ptrs, bool overwrite, MBData& mbd, boo
         }
 
         ReserveData(mbd.buff, mbd.data_len, mbd.data_offset);
+        InvalidatePrefixCacheForValueUpdate(key, key_len);
         Write6BInteger(node_buff + 2, mbd.data_offset);
 
         header->excep_offset = node_off;

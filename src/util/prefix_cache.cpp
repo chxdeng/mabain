@@ -541,6 +541,42 @@ void PrefixCache::InvalidatePrefix2(const uint8_t* key, int len)
         (void)__atomic_add_fetch(&prefix2_epoch[p2], 1u, __ATOMIC_ACQ_REL);
 }
 
+void PrefixCache::InvalidateKey(const uint8_t* key, int len)
+{
+    if (CacheDisabled() || key == nullptr || len < 2)
+        return;
+
+    // Unpublish matching tags before the radix mutation starts. A reader that
+    // has begun copying an entry rechecks the tag (and entry generation), while
+    // one that already completed the cache snapshot is covered by the radix
+    // lock-free update marker.
+    uint32_t p4;
+    if (cap4 > 0 && build4(key, len, p4)) {
+        size_t idx4 = static_cast<size_t>(FoldPrefix(p4)) & mask4;
+        if (valid4[idx4].load(std::memory_order_acquire)
+            && tag4[idx4].load(std::memory_order_acquire) == p4) {
+            valid4[idx4].store(0, std::memory_order_release);
+        }
+    }
+
+    uint32_t p3;
+    if (cap3 > 0 && build3(key, len, p3)) {
+        size_t idx3 = static_cast<size_t>(FoldPrefix(p3)) & mask3;
+        if (tag3[idx3].load(std::memory_order_acquire) == p3 + 1)
+            tag3[idx3].store(0, std::memory_order_release);
+    }
+
+    uint16_t p2;
+    if (build2(key, len, p2)) {
+        size_t idx2 = static_cast<size_t>(p2) & mask2;
+        uint32_t tag = tag2[idx2].load(std::memory_order_acquire);
+        if ((full2 && tag != 0)
+            || (!full2 && tag == static_cast<uint32_t>(p2) + 1)) {
+            tag2[idx2].store(0, std::memory_order_release);
+        }
+    }
+}
+
 void PrefixCache::InvalidateRoot(uint8_t first_byte)
 {
     if (root_epoch != nullptr && PrepareInvalidation())

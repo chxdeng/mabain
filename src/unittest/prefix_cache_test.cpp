@@ -359,6 +359,68 @@ TEST_F(PrefixCacheTest, HierarchicalInvalidationIsScoped)
     EXPECT_EQ(pc->GetDepth(zb, 2, out), 0);
 }
 
+TEST_F(PrefixCacheTest, ExactKeyInvalidationPreservesSiblingFourByteEntries)
+{
+    PrefixCache* pc = db->GetDictPtr()->ActivePrefixCache();
+    ASSERT_NE(pc, nullptr);
+    ASSERT_GT(pc->Cap4(), 0u);
+
+    const uint8_t target[] = { 0x11, 0x22, 0x00, 0x00 };
+    const uint8_t sibling[] = { 0x11, 0x22, 0x01, 0x00 };
+    const uint8_t other[] = { 0x11, 0x23, 0x00, 0x00 };
+    PrefixCacheEntry target_seed {};
+    PrefixCacheEntry sibling_seed {};
+    PrefixCacheEntry other_seed {};
+    target_seed.edge_offset = 111;
+    sibling_seed.edge_offset = 222;
+    other_seed.edge_offset = 333;
+
+    pc->Put(target, 4, target_seed);
+    pc->Put(sibling, 4, sibling_seed);
+    pc->Put(other, 4, other_seed);
+
+    PrefixCacheEntry out {};
+    ASSERT_EQ(pc->GetDepth(target, 4, out), 4);
+    ASSERT_EQ(pc->GetDepth(sibling, 4, out), 4);
+    ASSERT_EQ(pc->GetDepth(other, 4, out), 4);
+
+    pc->InvalidateKey(target, 4);
+
+    EXPECT_EQ(pc->GetDepth(target, 4, out), 0);
+    ASSERT_EQ(pc->GetDepth(sibling, 4, out), 4);
+    EXPECT_EQ(out.edge_offset, sibling_seed.edge_offset);
+    ASSERT_EQ(pc->GetDepth(other, 4, out), 4);
+    EXPECT_EQ(out.edge_offset, other_seed.edge_offset);
+}
+
+TEST_F(PrefixCacheTest, OverwriteReseedsTargetWithoutEvictingSibling)
+{
+    const std::string target("\x11\x22\x00\x00", 4);
+    const std::string sibling("\x11\x22\x01\x00", 4);
+    ASSERT_EQ(db->Add(target, "old", false), MBError::SUCCESS);
+    ASSERT_EQ(db->Add(sibling, "sibling", false), MBError::SUCCESS);
+
+    PrefixCache* pc = db->GetDictPtr()->ActivePrefixCache();
+    ASSERT_NE(pc, nullptr);
+    PrefixCacheEntry before {};
+    ASSERT_EQ(pc->GetDepth(
+                  reinterpret_cast<const uint8_t*>(sibling.data()), 4, before),
+        4);
+
+    ASSERT_EQ(db->Add(target, "new", true), MBError::SUCCESS);
+
+    PrefixCacheEntry after {};
+    ASSERT_EQ(pc->GetDepth(
+                  reinterpret_cast<const uint8_t*>(sibling.data()), 4, after),
+        4);
+    EXPECT_EQ(after.edge_offset, before.edge_offset);
+
+    MBData data;
+    ASSERT_EQ(db->Find(target, data), MBError::SUCCESS);
+    EXPECT_EQ(std::string(reinterpret_cast<const char*>(data.buff), data.data_len),
+        "new");
+}
+
 TEST_F(PrefixCacheTest, RemoveCannotReadValueFromReusedDataOffset)
 {
     const std::string removed_key("ABCD", 4);

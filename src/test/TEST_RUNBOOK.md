@@ -158,6 +158,47 @@ The value-overwrite concurrency test accepts:
 ./value_overwrite_concurrency_test [writer_iterations] [reader_threads]
 ```
 
+### Prefix-cache overwrite consistency regression
+
+`prefix_cache_add_consistency_test` deterministically pauses an overwrite and a
+cache-enabled reader around the previously unsafe publication window. It then
+forces immediate reuse of the old value buffer and verifies that the reader
+returns only the complete old or new value, never unrelated data.
+
+The synchronization hooks are test-only. Build them in a separate directory;
+do not add `MABAIN_PREFIX_CACHE_CONSISTENCY_TEST_HOOKS` to the normal `build`
+directory or production compiler flags.
+
+From the repository root:
+
+```bash
+cd ~/mabain
+MABAIN_ROOT="$(pwd)"
+
+cmake -S . -B build-prefix-cache-consistency \
+  -DMB_WERROR=ON \
+  -DCMAKE_CXX_FLAGS=-DMABAIN_PREFIX_CACHE_CONSISTENCY_TEST_HOOKS
+cmake --build build-prefix-cache-consistency \
+  --target mabain --parallel "$(nproc)"
+
+g++ -DMABAIN_PREFIX_CACHE_CONSISTENCY_TEST_HOOKS \
+  -I./src -I./src/util \
+  -Wall -Werror -g -O2 -std=c++17 \
+  src/test/prefix_cache_add_consistency_test.cpp \
+  -o src/test/prefix_cache_add_consistency_test \
+  -L./build-prefix-cache-consistency/lib \
+  -lmabain -lpthread -lcrypto -ljemalloc \
+  -Wl,-rpath,"$MABAIN_ROOT/build-prefix-cache-consistency/lib"
+
+./src/test/prefix_cache_add_consistency_test
+```
+
+Pass criteria: exit status 0 and output containing:
+
+```text
+PASS: concurrent lookup returned a complete old or new value
+```
+
 ## 5. Jemalloc restart and rebuild tests
 
 The first eight modes are independent. Give each one a unique directory:
