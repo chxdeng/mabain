@@ -21,6 +21,7 @@ namespace mabain {
 
 class HashMapValueState;
 class HashMapCollisionTestAccess;
+class HashMapValueTestAccess;
 
 class HashMapImpl {
 public:
@@ -63,6 +64,7 @@ public:
 private:
     friend class HashMapValueState;
     friend class HashMapCollisionTestAccess;
+    friend class HashMapValueTestAccess;
 
     enum class StorageMode : uint8_t {
         REFERENCE,
@@ -186,6 +188,9 @@ private:
         const uint8_t* key, int len, size_t& ref_offset) const;
     void print_value_stats(std::ostream& os) const;
     void flush_value() const;
+    int hold_value_view_for_test(std::atomic<bool>& ready,
+        const std::atomic<bool>& release);
+    size_t retired_value_view_count_for_test();
 
 private:
     std::string path_;

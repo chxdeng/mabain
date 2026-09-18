@@ -15,6 +15,7 @@
 #include <fstream>
 #include <functional>
 #include <limits>
+#include <mutex>
 #include <new>
 #include <sstream>
 #include <sys/file.h>
@@ -101,7 +102,8 @@ struct ClaimedSlot {
 };
 
 struct ConnectionToken {
-    std::atomic<bool> active { true };
+    std::mutex mutex;
+    bool active = true;
     void* context = nullptr;
     void (*release_slot)(void*, size_t, uint64_t) = nullptr;
 };
@@ -111,8 +113,10 @@ public:
     ~ThreadSlotCache()
     {
         for (const ThreadSlotEntry& entry : entries_) {
-            if (entry.connection != nullptr
-                && entry.connection->active.load(std::memory_order_acquire)
+            if (entry.connection == nullptr)
+                continue;
+            std::lock_guard<std::mutex> guard(entry.connection->mutex);
+            if (entry.connection->active
                 && entry.connection->release_slot != nullptr) {
                 entry.connection->release_slot(entry.connection->context,
                     entry.slot_index, entry.owner_id);
@@ -134,9 +138,11 @@ public:
         entries_.erase(
             std::remove_if(entries_.begin(), entries_.end(),
                 [](const ThreadSlotEntry& existing) {
-                    return existing.connection == nullptr
-                        || !existing.connection->active.load(
-                            std::memory_order_acquire);
+                    if (existing.connection == nullptr)
+                        return true;
+                    std::lock_guard<std::mutex> guard(
+                        existing.connection->mutex);
+                    return !existing.connection->active;
                 }),
             entries_.end());
 
@@ -496,7 +502,9 @@ public:
         , connection_id_(0)
         , lock_fd_(-1)
         , current_view_(nullptr)
-        , views_head_(nullptr)
+        , current_view_generation_(0)
+        , retired_views_head_(nullptr)
+        , retired_views_pending_(false)
         , writer_generation_(0)
         , retired_bytes_(0)
     {
@@ -523,15 +531,17 @@ public:
 
     ~HashMapValueState()
     {
-        connection_token_->active.store(false, std::memory_order_release);
         ClearOwnedSlots();
-        current_view_.store(nullptr, std::memory_order_seq_cst);
-        ValueGenerationView* view
-            = views_head_.exchange(nullptr, std::memory_order_acq_rel);
-        while (view != nullptr) {
-            ValueGenerationView* next = view->Next();
-            delete view;
-            view = next;
+        {
+            std::lock_guard<std::mutex> guard(view_transition_mutex_);
+            current_view_generation_.store(0, std::memory_order_seq_cst);
+            delete current_view_.exchange(nullptr, std::memory_order_seq_cst);
+            while (retired_views_head_ != nullptr) {
+                ValueGenerationView* view = retired_views_head_;
+                ValueGenerationView* next = view->Next();
+                delete view;
+                retired_views_head_ = next;
+            }
         }
         writer_file_.reset();
         if (lock_fd_ >= 0) {
@@ -539,6 +549,13 @@ public:
             close(lock_fd_);
             lock_fd_ = -1;
         }
+    }
+
+    void DeactivateConnection()
+    {
+        std::lock_guard<std::mutex> guard(connection_token_->mutex);
+        connection_token_->active = false;
+        connection_token_->context = nullptr;
     }
 
     void Attach(HashMapImpl::ValueHMHeader* header)
@@ -582,56 +599,116 @@ public:
 
     void InstallView(uint64_t generation)
     {
-        for (;;) {
-            ValueGenerationView* current
-                = current_view_.load(std::memory_order_seq_cst);
-            if (current != nullptr && current->Generation() == generation)
-                return;
-            if (header_ != nullptr
-                && header_->value_generation.load(std::memory_order_acquire)
-                    != generation) {
-                return;
-            }
-
-            const uint32_t max_blocks = header_ != nullptr
-                ? header_->max_value_blocks
-                : static_cast<uint32_t>(
-                      config_.value_memcap / config_.value_block_size);
-            ValueGenerationView* next = new ValueGenerationView(
-                ValuePath(generation), generation, config_.value_block_size,
-                max_blocks);
-            if (current_view_.compare_exchange_strong(current, next,
-                    std::memory_order_seq_cst,
-                    std::memory_order_seq_cst)) {
-                ValueGenerationView* head
-                    = views_head_.load(std::memory_order_acquire);
-                do {
-                    next->SetNext(head);
-                } while (!views_head_.compare_exchange_weak(head, next,
-                    std::memory_order_release, std::memory_order_acquire));
-                RetireOldViews();
-                return;
-            }
-            delete next;
+        if (generation == 0
+            || current_view_generation_.load(std::memory_order_seq_cst)
+                == generation) {
+            return;
         }
+
+        std::lock_guard<std::mutex> guard(view_transition_mutex_);
+        if (current_view_generation_.load(std::memory_order_seq_cst)
+            == generation) {
+            return;
+        }
+        if (header_ != nullptr
+            && header_->value_generation.load(std::memory_order_acquire)
+                != generation) {
+            return;
+        }
+
+        const uint32_t max_blocks = header_ != nullptr
+            ? header_->max_value_blocks
+            : static_cast<uint32_t>(
+                  config_.value_memcap / config_.value_block_size);
+        ValueGenerationView* next = new ValueGenerationView(
+            ValuePath(generation), generation, config_.value_block_size,
+            max_blocks);
+
+        // Zero marks the transition so readers cannot associate the old
+        // generation with the newly published pointer or vice versa.
+        current_view_generation_.store(0, std::memory_order_seq_cst);
+        ValueGenerationView* previous
+            = current_view_.exchange(next, std::memory_order_seq_cst);
+        current_view_generation_.store(generation,
+            std::memory_order_seq_cst);
+        if (previous != nullptr) {
+            previous->SetNext(retired_views_head_);
+            retired_views_head_ = previous;
+            retired_views_pending_.store(true, std::memory_order_release);
+        }
+        ReclaimRetiredViewsLocked();
     }
 
     ValueGenerationView* EnsureView(uint64_t generation)
     {
-        ValueGenerationView* view
-            = current_view_.load(std::memory_order_seq_cst);
-        if (view == nullptr || view->Generation() != generation) {
+        ValueGenerationView* view = CurrentViewForGeneration(generation);
+        if (view == nullptr) {
             InstallView(generation);
-            view = current_view_.load(std::memory_order_seq_cst);
+            view = CurrentViewForGeneration(generation);
         }
-        return view != nullptr && view->Generation() == generation
-            ? view
-            : nullptr;
+        return view;
     }
 
     void CleanupGenerationFiles(uint64_t keep_generation)
     {
         RemoveOldValueFiles(map_.path_, keep_generation);
+    }
+
+    int HoldCurrentViewForTest(std::atomic<bool>& ready,
+        const std::atomic<bool>& release)
+    {
+        ClaimedSlot slot_entry {};
+        const int claim_result = GetThreadSlot(slot_entry);
+        if (claim_result != MBError::SUCCESS) {
+            ready.store(true, std::memory_order_release);
+            return claim_result;
+        }
+
+        const uint64_t map_generation
+            = header_->map_generation.load(std::memory_order_acquire);
+        const uint64_t value_generation
+            = header_->value_generation.load(std::memory_order_acquire);
+        const uint64_t epoch
+            = header_->reader_epoch.load(std::memory_order_seq_cst);
+        if ((map_generation & 1U) != 0 || value_generation == 0) {
+            ready.store(true, std::memory_order_release);
+            return MBError::TRY_AGAIN;
+        }
+
+        HashMapImpl::ValueReaderSlot& slot
+            = header_->reader_slots[slot_entry.slot_index];
+        ActiveSlotGuard guard(slot);
+        guard.Publish(value_generation, epoch);
+        ValueGenerationView* view = EnsureView(value_generation);
+        if (view == nullptr
+            || header_->reader_epoch.load(std::memory_order_seq_cst) != epoch
+            || header_->map_generation.load(std::memory_order_acquire)
+                != map_generation
+            || header_->value_generation.load(std::memory_order_acquire)
+                != value_generation) {
+            guard.Clear();
+            ReclaimRetiredViews();
+            ready.store(true, std::memory_order_release);
+            return MBError::TRY_AGAIN;
+        }
+
+        ready.store(true, std::memory_order_release);
+        while (!release.load(std::memory_order_acquire))
+            std::this_thread::yield();
+        guard.Clear();
+        ReclaimRetiredViews();
+        return MBError::SUCCESS;
+    }
+
+    size_t RetiredViewCountForTest()
+    {
+        std::lock_guard<std::mutex> guard(view_transition_mutex_);
+        size_t count = 0;
+        for (ValueGenerationView* view = retired_views_head_;
+             view != nullptr; view = view->Next()) {
+            ++count;
+        }
+        return count;
     }
 
     int Put(const uint8_t* key, int key_length, const uint8_t* value,
@@ -740,39 +817,39 @@ public:
                 = header_->value_generation.load(std::memory_order_acquire);
             if (value_generation == 0)
                 continue;
-            ValueGenerationView* view = EnsureView(value_generation);
-            if (view == nullptr)
-                continue;
             const uint64_t epoch
                 = header_->reader_epoch.load(std::memory_order_seq_cst);
 
             ActiveSlotGuard guard(slot);
             guard.Publish(value_generation, epoch);
-            if (header_->reader_epoch.load(std::memory_order_seq_cst) != epoch
+            ValueGenerationView* view = EnsureView(value_generation);
+            if (view == nullptr
+                || header_->reader_epoch.load(std::memory_order_seq_cst)
+                    != epoch
                 || header_->map_generation.load(std::memory_order_acquire)
                     != map_generation
                 || header_->value_generation.load(std::memory_order_acquire)
-                    != value_generation
-                || current_view_.load(std::memory_order_seq_cst) != view) {
+                    != value_generation) {
                 guard.Clear();
-                RetireOldViews();
+                ReclaimRetiredViews();
                 continue;
             }
 
             uint32_t copied_length = 0;
             const int lookup_result = LookupValue(view, key, key_length, value,
                 copied_length);
+            // No view data is accessed after the copy. Clear first so a
+            // concurrent generation transition can reclaim this view.
+            guard.Clear();
             const bool stable
                 = header_->map_generation.load(std::memory_order_acquire)
                         == map_generation
                 && (map_generation & 1U) == 0
                 && header_->value_generation.load(std::memory_order_acquire)
-                        == value_generation
-                && current_view_.load(std::memory_order_seq_cst) == view;
+                        == value_generation;
             if (!stable) {
                 value.data_len = 0;
-                guard.Clear();
-                RetireOldViews();
+                ReclaimRetiredViews();
                 continue;
             }
             if (lookup_result == MBError::SUCCESS)
@@ -807,38 +884,38 @@ public:
                 = header_->value_generation.load(std::memory_order_acquire);
             if (value_generation == 0)
                 continue;
-            ValueGenerationView* view = EnsureView(value_generation);
-            if (view == nullptr)
-                continue;
             const uint64_t epoch
                 = header_->reader_epoch.load(std::memory_order_seq_cst);
 
             ActiveSlotGuard guard(slot);
             guard.Publish(value_generation, epoch);
-            if (header_->reader_epoch.load(std::memory_order_seq_cst) != epoch
+            ValueGenerationView* view = EnsureView(value_generation);
+            if (view == nullptr
+                || header_->reader_epoch.load(std::memory_order_seq_cst)
+                    != epoch
                 || header_->map_generation.load(std::memory_order_acquire)
                     != map_generation
                 || header_->value_generation.load(std::memory_order_acquire)
-                    != value_generation
-                || current_view_.load(std::memory_order_seq_cst) != view) {
+                    != value_generation) {
                 guard.Clear();
-                RetireOldViews();
+                ReclaimRetiredViews();
                 continue;
             }
 
             size_t candidate = 0;
             const int lookup_result
                 = LookupReference(view, key, key_length, candidate);
+            // The numeric reference is local now; no view data is accessed
+            // after clearing the slot.
+            guard.Clear();
             const bool stable
                 = header_->map_generation.load(std::memory_order_acquire)
                         == map_generation
                 && (map_generation & 1U) == 0
                 && header_->value_generation.load(std::memory_order_acquire)
-                        == value_generation
-                && current_view_.load(std::memory_order_seq_cst) == view;
+                        == value_generation;
             if (!stable) {
-                guard.Clear();
-                RetireOldViews();
+                ReclaimRetiredViews();
                 continue;
             }
             if (lookup_result == MBError::SUCCESS)
@@ -1593,18 +1670,46 @@ private:
         return false;
     }
 
-    void RetireOldViews()
+    ValueGenerationView* CurrentViewForGeneration(uint64_t generation) const
     {
-        ValueGenerationView* current
+        const uint64_t before
+            = current_view_generation_.load(std::memory_order_seq_cst);
+        if (before == 0 || before != generation)
+            return nullptr;
+        ValueGenerationView* view
             = current_view_.load(std::memory_order_seq_cst);
-        for (ValueGenerationView* view
-                 = views_head_.load(std::memory_order_acquire);
-             view != nullptr; view = view->Next()) {
-            if (view != current
-                && !IsLocalGenerationActive(view->Generation())) {
-                view->RetireMappings();
+        const uint64_t after
+            = current_view_generation_.load(std::memory_order_seq_cst);
+        return view != nullptr && after == before ? view : nullptr;
+    }
+
+    void ReclaimRetiredViews()
+    {
+        if (!retired_views_pending_.load(std::memory_order_acquire))
+            return;
+        std::lock_guard<std::mutex> guard(view_transition_mutex_);
+        ReclaimRetiredViewsLocked();
+    }
+
+    void ReclaimRetiredViewsLocked()
+    {
+        ValueGenerationView* previous = nullptr;
+        ValueGenerationView* view = retired_views_head_;
+        while (view != nullptr) {
+            ValueGenerationView* next = view->Next();
+            if (IsLocalGenerationActive(view->Generation())) {
+                previous = view;
+            } else {
+                if (previous == nullptr)
+                    retired_views_head_ = next;
+                else
+                    previous->SetNext(next);
+                delete view;
             }
+            view = next;
         }
+        retired_views_pending_.store(retired_views_head_ != nullptr,
+            std::memory_order_release);
     }
 
     static void ReleaseSlotThunk(void* context, size_t slot_index,
@@ -1637,7 +1742,10 @@ private:
     int lock_fd_;
     std::unique_ptr<std::atomic<uint64_t>[]> local_owners_;
     std::atomic<ValueGenerationView*> current_view_;
-    std::atomic<ValueGenerationView*> views_head_;
+    std::atomic<uint64_t> current_view_generation_;
+    ValueGenerationView* retired_views_head_;
+    std::atomic<bool> retired_views_pending_;
+    std::mutex view_transition_mutex_;
     std::unique_ptr<RollableFile> writer_file_;
     uint64_t writer_generation_;
     std::deque<RetiredRecord> retired_;
@@ -1717,7 +1825,14 @@ HashMapImpl::HashMapImpl(const std::string& mbdir, size_t requested_capacity,
         throw static_cast<int>(MBError::NOT_ALLOWED);
 
     const bool writer = (options & CONSTS::ACCESS_MODE_WRITER) != 0;
-    value_state_ = std::make_shared<HashMapValueState>(*this, config, writer);
+    // Deactivate TLS callbacks while the state is still alive, before delete
+    // starts its destructor and ends the object's lifetime.
+    value_state_ = std::shared_ptr<HashMapValueState>(
+        new HashMapValueState(*this, config, writer),
+        [](HashMapValueState* state) {
+            state->DeactivateConnection();
+            delete state;
+        });
 
     const std::string index_path = path_ + "0";
     bool exists = false;
@@ -1872,6 +1987,22 @@ int HashMapImpl::GetValue(const uint8_t* key, int key_length, MBData& value) con
     if (storage_mode_ != StorageMode::VALUE || value_state_ == nullptr)
         return MBError::NOT_ALLOWED;
     return value_state_->Get(key, key_length, value);
+}
+
+int HashMapImpl::hold_value_view_for_test(std::atomic<bool>& ready,
+    const std::atomic<bool>& release)
+{
+    if (storage_mode_ != StorageMode::VALUE || value_state_ == nullptr) {
+        ready.store(true, std::memory_order_release);
+        return MBError::NOT_ALLOWED;
+    }
+    return value_state_->HoldCurrentViewForTest(ready, release);
+}
+
+size_t HashMapImpl::retired_value_view_count_for_test()
+{
+    return value_state_ == nullptr ? 0
+                                   : value_state_->RetiredViewCountForTest();
 }
 
 int HashMapImpl::put_stored_reference(const uint8_t* key, int key_length,
