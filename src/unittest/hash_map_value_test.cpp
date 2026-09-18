@@ -2,12 +2,16 @@
  * HashMap value-record lookup tests.
  */
 
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
+#include <memory>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <unistd.h>
+#include <vector>
 
 #include <gtest/gtest.h>
 
@@ -27,6 +31,20 @@ public:
     static uint64_t Hash(const uint8_t* key, int length)
     {
         return HashMapImpl::normalize_hash(HashMapImpl::fnv1a64(key, length));
+    }
+};
+
+class HashMapValueTestAccess {
+public:
+    static int HoldCurrentView(HashMapImpl& map, std::atomic<bool>& ready,
+        const std::atomic<bool>& release)
+    {
+        return map.hold_value_view_for_test(ready, release);
+    }
+
+    static size_t RetiredViewCount(HashMapImpl& map)
+    {
+        return map.retired_value_view_count_for_test();
     }
 };
 
@@ -226,6 +244,139 @@ TEST_F(HashMapValueLookupTest, CollisionProbePreservesExactKeyIdentity)
     EXPECT_EQ(std::string(reinterpret_cast<const char*>(output.buff),
                   static_cast<size_t>(output.data_len)),
         second_value);
+}
+
+TEST_F(HashMapValueLookupTest, LongLivedReaderCrossesWriterGenerations)
+{
+    constexpr size_t kGenerations = 32;
+    const std::string key = "generation-transition-key";
+    const HashMapValueConfig config = Config();
+
+    {
+        HashMap writer(base, 1024, CONSTS::ACCESS_MODE_WRITER, config, 1);
+        const std::string value = "generation-0";
+        ASSERT_EQ(writer.PutValue(
+                      reinterpret_cast<const uint8_t*>(key.data()),
+                      static_cast<int>(key.size()),
+                      reinterpret_cast<const uint8_t*>(value.data()),
+                      static_cast<int>(value.size())),
+            MBError::SUCCESS);
+    }
+
+    HashMapImpl reader(base, 1024, CONSTS::ACCESS_MODE_READER, config, 1);
+    for (size_t generation = 1; generation < kGenerations; ++generation) {
+        const std::string expected
+            = "generation-" + std::to_string(generation);
+
+        std::atomic<bool> view_held { false };
+        std::atomic<bool> release_view { false };
+        std::atomic<int> hold_result { MBError::TRY_AGAIN };
+        std::thread holder([&]() {
+            hold_result.store(HashMapValueTestAccess::HoldCurrentView(
+                                  reader, view_held, release_view),
+                std::memory_order_release);
+        });
+        while (!view_held.load(std::memory_order_acquire))
+            std::this_thread::yield();
+
+        int write_result = MBError::SUCCESS;
+        try {
+            HashMap writer(
+                base, 1024, CONSTS::ACCESS_MODE_WRITER, config, 1);
+            write_result = writer.PutValue(
+                reinterpret_cast<const uint8_t*>(key.data()),
+                static_cast<int>(key.size()),
+                reinterpret_cast<const uint8_t*>(expected.data()),
+                static_cast<int>(expected.size()));
+        } catch (int error) {
+            write_result = error;
+        }
+
+        MBData output;
+        const int lookup_result = reader.GetValue(
+            reinterpret_cast<const uint8_t*>(key.data()),
+            static_cast<int>(key.size()), output);
+        const size_t held_retired_views
+            = HashMapValueTestAccess::RetiredViewCount(reader);
+
+        release_view.store(true, std::memory_order_release);
+        holder.join();
+        const size_t quiescent_retired_views
+            = HashMapValueTestAccess::RetiredViewCount(reader);
+
+        ASSERT_EQ(hold_result.load(std::memory_order_acquire), MBError::SUCCESS)
+            << generation;
+        ASSERT_EQ(write_result, MBError::SUCCESS) << generation;
+        ASSERT_EQ(lookup_result, MBError::SUCCESS) << generation;
+        ASSERT_EQ(output.data_len, static_cast<int>(expected.size()))
+            << generation;
+        ASSERT_EQ(std::memcmp(output.buff, expected.data(), expected.size()), 0)
+            << generation;
+        ASSERT_EQ(held_retired_views, 1U) << generation;
+        ASSERT_EQ(quiescent_retired_views, 0U) << generation;
+    }
+}
+
+TEST_F(HashMapValueLookupTest, ThreadExitCanRaceMapDestruction)
+{
+    constexpr size_t kIterations = 64;
+    constexpr size_t kReaderThreads = 16;
+    const std::string key = "thread-exit-race-key";
+    const std::string expected = "thread-exit-race-value";
+    HashMapValueConfig config = Config();
+    config.reader_slots = kReaderThreads;
+
+    for (size_t iteration = 0; iteration < kIterations; ++iteration) {
+        RemoveFiles();
+        auto map = std::make_unique<HashMap>(base, 1024,
+            CONSTS::ACCESS_MODE_WRITER, config, 1);
+        ASSERT_EQ(map->PutValue(
+                      reinterpret_cast<const uint8_t*>(key.data()),
+                      static_cast<int>(key.size()),
+                      reinterpret_cast<const uint8_t*>(expected.data()),
+                      static_cast<int>(expected.size())),
+            MBError::SUCCESS);
+
+        HashMap* const lookup_map = map.get();
+        std::atomic<size_t> ready { 0 };
+        std::atomic<bool> start_destruction { false };
+        std::atomic<bool> failed { false };
+        std::vector<std::thread> readers;
+        readers.reserve(kReaderThreads);
+        for (size_t reader = 0; reader < kReaderThreads; ++reader) {
+            readers.emplace_back([&]() {
+                MBData output;
+                const int result = lookup_map->GetValue(
+                    reinterpret_cast<const uint8_t*>(key.data()),
+                    static_cast<int>(key.size()), output);
+                if (result != MBError::SUCCESS
+                    || output.data_len != static_cast<int>(expected.size())
+                    || std::memcmp(output.buff, expected.data(),
+                           expected.size())
+                        != 0) {
+                    failed.store(true, std::memory_order_relaxed);
+                }
+                ready.fetch_add(1, std::memory_order_release);
+                while (!start_destruction.load(std::memory_order_acquire))
+                    std::this_thread::yield();
+                // Returning destroys this thread's slot cache while another
+                // thread destroys the map that issued its cleanup token.
+            });
+        }
+
+        while (ready.load(std::memory_order_acquire) != kReaderThreads)
+            std::this_thread::yield();
+        std::thread destroyer([&]() {
+            while (!start_destruction.load(std::memory_order_acquire))
+                std::this_thread::yield();
+            map.reset();
+        });
+        start_destruction.store(true, std::memory_order_release);
+        for (std::thread& reader : readers)
+            reader.join();
+        destroyer.join();
+        ASSERT_FALSE(failed.load(std::memory_order_relaxed)) << iteration;
+    }
 }
 
 } // namespace
