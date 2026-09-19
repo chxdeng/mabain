@@ -429,4 +429,46 @@ TEST_F(RollableFileTest, JemallocRebuildTailSkipsExistingBlocks_test)
     EXPECT_LT(alloc_offset, 4 * JEMALLOC_TEST_BLOCK_SIZE);
 }
 
+TEST_F(RollableFileTest, JemallocRebuildAlignedTailSkipsExistingBlocks_test)
+{
+    rfile = new RollableFile(std::string(ROLLABLE_FILE_TEST_DIR) + "/_mabain_jem_i",
+        JEMALLOC_TEST_BLOCK_SIZE, JEMALLOC_TEST_MEMCAP,
+        CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, 4);
+    ASSERT_NE(rfile, nullptr);
+    ASSERT_NE(rfile->PreAlloc(64), nullptr);
+
+    ASSERT_EQ(rfile->ResetJemalloc(), MBError::SUCCESS);
+
+    // Block 2 is the first source block awaiting evacuation. Block 3 is
+    // the first block available for a new tail allocation.
+    const size_t boundary = 2 * JEMALLOC_TEST_BLOCK_SIZE;
+    ASSERT_EQ(rfile->ReseedJemalloc(boundary, 3), MBError::SUCCESS);
+
+    size_t alloc_offset = 0;
+    void* ptr = rfile->Malloc(128, alloc_offset);
+    ASSERT_NE(ptr, nullptr);
+    EXPECT_GE(alloc_offset, 3 * JEMALLOC_TEST_BLOCK_SIZE);
+    EXPECT_LT(alloc_offset, 4 * JEMALLOC_TEST_BLOCK_SIZE);
+}
+
+TEST_F(RollableFileTest, JemallocReseedAcceptsExhaustedCapacity_test)
+{
+    rfile = new RollableFile(std::string(ROLLABLE_FILE_TEST_DIR) + "/_mabain_jem_i",
+        JEMALLOC_TEST_BLOCK_SIZE, JEMALLOC_TEST_MEMCAP,
+        CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, 4);
+    ASSERT_NE(rfile, nullptr);
+    ASSERT_NE(rfile->PreAlloc(64), nullptr);
+
+    ASSERT_EQ(rfile->ResetJemalloc(), MBError::SUCCESS);
+
+    const size_t capacity = 4 * JEMALLOC_TEST_BLOCK_SIZE;
+    ASSERT_EQ(rfile->ReseedJemalloc(capacity, 4), MBError::SUCCESS);
+    EXPECT_EQ(rfile->GetJemallocAllocSize(), capacity);
+
+    size_t alloc_offset = 0;
+    EXPECT_EQ(rfile->Malloc(128, alloc_offset), nullptr);
+    EXPECT_EQ(alloc_offset, 0u);
+    EXPECT_EQ(rfile->GetLastAllocError(), MBError::NO_MEMORY);
+}
+
 }

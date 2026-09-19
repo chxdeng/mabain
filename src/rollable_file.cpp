@@ -579,12 +579,20 @@ int RollableFile::ReseedJemalloc(size_t alloc_size, size_t next_unused_block)
     }
 
     size_t block_order = alloc_size / block_size;
-    rval = CheckAndOpenFile(block_order, true);
-    if (rval != MBError::SUCCESS) {
-        return rval;
+    const size_t relative_offset = alloc_size % block_size;
+    if (block_order > max_num_block
+        || (block_order == max_num_block && relative_offset != 0)) {
+        return MBError::OUT_OF_BOUND;
     }
-    if (files[block_order] == nullptr || !files[block_order]->IsMapped()) {
-        return MBError::MMAP_FAILED;
+
+    // A cursor exactly at total capacity is valid but exhausted. There is no
+    // block at max_num_block to open; subsequent allocations fail normally.
+    if (block_order < max_num_block) {
+        rval = CheckAndOpenFile(block_order, true);
+        if (rval != MBError::SUCCESS)
+            return rval;
+        if (files[block_order] == nullptr || !files[block_order]->IsMapped())
+            return MBError::MMAP_FAILED;
     }
 
     files[0]->mm_meta->alloc_size = alloc_size;
@@ -812,7 +820,17 @@ void* RollableFile::custom_extent_alloc(void* new_addr, size_t size, size_t alig
         int block_order = mm_meta->alloc_size / mgr->block_size;
         size_t relative_offset = mm_meta->alloc_size % mgr->block_size;
         aligned_offset = (relative_offset + alignment - 1) & ~(alignment - 1);
-        if (aligned_offset + size > mgr->block_size) {
+
+        // When the compacted boundary is block-aligned, block_order can be the
+        // first existing source block awaiting evacuation. A non-aligned
+        // boundary may still use the free tail of its current block.
+        const bool tail_block_reserved = relative_offset == 0
+            && static_cast<size_t>(block_order) < mm_meta->next_unused_block;
+        const bool tail_exhausted =
+            static_cast<size_t>(block_order) >= mgr->max_num_block;
+
+        if (tail_block_reserved || tail_exhausted
+            || aligned_offset + size > mgr->block_size) {
             if (!mm_meta->reusable_block_order.empty()) {
                 block_order = static_cast<int>(mm_meta->reusable_block_order.back());
                 int rval = mgr->CheckAndOpenFile(block_order, true);

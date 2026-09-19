@@ -7,6 +7,9 @@
 #include "detail/lf_guard.h"
 #include "dict.h"
 #include "util/prefix_cache.h"
+#ifdef MABAIN_LF_GUARD_TEST_HOOKS
+#include <atomic>
+#endif
 #include <cstdlib>
 #include <cstring>
 
@@ -23,7 +26,28 @@ namespace {
             bound_key->resize(bound_key_size);
     }
 
+#ifdef MABAIN_LF_GUARD_TEST_HOOKS
+    std::atomic<SearchEngine::ExactTraverseTestHook>
+        before_exact_traverse_hook { nullptr };
+#endif
+
 }
+
+#ifdef MABAIN_LF_GUARD_TEST_HOOKS
+    void SearchEngine::SetBeforeExactTraverseHookForTest(
+        ExactTraverseTestHook hook)
+    {
+        before_exact_traverse_hook.store(hook, std::memory_order_release);
+    }
+
+    void SearchEngine::RunBeforeExactTraverseHookForTest()
+    {
+        ExactTraverseTestHook hook =
+            before_exact_traverse_hook.load(std::memory_order_acquire);
+        if (hook != nullptr)
+            hook();
+    }
+#endif
 
     int SearchEngine::find(const uint8_t* key, int len, MBData& data)
     {
@@ -483,17 +507,21 @@ namespace {
             if (result != MBError::SUCCESS)
                 return result;
         }
-        return traverseFromEdge(key_cursor, len, consumed, key, orig_len, edge_ptrs, data);
+#ifdef MABAIN_LF_GUARD_TEST_HOOKS
+        RunBeforeExactTraverseHookForTest();
+#endif
+        return traverseFromEdge(
+            key_cursor, len, consumed, key, orig_len, edge_ptrs, data, lf_guard);
     }
 
     int SearchEngine::traverseFromEdge(const uint8_t*& key_cursor, int& len, int& consumed,
-        const uint8_t* full_key, int full_len, EdgePtrs& edge_ptrs, MBData& data)
+        const uint8_t* full_key, int full_len, EdgePtrs& edge_ptrs, MBData& data,
+        ReaderLFGuard& lf_guard)
     {
 
         const uint8_t* key_buff;
         uint8_t* node_buff = data.node_buff;
         int rval = MBError::SUCCESS;
-        ReaderLFGuard lf_guard(dict.lfree, data);
 #ifdef __LOCK_FREE__
         size_t edge_offset_prev = edge_ptrs.offset;
 #else

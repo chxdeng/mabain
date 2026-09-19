@@ -65,6 +65,12 @@ namespace detail {
         // Lower bound (largest entry not greater than key)
         int lowerBound(const uint8_t* key, int len, MBData& data, std::string* bound_key);
 
+#ifdef MABAIN_LF_GUARD_TEST_HOOKS
+        using ExactTraverseTestHook = void (*)();
+        static void SetBeforeExactTraverseHookForTest(
+            ExactTraverseTestHook hook);
+#endif
+
     private:
         Dict& dict;
 
@@ -72,7 +78,8 @@ namespace detail {
         inline int tryFindAtRoot(size_t root_off, const uint8_t* key, int len, MBData& data);
         int findInternal(size_t root_off, const uint8_t* key, int len, MBData& data);
         int traverseFromEdge(const uint8_t*& key_cursor, int& len, int& consumed,
-            const uint8_t* full_key, int full_len, EdgePtrs& edge_ptrs, MBData& data);
+            const uint8_t* full_key, int full_len, EdgePtrs& edge_ptrs, MBData& data,
+            ReaderLFGuard& lf_guard);
 
         // Prefix internals
         int findPrefixInternal(size_t root_off, const uint8_t* key, int len, MBData& data);
@@ -114,6 +121,10 @@ namespace detail {
             int root_key, ReaderLFGuard& lf_guard) const;
         int traverseToLowerBound(const uint8_t* key, int len, EdgePtrs& edge_ptrs, MBData& data,
             EdgePtrs& bound_edge_ptrs, BoundSearchState& state, ReaderLFGuard& lf_guard) const;
+
+#ifdef MABAIN_LF_GUARD_TEST_HOOKS
+        static void RunBeforeExactTraverseHookForTest();
+#endif
     };
 
 } // namespace detail
