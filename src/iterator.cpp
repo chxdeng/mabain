@@ -258,7 +258,9 @@ int DB::iterator::load_kvs(const std::string& curr_node_key,
                 }
             }
 
-            if (match != MATCH_NONE) {
+            // Ancestors are traversed but are not iterator results.
+            if (match != MATCH_NONE
+                && match_str.size() >= prefix.size()) {
                 inode = new_iterator_node(match_str, &value);
                 if (inode != NULL) {
                     rval = kv_per_node->AddToTail(inode);

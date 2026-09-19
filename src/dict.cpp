@@ -407,7 +407,8 @@ int Dict::Add(const uint8_t* key, int len, MBData& data, bool overwrite)
             header->count++;
             header->num_update++;
         }
-        if (prefix_cache)
+        if (prefix_cache
+            && !(data.options & CONSTS::OPTION_RC_MODE))
             SeedCanonicalBoundariesAfterAdd(key, len);
         return MBError::SUCCESS;
     }
@@ -495,7 +496,9 @@ int Dict::Add(const uint8_t* key, int len, MBData& data, bool overwrite)
             header->count++;
     }
     // After a successful add, seed prefix cache at canonical 2/3-byte boundaries.
-    if (rval == MBError::SUCCESS && prefix_cache) {
+    if (rval == MBError::SUCCESS
+        && prefix_cache
+        && !(data.options & CONSTS::OPTION_RC_MODE)) {
 #ifdef MABAIN_PREFIX_CACHE_CONSISTENCY_TEST_HOOKS
         RunBeforePrefixCacheSeedHookForTest();
 #endif

@@ -28,6 +28,7 @@
 #include <vector>
 
 #include "error.h"
+#include "file_io.h"
 #include "mb_data.h"
 #include "resource_pool.h"
 
@@ -275,23 +276,18 @@ int CreateExclusiveSizedFile(const std::string& path, size_t size)
 {
     if (size > static_cast<size_t>(std::numeric_limits<off_t>::max()))
         return MBError::INVALID_SIZE;
-    int fd = open(path.c_str(), O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC,
-        kOwnerFileMode);
-    if (fd < 0)
+
+    FileIO file(path, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC,
+        kOwnerFileMode, false);
+    if (file.Open() < 0)
         return errno == EEXIST ? MBError::IN_DICT : MBError::OPEN_FAILURE;
 
-    int result = MBError::SUCCESS;
-    while (ftruncate(fd, static_cast<off_t>(size)) != 0) {
-        if (errno == EINTR)
-            continue;
-        result = MBError::WRITE_ERROR;
-        break;
-    }
-    if (close(fd) != 0 && result == MBError::SUCCESS)
-        result = MBError::WRITE_ERROR;
-    if (result != MBError::SUCCESS)
+    if (file.AllocateFile(static_cast<off_t>(size)) != 0) {
         unlink(path.c_str());
-    return result;
+        return MBError::WRITE_ERROR;
+    }
+
+    return MBError::SUCCESS;
 }
 
 void SplitPath(const std::string& path, std::string& directory,
