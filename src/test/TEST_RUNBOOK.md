@@ -283,6 +283,22 @@ REPRODUCED: exact Find accepted its first attempt after the old child node was r
 
 ## 5. Jemalloc restart and rebuild tests
 
+First run the bounded-batch regression. It creates a fragmented jemalloc
+database spanning multiple source blocks and verifies that one startup
+evacuation traversal advances across a bounded block batch, assigns one shared
+retirement epoch to the batch, and preserves all retained key/value pairs:
+
+```bash
+cd ~/mabain/src/test
+./jemalloc_rebuild_batch_test
+```
+
+Pass criteria: exit status 0 and output containing:
+
+```text
+jemalloc_rebuild_batch_test: passed
+```
+
 The first eight modes are independent. Give each one a unique directory:
 
 ```bash

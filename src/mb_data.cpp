@@ -28,6 +28,7 @@ MBData::MBData()
     data_len = 0;
     buff_len = 0;
     buff = NULL;
+    data_ptr = NULL;
 
     match_len = 0;
     options = 0;
@@ -38,6 +39,7 @@ MBData::MBData(int size, int match_options)
 {
     buff_len = size;
     buff = NULL;
+    data_ptr = NULL;
     if (buff_len > 0)
         buff = reinterpret_cast<uint8_t*>(malloc(buff_len + 1));
 
@@ -56,13 +58,19 @@ MBData::MBData(int size, int match_options)
 // Caller must free data.
 int MBData::TransferValueTo(uint8_t*& data, int& dlen)
 {
-    if (buff == NULL || data_len <= 0) {
+    if ((buff == NULL && data_ptr == NULL) || data_len <= 0) {
         dlen = 0;
         data = NULL;
         return MBError::INVALID_ARG;
     }
 
-    if (free_buffer) {
+    if (data_ptr != NULL) {
+        data = reinterpret_cast<uint8_t*>(malloc(data_len + 1));
+        if (data == NULL)
+            return MBError::NO_MEMORY;
+        memcpy(data, data_ptr, data_len);
+        dlen = data_len;
+    } else if (free_buffer) {
         data = buff;
         buff = NULL;
         dlen = data_len;
@@ -88,6 +96,7 @@ int MBData::TransferValueFrom(uint8_t*& data, int dlen)
     if (free_buffer && buff != NULL)
         free(buff);
     buff = data;
+    data_ptr = NULL;
     buff_len = dlen;
     data_len = dlen;
     free_buffer = true;
@@ -107,10 +116,12 @@ void MBData::Clear()
 {
     match_len = 0;
     data_len = 0;
+    data_ptr = NULL;
 }
 
 int MBData::Resize(int size)
 {
+    data_ptr = NULL;
     if (size > buff_len) {
         buff_len = size;
         if (free_buffer) {

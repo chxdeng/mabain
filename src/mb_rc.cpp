@@ -612,23 +612,48 @@ int ResourceCollection::DrainReusableBlocks(ReusableBlockEntry* entries, uint32_
 
 int ResourceCollection::EvacuateOneIndexBlock()
 {
+    if (header->index_block_size == 0)
+        return MBError::INVALID_SIZE;
     if (startup_rebuild_.rebuild_index_block_cursor >= startup_rebuild_.rebuild_index_source_end)
         return MBError::RC_SKIPPED;
 
-    evacuate_index_block_start = startup_rebuild_.rebuild_index_block_cursor;
-    evacuate_index_block_end = evacuate_index_block_start + header->index_block_size;
-    if (evacuate_index_block_end > startup_rebuild_.rebuild_index_source_end)
+    if (startup_rebuild_.reusable_index_block_count > MB_MAX_REUSABLE_BLOCKS)
+        return MBError::OUT_OF_BOUND;
+    const size_t available = MB_MAX_REUSABLE_BLOCKS
+        - startup_rebuild_.reusable_index_block_count;
+    if (available == 0)
         return MBError::RC_SKIPPED;
+
+    evacuate_index_block_start = startup_rebuild_.rebuild_index_block_cursor;
+    const size_t remaining = (startup_rebuild_.rebuild_index_source_end
+        - evacuate_index_block_start)
+        / header->index_block_size;
+    const size_t batch = std::min(available, remaining);
+    if (batch == 0)
+        return MBError::RC_SKIPPED;
+    evacuate_index_block_end = evacuate_index_block_start
+        + batch * header->index_block_size;
 
     TraverseDB(RESOURCE_COLLECTION_PHASE_EVACUATE_INDEX);
 
     uint64_t retire_epoch = header->reader_epoch.fetch_add(1, MEMORY_ORDER_WRITER);
-    int rval = QueueReusableBlock(startup_rebuild_.reusable_index_block,
-        startup_rebuild_.reusable_index_block_count,
-        evacuate_index_block_start / header->index_block_size,
-        retire_epoch);
-    if (rval != MBError::SUCCESS)
-        return rval;
+    const uint32_t initial_count = startup_rebuild_.reusable_index_block_count;
+    const size_t first_block = evacuate_index_block_start / header->index_block_size;
+    for (size_t i = 0; i < batch; i++) {
+        int rval = QueueReusableBlock(startup_rebuild_.reusable_index_block,
+            startup_rebuild_.reusable_index_block_count,
+            first_block + i, retire_epoch);
+        if (rval != MBError::SUCCESS) {
+            while (startup_rebuild_.reusable_index_block_count > initial_count) {
+                startup_rebuild_.reusable_index_block_count--;
+                startup_rebuild_.reusable_index_block[
+                    startup_rebuild_.reusable_index_block_count].Clear();
+            }
+            evacuate_index_block_start = 0;
+            evacuate_index_block_end = 0;
+            return rval;
+        }
+    }
 
     startup_rebuild_.rebuild_index_block_cursor = evacuate_index_block_end;
     evacuate_index_block_start = 0;
@@ -638,23 +663,48 @@ int ResourceCollection::EvacuateOneIndexBlock()
 
 int ResourceCollection::EvacuateOneDataBlock()
 {
+    if (header->data_block_size == 0)
+        return MBError::INVALID_SIZE;
     if (startup_rebuild_.rebuild_data_block_cursor >= startup_rebuild_.rebuild_data_source_end)
         return MBError::RC_SKIPPED;
 
-    evacuate_data_block_start = startup_rebuild_.rebuild_data_block_cursor;
-    evacuate_data_block_end = evacuate_data_block_start + header->data_block_size;
-    if (evacuate_data_block_end > startup_rebuild_.rebuild_data_source_end)
+    if (startup_rebuild_.reusable_data_block_count > MB_MAX_REUSABLE_BLOCKS)
+        return MBError::OUT_OF_BOUND;
+    const size_t available = MB_MAX_REUSABLE_BLOCKS
+        - startup_rebuild_.reusable_data_block_count;
+    if (available == 0)
         return MBError::RC_SKIPPED;
+
+    evacuate_data_block_start = startup_rebuild_.rebuild_data_block_cursor;
+    const size_t remaining = (startup_rebuild_.rebuild_data_source_end
+        - evacuate_data_block_start)
+        / header->data_block_size;
+    const size_t batch = std::min(available, remaining);
+    if (batch == 0)
+        return MBError::RC_SKIPPED;
+    evacuate_data_block_end = evacuate_data_block_start
+        + batch * header->data_block_size;
 
     TraverseDB(RESOURCE_COLLECTION_PHASE_EVACUATE_DATA);
 
     uint64_t retire_epoch = header->reader_epoch.fetch_add(1, MEMORY_ORDER_WRITER);
-    int rval = QueueReusableBlock(startup_rebuild_.reusable_data_block,
-        startup_rebuild_.reusable_data_block_count,
-        evacuate_data_block_start / header->data_block_size,
-        retire_epoch);
-    if (rval != MBError::SUCCESS)
-        return rval;
+    const uint32_t initial_count = startup_rebuild_.reusable_data_block_count;
+    const size_t first_block = evacuate_data_block_start / header->data_block_size;
+    for (size_t i = 0; i < batch; i++) {
+        int rval = QueueReusableBlock(startup_rebuild_.reusable_data_block,
+            startup_rebuild_.reusable_data_block_count,
+            first_block + i, retire_epoch);
+        if (rval != MBError::SUCCESS) {
+            while (startup_rebuild_.reusable_data_block_count > initial_count) {
+                startup_rebuild_.reusable_data_block_count--;
+                startup_rebuild_.reusable_data_block[
+                    startup_rebuild_.reusable_data_block_count].Clear();
+            }
+            evacuate_data_block_start = 0;
+            evacuate_data_block_end = 0;
+            return rval;
+        }
+    }
 
     startup_rebuild_.rebuild_data_block_cursor = evacuate_data_block_end;
     evacuate_data_block_start = 0;
@@ -870,15 +920,15 @@ void ResourceCollection::DoTask(int phase, DBTraverseNode& dbt_node)
             if (MoveIndexBufferEvacuate(dbt_node.node_offset, dbt_node.node_size)) {
                 Write6BInteger(header->excep_buff, dbt_node.node_offset);
 #ifdef __LOCK_FREE__
-                lfree->WriterLockFreeStart(dbt_node.edge_offset);
+                lfree->WriterLockFreeValueUpdateStart(dbt_node.edge_offset);
 #endif
                 header->excep_offset = dbt_node.node_link_offset;
                 header->excep_updating_status = EXCEP_STATUS_RC_NODE;
                 dmm->WriteData(header->excep_buff, OFFSET_SIZE, dbt_node.node_link_offset);
-                header->excep_updating_status = 0;
 #ifdef __LOCK_FREE__
                 lfree->WriterLockFreeStop();
 #endif
+                header->excep_updating_status = EXCEP_STATUS_NONE;
                 if (dbt_node.buffer_type & BUFFER_TYPE_DATA)
                     dbt_node.data_link_offset = dbt_node.node_offset + 2;
             }
@@ -888,15 +938,15 @@ void ResourceCollection::DoTask(int phase, DBTraverseNode& dbt_node)
             if (MoveIndexBufferEvacuate(dbt_node.edgestr_offset, dbt_node.edgestr_size)) {
                 Write5BInteger(header->excep_buff, dbt_node.edgestr_offset);
 #ifdef __LOCK_FREE__
-                lfree->WriterLockFreeStart(dbt_node.edge_offset);
+                lfree->WriterLockFreeValueUpdateStart(dbt_node.edge_offset);
 #endif
                 header->excep_offset = dbt_node.edgestr_link_offset;
                 header->excep_updating_status = EXCEP_STATUS_RC_EDGE_STR;
                 dmm->WriteData(header->excep_buff, OFFSET_SIZE - 1, dbt_node.edgestr_link_offset);
-                header->excep_updating_status = 0;
 #ifdef __LOCK_FREE__
                 lfree->WriterLockFreeStop();
 #endif
+                header->excep_updating_status = EXCEP_STATUS_NONE;
             }
         }
         return;
@@ -908,15 +958,15 @@ void ResourceCollection::DoTask(int phase, DBTraverseNode& dbt_node)
             if (MoveDataBufferEvacuate(dbt_node.data_offset, dbt_node.data_size)) {
                 Write6BInteger(header->excep_buff, dbt_node.data_offset);
 #ifdef __LOCK_FREE__
-                lfree->WriterLockFreeStart(dbt_node.edge_offset);
+                lfree->WriterLockFreeValueUpdateStart(dbt_node.edge_offset);
 #endif
                 header->excep_offset = dbt_node.data_link_offset;
                 header->excep_updating_status = EXCEP_STATUS_RC_DATA;
                 dmm->WriteData(header->excep_buff, OFFSET_SIZE, dbt_node.data_link_offset);
-                header->excep_updating_status = 0;
 #ifdef __LOCK_FREE__
                 lfree->WriterLockFreeStop();
 #endif
+                header->excep_updating_status = EXCEP_STATUS_NONE;
             }
         }
         return;
@@ -938,15 +988,15 @@ void ResourceCollection::DoTask(int phase, DBTraverseNode& dbt_node)
             if (MoveIndexBuffer(phase, dbt_node.node_offset, dbt_node.node_size)) {
                 Write6BInteger(header->excep_buff, dbt_node.node_offset);
 #ifdef __LOCK_FREE__
-                lfree->WriterLockFreeStart(dbt_node.edge_offset);
+                lfree->WriterLockFreeValueUpdateStart(dbt_node.edge_offset);
 #endif
                 header->excep_offset = dbt_node.node_link_offset;
                 header->excep_updating_status = EXCEP_STATUS_RC_NODE;
                 dmm->WriteData(header->excep_buff, OFFSET_SIZE, dbt_node.node_link_offset);
-                header->excep_updating_status = 0;
 #ifdef __LOCK_FREE__
                 lfree->WriterLockFreeStop();
 #endif
+                header->excep_updating_status = EXCEP_STATUS_NONE;
                 // Update data_link_offset since node may have been moved.
                 if (dbt_node.buffer_type & BUFFER_TYPE_DATA)
                     dbt_node.data_link_offset = dbt_node.node_offset + 2;
@@ -958,15 +1008,15 @@ void ResourceCollection::DoTask(int phase, DBTraverseNode& dbt_node)
             if (MoveIndexBuffer(phase, dbt_node.edgestr_offset, dbt_node.edgestr_size)) {
                 Write5BInteger(header->excep_buff, dbt_node.edgestr_offset);
 #ifdef __LOCK_FREE__
-                lfree->WriterLockFreeStart(dbt_node.edge_offset);
+                lfree->WriterLockFreeValueUpdateStart(dbt_node.edge_offset);
 #endif
                 header->excep_offset = dbt_node.edgestr_link_offset;
                 header->excep_updating_status = EXCEP_STATUS_RC_EDGE_STR;
                 dmm->WriteData(header->excep_buff, OFFSET_SIZE - 1, dbt_node.edgestr_link_offset);
-                header->excep_updating_status = 0;
 #ifdef __LOCK_FREE__
                 lfree->WriterLockFreeStop();
 #endif
+                header->excep_updating_status = EXCEP_STATUS_NONE;
             }
             index_size += dbt_node.edgestr_size;
         }
@@ -977,16 +1027,16 @@ void ResourceCollection::DoTask(int phase, DBTraverseNode& dbt_node)
             if (MoveDataBuffer(phase, dbt_node.data_offset, dbt_node.data_size)) {
                 Write6BInteger(header->excep_buff, dbt_node.data_offset);
 #ifdef __LOCK_FREE__
-                lfree->WriterLockFreeStart(dbt_node.edge_offset);
+                lfree->WriterLockFreeValueUpdateStart(dbt_node.edge_offset);
 #endif
                 header->excep_offset = dbt_node.data_link_offset;
                 ;
                 header->excep_updating_status = EXCEP_STATUS_RC_DATA;
                 dmm->WriteData(header->excep_buff, OFFSET_SIZE, dbt_node.data_link_offset);
-                header->excep_updating_status = 0;
 #ifdef __LOCK_FREE__
                 lfree->WriterLockFreeStop();
 #endif
+                header->excep_updating_status = EXCEP_STATUS_NONE;
             }
             data_size += dbt_node.data_size;
         }

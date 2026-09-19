@@ -449,17 +449,22 @@ int Dict::Add(const uint8_t* key, int len, MBData& data, bool overwrite)
             }
             if (!next) {
                 ReserveData(data.buff, data.data_len, data.data_offset);
-                InvalidatePrefixCacheForMutation(key, orig_len);
+                InvalidatePrefixCacheForStructuralAdd(key, orig_len,
+                    orig_len - len, data.options & CONSTS::OPTION_RC_MODE);
                 rval = mm.UpdateNode(edge_ptrs, key_cursor, len, data.data_offset);
             } else if (match_len < static_cast<int>(edge_ptrs.len_ptr[0])) {
                 if (len > match_len) {
                     ReserveData(data.buff, data.data_len, data.data_offset);
-                    InvalidatePrefixCacheForMutation(key, orig_len);
+                    InvalidatePrefixCacheForStructuralAdd(key, orig_len,
+                        orig_len - len + match_len,
+                        data.options & CONSTS::OPTION_RC_MODE);
                     rval = mm.AddLink(edge_ptrs, match_len, key_cursor + match_len, len - match_len,
                         data.data_offset, data);
                 } else if (len == match_len) {
                     ReserveData(data.buff, data.data_len, data.data_offset);
-                    InvalidatePrefixCacheForMutation(key, orig_len);
+                    InvalidatePrefixCacheForStructuralAdd(key, orig_len,
+                        orig_len - len + match_len,
+                        data.options & CONSTS::OPTION_RC_MODE);
                     rval = mm.InsertNode(edge_ptrs, match_len, data.data_offset, data);
                 }
             } else if (len == 0) {
@@ -468,7 +473,8 @@ int Dict::Add(const uint8_t* key, int len, MBData& data, bool overwrite)
             }
         } else {
             ReserveData(data.buff, data.data_len, data.data_offset);
-            InvalidatePrefixCacheForMutation(key, orig_len);
+            InvalidatePrefixCacheForStructuralAdd(key, orig_len, i,
+                data.options & CONSTS::OPTION_RC_MODE);
             rval = mm.AddLink(edge_ptrs, i, key_cursor + i, len - i, data.data_offset, data);
         }
     } else {
@@ -478,12 +484,14 @@ int Dict::Add(const uint8_t* key, int len, MBData& data, bool overwrite)
         }
         if (i < len) {
             ReserveData(data.buff, data.data_len, data.data_offset);
-            InvalidatePrefixCacheForMutation(key, orig_len);
+            InvalidatePrefixCacheForStructuralAdd(key, orig_len, i,
+                data.options & CONSTS::OPTION_RC_MODE);
             rval = mm.AddLink(edge_ptrs, i, key_cursor + i, len - i, data.data_offset, data);
         } else {
             if (edge_ptrs.len_ptr[0] > len) {
                 ReserveData(data.buff, data.data_len, data.data_offset);
-                InvalidatePrefixCacheForMutation(key, orig_len);
+                InvalidatePrefixCacheForStructuralAdd(key, orig_len, i,
+                    data.options & CONSTS::OPTION_RC_MODE);
                 rval = mm.InsertNode(edge_ptrs, i, data.data_offset, data);
             } else {
                 rval = UpdateDataBuffer(edge_ptrs, overwrite, data, inc_count,
@@ -652,13 +660,22 @@ int Dict::ReadDataFromEdge(MBData& data, const EdgePtrs& edge_ptrs) const
         != DATA_HDR_BYTE)
         return MBError::READ_ERROR;
     data_off += DATA_HDR_BYTE;
-    if (data.buff_len < data_len[0] + 1) {
-        if (data.Resize(data_len[0]) != MBError::SUCCESS)
-            return MBError::NO_MEMORY;
-    }
+    data.data_ptr = NULL;
+    if (data.options & CONSTS::OPTION_RETURN_DATA_PTR) {
+        // USE_SLIDING_WINDOW is deprecated. The caller must guarantee that
+        // the mapped value remains valid while this borrowed pointer is used.
+        data.data_ptr = GetShmPtr(data_off, data_len[0]);
+        if (data.data_ptr == NULL)
+            return MBError::NOT_ALLOWED;
+    } else {
+        if (data.buff_len < data_len[0] + 1) {
+            if (data.Resize(data_len[0]) != MBError::SUCCESS)
+                return MBError::NO_MEMORY;
+        }
 
-    if (ReadData(data.buff, data_len[0], data_off) != data_len[0])
-        return MBError::READ_ERROR;
+        if (ReadData(data.buff, data_len[0], data_off) != data_len[0])
+            return MBError::READ_ERROR;
+    }
 
     data.data_len = data_len[0];
     data.bucket_index = data_len[1];
@@ -740,12 +757,21 @@ int Dict::ReadDataFromNode(MBData& data, const uint8_t* node_ptr) const
         return MBError::READ_ERROR;
     data_off += DATA_HDR_BYTE;
 
-    if (data.buff_len < data_len[0] + 1) {
-        if (data.Resize(data_len[0]) != MBError::SUCCESS)
-            return MBError::NO_MEMORY;
+    data.data_ptr = NULL;
+    if (data.options & CONSTS::OPTION_RETURN_DATA_PTR) {
+        // USE_SLIDING_WINDOW is deprecated. The caller must guarantee that
+        // the mapped value remains valid while this borrowed pointer is used.
+        data.data_ptr = GetShmPtr(data_off, data_len[0]);
+        if (data.data_ptr == NULL)
+            return MBError::NOT_ALLOWED;
+    } else {
+        if (data.buff_len < data_len[0] + 1) {
+            if (data.Resize(data_len[0]) != MBError::SUCCESS)
+                return MBError::NO_MEMORY;
+        }
+        if (ReadData(data.buff, data_len[0], data_off) != data_len[0])
+            return MBError::READ_ERROR;
     }
-    if (ReadData(data.buff, data_len[0], data_off) != data_len[0])
-        return MBError::READ_ERROR;
 
     data.data_len = data_len[0];
     data.bucket_index = data_len[1];
@@ -973,6 +999,32 @@ void Dict::InvalidatePrefixCacheForMutation(const uint8_t* key, int len) const
         return;
 
     prefix_cache->InvalidateKey(key, len);
+}
+
+void Dict::InvalidatePrefixCacheForStructuralAdd(const uint8_t* key, int len,
+    int common_prefix_len, bool rc_mode) const
+{
+    if (!prefix_cache || key == nullptr || len < 2)
+        return;
+
+    // Resource collection invalidates the complete cache before rebuilding
+    // its private tree. Preserve the existing exact invalidation here without
+    // publishing a retry barrier for every RC insertion.
+    if (rc_mode) {
+        prefix_cache->InvalidateKey(key, len);
+        return;
+    }
+
+    if (common_prefix_len >= 2)
+        prefix_cache->InvalidatePrefix2(key, len);
+    else
+        prefix_cache->InvalidateRoot(key[0]);
+
+#ifdef __LOCK_FREE__
+    // A reader may already hold a sibling cache entry with the old physical
+    // edge offset. Force it to retry before structural storage can be reused.
+    lfree.PublishGlobalRetryBarrier();
+#endif
 }
 
 int Dict::Remove(const uint8_t* key, int len, MBData& data)
@@ -1527,13 +1579,13 @@ int Dict::ExceptionRecovery()
     case EXCEP_STATUS_RC_NODE:
     case EXCEP_STATUS_RC_DATA:
 #ifdef __LOCK_FREE__
-        lfree.WriterLockFreeStart(header->excep_lf_offset);
+        lfree.WriterLockFreeValueUpdateStart(header->excep_lf_offset);
 #endif
         mm.WriteData(header->excep_buff, OFFSET_SIZE, header->excep_offset);
         break;
     case EXCEP_STATUS_RC_EDGE_STR:
 #ifdef __LOCK_FREE__
-        lfree.WriterLockFreeStart(header->excep_lf_offset);
+        lfree.WriterLockFreeValueUpdateStart(header->excep_lf_offset);
 #endif
         mm.WriteData(header->excep_buff, OFFSET_SIZE - 1, header->excep_offset);
         break;

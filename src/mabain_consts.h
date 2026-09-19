@@ -43,6 +43,9 @@ public:
     static const int OPTION_SHMQ_RETRY;
     static const int OPTION_JEMALLOC;
     static const int OPTION_PREFIX_CACHE; // Enable embedded prefix cache at DB creation
+    // Return a borrowed, read-only value pointer from Find/FindLowerBound
+    // instead of copying the value.
+    static const int OPTION_RETURN_DATA_PTR;
 
     // Max retries for lock-free reader retry loops before returning TRY_AGAIN
     static const int LOCK_FREE_RETRY_LIMIT;

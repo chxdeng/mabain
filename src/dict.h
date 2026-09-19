@@ -160,6 +160,8 @@ private:
     void InvalidatePrefixCacheForRemove(const uint8_t* key, int len,
         const EdgePtrs& edge_ptrs, bool structural_change) const;
     void InvalidatePrefixCacheForMutation(const uint8_t* key, int len) const;
+    void InvalidatePrefixCacheForStructuralAdd(const uint8_t* key, int len,
+        int common_prefix_len, bool rc_mode) const;
     bool RemovalChangesMultiplePrefix2(uint8_t first_byte,
         const EdgePtrs& edge_ptrs) const;
     int ReadNodeMatch(size_t node_off, int& match, MBData& data) const;

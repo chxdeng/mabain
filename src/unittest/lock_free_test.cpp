@@ -312,6 +312,29 @@ TEST_F(LockFreeTest, ValueUpdateNeverUsesSavedEdge)
     EXPECT_EQ(lock_free_data.offset_cache[0], offset);
 }
 
+TEST_F(LockFreeTest, GlobalRetryBarrierRetriesEveryReaderOffset)
+{
+    LockFreeData snapshot;
+    MBData mbd;
+
+    lock_free_data.offset.store(MAX_6B_OFFSET, MEMORY_ORDER_WRITER);
+    lock_free_data.counter.store(7, MEMORY_ORDER_WRITER);
+    lfree.ReaderLockFreeStart(snapshot);
+
+    lfree.PublishGlobalRetryBarrier();
+
+    EXPECT_EQ(lfree.ReaderLockFreeStop(snapshot, 101, mbd),
+        MBError::TRY_AGAIN);
+    EXPECT_EQ(lfree.ReaderLockFreeStop(snapshot, 202, mbd),
+        MBError::TRY_AGAIN);
+
+    // A reader starting after the barrier does not retry solely because of
+    // this completed event.
+    lfree.ReaderLockFreeStart(snapshot);
+    EXPECT_EQ(lfree.ReaderLockFreeStop(snapshot, 101, mbd),
+        MBError::SUCCESS);
+}
+
 TEST_F(LockFreeTest, WriterRestartPreservesActiveUpdate)
 {
     const size_t active_offset = 54321;

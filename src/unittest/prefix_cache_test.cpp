@@ -421,6 +421,119 @@ TEST_F(PrefixCacheTest, OverwriteReseedsTargetWithoutEvictingSibling)
         "new");
 }
 
+TEST_F(PrefixCacheTest, StructuralAddInvalidatesMovedSiblingScope)
+{
+    const std::string target = "abcax";
+    const std::string existing_sibling = "abcbx";
+    const std::string inserted_sibling = "abccx";
+    const std::string unaffected = "acdex";
+
+    ASSERT_EQ(db->Add(target, "target", false), MBError::SUCCESS);
+    ASSERT_EQ(db->Add(existing_sibling, "existing", false), MBError::SUCCESS);
+    ASSERT_EQ(db->Add(unaffected, "unaffected", false), MBError::SUCCESS);
+
+    // Re-seed the entries after the setup mutations have established the
+    // final tree shape and advanced their respective cache epochs.
+    ASSERT_EQ(db->Add(target, "target", true), MBError::SUCCESS);
+    ASSERT_EQ(db->Add(unaffected, "unaffected", true), MBError::SUCCESS);
+
+    PrefixCache* pc = db->GetDictPtr()->ActivePrefixCache();
+    ASSERT_NE(pc, nullptr);
+    ASSERT_GT(pc->Cap4(), 0u);
+
+    PrefixCacheEntry target_before {};
+    PrefixCacheEntry unaffected_before {};
+    ASSERT_EQ(pc->GetDepth(reinterpret_cast<const uint8_t*>(target.data()),
+                  static_cast<int>(target.size()), target_before),
+        4);
+    ASSERT_EQ(pc->GetDepth(reinterpret_cast<const uint8_t*>(unaffected.data()),
+                  static_cast<int>(unaffected.size()), unaffected_before),
+        4);
+
+    const uint32_t counter_before = db->GetDictPtr()->GetHeaderPtr()
+                                        ->lock_free.counter.load(
+                                            MEMORY_ORDER_READER);
+    ASSERT_EQ(db->Add(inserted_sibling, "inserted", false), MBError::SUCCESS);
+    const uint32_t counter_after = db->GetDictPtr()->GetHeaderPtr()
+                                       ->lock_free.counter.load(
+                                           MEMORY_ORDER_READER);
+    EXPECT_EQ(counter_after - counter_before, 2u);
+
+    PrefixCacheEntry target_after {};
+    const int target_depth = pc->GetDepth(
+        reinterpret_cast<const uint8_t*>(target.data()),
+        static_cast<int>(target.size()), target_after);
+    EXPECT_GE(target_depth, 0);
+    EXPECT_LT(target_depth, 4);
+
+    MBData target_data;
+    ASSERT_EQ(db->Find(target, target_data), MBError::SUCCESS);
+    EXPECT_EQ(std::string(reinterpret_cast<const char*>(target_data.buff),
+                  target_data.data_len),
+        "target");
+
+    PrefixCacheEntry unaffected_after {};
+    ASSERT_EQ(pc->GetDepth(reinterpret_cast<const uint8_t*>(unaffected.data()),
+                  static_cast<int>(unaffected.size()), unaffected_after),
+        4);
+    EXPECT_EQ(unaffected_after.edge_offset, unaffected_before.edge_offset);
+}
+
+TEST_F(PrefixCacheTest, ShallowStructuralAddInvalidatesFirstByteScope)
+{
+    const std::string target = "abxx";
+    const std::string existing_sibling = "acxx";
+    const std::string inserted_sibling = "adxx";
+    const std::string unaffected = "zbxx";
+
+    ASSERT_EQ(db->Add(target, "target", false), MBError::SUCCESS);
+    ASSERT_EQ(db->Add(existing_sibling, "existing", false), MBError::SUCCESS);
+    ASSERT_EQ(db->Add(unaffected, "unaffected", false), MBError::SUCCESS);
+    ASSERT_EQ(db->Add(target, "target", true), MBError::SUCCESS);
+    ASSERT_EQ(db->Add(unaffected, "unaffected", true), MBError::SUCCESS);
+
+    PrefixCache* pc = db->GetDictPtr()->ActivePrefixCache();
+    ASSERT_NE(pc, nullptr);
+    ASSERT_GT(pc->Cap4(), 0u);
+
+    PrefixCacheEntry target_before {};
+    PrefixCacheEntry unaffected_before {};
+    ASSERT_EQ(pc->GetDepth(reinterpret_cast<const uint8_t*>(target.data()),
+                  static_cast<int>(target.size()), target_before),
+        4);
+    ASSERT_EQ(pc->GetDepth(reinterpret_cast<const uint8_t*>(unaffected.data()),
+                  static_cast<int>(unaffected.size()), unaffected_before),
+        4);
+
+    const uint32_t counter_before = db->GetDictPtr()->GetHeaderPtr()
+                                        ->lock_free.counter.load(
+                                            MEMORY_ORDER_READER);
+    ASSERT_EQ(db->Add(inserted_sibling, "inserted", false), MBError::SUCCESS);
+    const uint32_t counter_after = db->GetDictPtr()->GetHeaderPtr()
+                                       ->lock_free.counter.load(
+                                           MEMORY_ORDER_READER);
+    EXPECT_EQ(counter_after - counter_before, 2u);
+
+    PrefixCacheEntry target_after {};
+    const int target_depth = pc->GetDepth(
+        reinterpret_cast<const uint8_t*>(target.data()),
+        static_cast<int>(target.size()), target_after);
+    EXPECT_GE(target_depth, 0);
+    EXPECT_LT(target_depth, 4);
+
+    MBData target_data;
+    ASSERT_EQ(db->Find(target, target_data), MBError::SUCCESS);
+    EXPECT_EQ(std::string(reinterpret_cast<const char*>(target_data.buff),
+                  target_data.data_len),
+        "target");
+
+    PrefixCacheEntry unaffected_after {};
+    ASSERT_EQ(pc->GetDepth(reinterpret_cast<const uint8_t*>(unaffected.data()),
+                  static_cast<int>(unaffected.size()), unaffected_after),
+        4);
+    EXPECT_EQ(unaffected_after.edge_offset, unaffected_before.edge_offset);
+}
+
 TEST_F(PrefixCacheTest, RemoveCannotReadValueFromReusedDataOffset)
 {
     const std::string removed_key("ABCD", 4);

@@ -101,6 +101,13 @@ void DB::iterator::iter_obj_init()
     kv_per_node = NULL;
     lfree = NULL;
 
+    if (state == DB_ITER_STATE_DONE
+        || !db_ref.is_open()
+        || db_ref.dict == NULL) {
+        state = DB_ITER_STATE_DONE;
+        return;
+    }
+
     if (!(db_ref.GetDBOptions() & CONSTS::ACCESS_MODE_WRITER)) {
 #ifdef __LOCK_FREE__
         lfree = db_ref.dict->GetLockFreePtr();
@@ -141,6 +148,13 @@ DB::iterator::~iterator()
 // Initialize the iterator, get the very first key-value pair.
 void DB::iterator::init(bool check_async_mode)
 {
+    if (state == DB_ITER_STATE_DONE
+        || !db_ref.is_open()
+        || db_ref.dict == NULL) {
+        state = DB_ITER_STATE_DONE;
+        return;
+    }
+
     // Writer in async mode cannot be used for lookup
     if (check_async_mode && (db_ref.options & CONSTS::ASYNC_WRITER_MODE)) {
         state = DB_ITER_STATE_DONE;
@@ -159,6 +173,13 @@ void DB::iterator::init(bool check_async_mode)
 // This is used for resource collection.
 int DB::iterator::init_no_next()
 {
+    if (!db_ref.is_open() || db_ref.dict == NULL) {
+        state = DB_ITER_STATE_DONE;
+        return db_ref.is_open()
+            ? MBError::NOT_INITIALIZED
+            : db_ref.Status();
+    }
+
     node_stack = new MBlsq(NULL);
     kv_per_node = NULL;
 
@@ -170,6 +191,13 @@ int DB::iterator::init_no_next()
 
 const DB::iterator& DB::iterator::operator++()
 {
+    if (state == DB_ITER_STATE_DONE
+        || !db_ref.is_open()
+        || db_ref.dict == NULL) {
+        state = DB_ITER_STATE_DONE;
+        return *this;
+    }
+
     if (next() == NULL)
         state = DB_ITER_STATE_DONE;
 

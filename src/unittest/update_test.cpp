@@ -219,4 +219,94 @@ TEST_F(UpdateTest, NodeValueOverwriteDoesNotReuseLiveValueBuffer)
         "child-value");
 }
 
+TEST_F(UpdateTest, BorrowedValuePointerLookup)
+{
+    const std::string leaf_key = "borrowed-leaf";
+    const std::string leaf_value = "borrowed-leaf-value";
+    const std::string parent_key = "borrowed-parent";
+    const std::string parent_value = "borrowed-parent-value";
+    const std::string child_key = "borrowed-parent-child";
+
+    ASSERT_EQ(db->Add(leaf_key, leaf_value), MBError::SUCCESS);
+    ASSERT_EQ(db->Add(parent_key, parent_value), MBError::SUCCESS);
+    ASSERT_EQ(db->Add(child_key, "child-value"), MBError::SUCCESS);
+
+    MBData data(64, CONSTS::OPTION_RETURN_DATA_PTR);
+    uint8_t* const owned_buffer = data.buff;
+
+    ASSERT_EQ(db->Find(leaf_key, data), MBError::SUCCESS);
+    ASSERT_NE(data.data_ptr, nullptr);
+    EXPECT_EQ(data.buff, owned_buffer);
+    EXPECT_EQ(data.data_ptr,
+        db->GetDataPtrByOffset(data.data_offset + DB::GetDataHeaderSize()));
+    EXPECT_EQ(std::string(reinterpret_cast<const char*>(data.data_ptr),
+                  data.data_len),
+        leaf_value);
+
+    ASSERT_EQ(db->Find(parent_key, data), MBError::SUCCESS);
+    ASSERT_NE(data.data_ptr, nullptr);
+    EXPECT_EQ(data.buff, owned_buffer);
+    EXPECT_EQ(data.data_ptr,
+        db->GetDataPtrByOffset(data.data_offset + DB::GetDataHeaderSize()));
+    EXPECT_EQ(std::string(reinterpret_cast<const char*>(data.data_ptr),
+                  data.data_len),
+        parent_value);
+
+    EXPECT_EQ(db->ReadDataByOffset(
+                  static_cast<size_t>(MAX_6B_OFFSET) + 1, data),
+        MBError::READ_ERROR);
+    EXPECT_EQ(data.data_ptr, nullptr);
+    EXPECT_EQ(data.data_len, 0);
+
+    EXPECT_EQ(db->Find("missing-borrowed-key", data), MBError::NOT_EXIST);
+    EXPECT_EQ(data.data_ptr, nullptr);
+    EXPECT_EQ(data.data_len, 0);
+
+    ASSERT_EQ(db->Find(parent_key, data), MBError::SUCCESS);
+    ASSERT_NE(data.data_ptr, nullptr);
+    data.options = 0;
+    EXPECT_EQ(db->Find("missing-after-mode-change", data), MBError::NOT_EXIST);
+    EXPECT_EQ(data.data_ptr, nullptr);
+    EXPECT_EQ(data.data_len, 0);
+
+    data.options = CONSTS::OPTION_RETURN_DATA_PTR;
+    ASSERT_EQ(db->Find(parent_key, data), MBError::SUCCESS);
+    ASSERT_NE(data.data_ptr, nullptr);
+    data.options = 0;
+    EXPECT_EQ(db->FindLongestPrefix("zzzz-no-prefix-match", data),
+        MBError::NOT_EXIST);
+    EXPECT_EQ(data.data_ptr, nullptr);
+    EXPECT_EQ(data.data_len, 0);
+
+    ASSERT_EQ(db->Find(leaf_key, data), MBError::SUCCESS);
+    EXPECT_EQ(data.data_ptr, nullptr);
+    EXPECT_EQ(std::string(reinterpret_cast<const char*>(data.buff),
+                  data.data_len),
+        leaf_value);
+}
+
+TEST_F(UpdateTest, BorrowedValuePointerLowerBoundLookup)
+{
+    ASSERT_EQ(db->Add("borrowed-a", "value-a"), MBError::SUCCESS);
+    ASSERT_EQ(db->Add("borrowed-c", "value-c"), MBError::SUCCESS);
+
+    MBData data(0, CONSTS::OPTION_RETURN_DATA_PTR);
+    std::string bound_key;
+    ASSERT_EQ(db->FindLowerBound("borrowed-b", data, &bound_key),
+        MBError::SUCCESS);
+    ASSERT_NE(data.data_ptr, nullptr);
+    EXPECT_EQ(bound_key, "borrowed-a");
+    EXPECT_EQ(data.data_ptr,
+        db->GetDataPtrByOffset(data.data_offset + DB::GetDataHeaderSize()));
+    EXPECT_EQ(std::string(reinterpret_cast<const char*>(data.data_ptr),
+                  data.data_len),
+        "value-a");
+
+    data.options = 0;
+    EXPECT_EQ(db->FindLowerBound("borrowed-0", data, &bound_key),
+        MBError::NOT_EXIST);
+    EXPECT_EQ(data.data_ptr, nullptr);
+    EXPECT_EQ(data.data_len, 0);
+}
+
 }

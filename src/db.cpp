@@ -954,6 +954,8 @@ bool DB::InDB(const char* key, int len, int& err)
 // Find the exact key match (delegate to SearchEngine)
 int DB::Find(const char* key, int len, MBData& mdata) const
 {
+    mdata.data_ptr = NULL;
+    mdata.data_len = 0;
     if (key == NULL || len <= 0)
         return MBError::INVALID_ARG;
     if (status != MBError::SUCCESS)
@@ -967,6 +969,11 @@ int DB::Find(const char* key, int len, MBData& mdata) const
     detail::SearchEngine engine(*dict);
     int rval = engine.find(reinterpret_cast<const uint8_t*>(key), len, mdata);
     EndReaderEpochGuard(reader_epoch);
+    if (rval != MBError::SUCCESS
+        && (mdata.options & CONSTS::OPTION_RETURN_DATA_PTR)) {
+        mdata.data_ptr = NULL;
+        mdata.data_len = 0;
+    }
     return rval;
 }
 
@@ -982,6 +989,10 @@ int DB::FindLowerBound(const std::string& key, MBData& data, std::string* bound_
 
 int DB::FindLowerBound(const char* key, int len, MBData& data, std::string* bound_key) const
 {
+    const bool return_data_ptr
+        = (data.options & CONSTS::OPTION_RETURN_DATA_PTR) != 0;
+    data.data_ptr = NULL;
+    data.data_len = 0;
     if (key == NULL || len <= 0)
         return MBError::INVALID_ARG;
     if (status != MBError::SUCCESS)
@@ -989,7 +1000,7 @@ int DB::FindLowerBound(const char* key, int len, MBData& data, std::string* boun
     if (options & CONSTS::ASYNC_WRITER_MODE)
         return MBError::NOT_ALLOWED;
 
-    data.options = 0;
+    data.options = return_data_ptr ? CONSTS::OPTION_RETURN_DATA_PTR : 0;
     if (bound_key != nullptr) {
         bound_key->clear();
         bound_key->reserve(CONSTS::MAX_KEY_LENGHTH);
@@ -1000,14 +1011,23 @@ int DB::FindLowerBound(const char* key, int len, MBData& data, std::string* boun
     detail::SearchEngine engine(*dict);
     int rval = engine.lowerBound(reinterpret_cast<const uint8_t*>(key), len, data, bound_key);
     EndReaderEpochGuard(reader_epoch);
+    if (rval != MBError::SUCCESS
+        && (data.options & CONSTS::OPTION_RETURN_DATA_PTR)) {
+        data.data_ptr = NULL;
+        data.data_len = 0;
+    }
     return rval;
 }
 
 // Find the longest prefix match
 int DB::FindLongestPrefix(const char* key, int len, MBData& data) const
 {
+    data.data_ptr = NULL;
+    data.data_len = 0;
     if (key == NULL || len <= 0)
         return MBError::INVALID_ARG;
+    if (data.options & CONSTS::OPTION_RETURN_DATA_PTR)
+        return MBError::NOT_ALLOWED;
     if (status != MBError::SUCCESS)
         return MBError::NOT_INITIALIZED;
     if (options & CONSTS::ASYNC_WRITER_MODE)
@@ -1030,6 +1050,8 @@ int DB::FindLongestPrefix(const std::string& key, MBData& data) const
 
 int DB::ReadDataByOffset(size_t offset, MBData& data) const
 {
+    data.data_ptr = NULL;
+    data.data_len = 0;
     if (status != MBError::SUCCESS)
         return MBError::NOT_INITIALIZED;
     if (offset > static_cast<size_t>(MAX_6B_OFFSET))
