@@ -135,6 +135,15 @@ public:
     // when the DB was created with embedded cache. Readers attach if present.
     PrefixCache* ActivePrefixCache() const;
 
+#ifdef MABAIN_PREFIX_CACHE_CONSISTENCY_TEST_HOOKS
+    using PrefixCacheConsistencyTestHook = void (*)();
+    static void SetBeforePrefixCacheSeedHookForTest(
+        PrefixCacheConsistencyTestHook hook);
+    static void SetAfterPrefixCacheHitHookForTest(
+        PrefixCacheConsistencyTestHook hook);
+    static void RunAfterPrefixCacheHitHookForTest();
+#endif
+
 private:
     // Allow internal SearchEngine to orchestrate lookups without exposing members publicly
     friend class detail::SearchEngine;
@@ -143,12 +152,14 @@ private:
     // Prefix traversal helpers moved to SearchEngine.
     // Traversal helpers are owned by SearchEngine.
     int ReleaseBuffer(size_t offset);
-    int UpdateDataBuffer(EdgePtrs& edge_ptrs, bool overwrite, MBData& mbd, bool& inc_count);
+    int UpdateDataBuffer(EdgePtrs& edge_ptrs, bool overwrite, MBData& mbd,
+        bool& inc_count, const uint8_t* key, int key_len);
     int ReadDataFromEdge(MBData& data, const EdgePtrs& edge_ptrs) const;
     int ReadDataFromNode(MBData& data, const uint8_t* node_ptr) const;
     int DeleteDataFromEdge(MBData& data, EdgePtrs& edge_ptrs);
     void InvalidatePrefixCacheForRemove(const uint8_t* key, int len,
         const EdgePtrs& edge_ptrs, bool structural_change) const;
+    void InvalidatePrefixCacheForMutation(const uint8_t* key, int len) const;
     bool RemovalChangesMultiplePrefix2(uint8_t first_byte,
         const EdgePtrs& edge_ptrs) const;
     int ReadNodeMatch(size_t node_off, int& match, MBData& data) const;
@@ -185,6 +196,10 @@ private:
     // using the final structure (mirrors reader warm). Applies to shared and
     // non-shared caches and detects boundary crossings within long edges.
     void SeedCanonicalBoundariesAfterAdd(const uint8_t* key, int len) const;
+
+#ifdef MABAIN_PREFIX_CACHE_CONSISTENCY_TEST_HOOKS
+    static void RunBeforePrefixCacheSeedHookForTest();
+#endif
 
     // Initialize the embedded prefix cache layout in the data file header
     // and set the starting data offset accordingly.

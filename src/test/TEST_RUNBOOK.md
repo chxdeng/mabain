@@ -158,6 +158,81 @@ The value-overwrite concurrency test accepts:
 ./value_overwrite_concurrency_test [writer_iterations] [reader_threads]
 ```
 
+### Prefix-cache overwrite consistency regression
+
+`prefix_cache_add_consistency_test` deterministically pauses an overwrite and a
+cache-enabled reader around the previously unsafe publication window. It then
+forces immediate reuse of the old value buffer and verifies that the reader
+returns only the complete old or new value, never unrelated data.
+
+The synchronization hooks are test-only. Build them in a separate directory;
+do not add `MABAIN_PREFIX_CACHE_CONSISTENCY_TEST_HOOKS` to the normal `build`
+directory or production compiler flags.
+
+From the repository root:
+
+```bash
+cd ~/mabain
+MABAIN_ROOT="$(pwd)"
+
+cmake -S . -B build-prefix-cache-consistency \
+  -DMB_WERROR=ON \
+  -DCMAKE_CXX_FLAGS=-DMABAIN_PREFIX_CACHE_CONSISTENCY_TEST_HOOKS
+cmake --build build-prefix-cache-consistency \
+  --target mabain --parallel "$(nproc)"
+
+g++ -DMABAIN_PREFIX_CACHE_CONSISTENCY_TEST_HOOKS \
+  -I./src -I./src/util \
+  -Wall -Werror -g -O2 -std=c++17 \
+  src/test/prefix_cache_add_consistency_test.cpp \
+  -o src/test/prefix_cache_add_consistency_test \
+  -L./build-prefix-cache-consistency/lib \
+  -lmabain -lpthread -lcrypto -ljemalloc \
+  -Wl,-rpath,"$MABAIN_ROOT/build-prefix-cache-consistency/lib"
+
+./src/test/prefix_cache_add_consistency_test
+```
+
+Pass criteria: exit status 0 and output containing:
+
+```text
+PASS: concurrent lookup returned a complete old or new value
+```
+
+### Prefix-cache structural-add consistency regression
+
+`prefix_cache_structural_add_consistency_test` deterministically pauses a
+cache-enabled reader after it copies a cached radix node, performs a structural
+`Add()`, and forces the released node offset to be reused by an unrelated
+prefix. It verifies that the reader still returns the value for its requested
+key rather than data from the unrelated prefix.
+
+Reuse the test-only `build-prefix-cache-consistency` build and `MABAIN_ROOT`
+created in the preceding section. From the repository root:
+
+```bash
+g++ -DMABAIN_PREFIX_CACHE_CONSISTENCY_TEST_HOOKS \
+  -I./src -I./src/util \
+  -Wall -Werror -g -O2 -std=c++17 \
+  src/test/prefix_cache_structural_add_consistency_test.cpp \
+  -o src/test/prefix_cache_structural_add_consistency_test \
+  -L./build-prefix-cache-consistency/lib \
+  -lmabain -lpthread -lcrypto -ljemalloc \
+  -Wl,-rpath,"$MABAIN_ROOT/build-prefix-cache-consistency/lib"
+
+./src/test/prefix_cache_structural_add_consistency_test
+```
+
+Pass criteria: exit status 0 and output containing:
+
+```text
+PASS: structural Add returned the correct cached value
+```
+
+On affected code, the test exits nonzero and reports that the lookup for
+`abcdx` returned the unrelated `WXYZX` value after the cached node offset was
+reused by the `wxyz` prefix.
+
 ## 5. Jemalloc restart and rebuild tests
 
 The first eight modes are independent. Give each one a unique directory:

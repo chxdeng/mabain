@@ -200,6 +200,12 @@ void ResourceCollection::ReclaimResource(int64_t min_index_size,
 
     if (min_index_size > 0 || min_data_size > 0) {
         Prepare(min_index_size, min_data_size);
+
+        // Cached edges contain offsets that RC may relocate. Invalidate only
+        // after Prepare confirms that collection will run and before the first move.
+        PrefixCache* prefix_cache = dict->ActivePrefixCache();
+        if (prefix_cache != NULL)
+            prefix_cache->InvalidateAll();
         Logger::Log(LOG_LEVEL_INFO, "defragmentation started for [index - %s] [data - %s]",
             rc_type & RESOURCE_COLLECTION_TYPE_INDEX ? "yes" : "no",
             rc_type & RESOURCE_COLLECTION_TYPE_DATA ? " yes" : "no");
@@ -208,6 +214,13 @@ void ResourceCollection::ReclaimResource(int64_t min_index_size,
         ReorderBuffers();
         CollectBuffers();
         Finish();
+
+        // TODO(prefix-cache): Preserve cache warmth by rebuilding only populated
+        // stale slots here. Reconstruct each 2/3/4-byte prefix from its table tag,
+        // traverse that short prefix in the final live tree, and republish the
+        // resulting edge. Slots already reseeded by ProcessRCTree() have the
+        // current epoch and can be skipped. This bounds rebuild work by cache
+        // capacity instead of database size.
 
         gettimeofday(&stop, NULL);
         async_writer_ptr = NULL;

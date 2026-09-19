@@ -101,6 +101,7 @@ public:
     static constexpr int UNSTABLE = -1;
     int GetDepth(const uint8_t* key, int len, PrefixCacheEntry& out) const;
     // Logically invalidate cache entries without scanning cache tables.
+    void InvalidateKey(const uint8_t* key, int len);
     void InvalidatePrefix2(const uint8_t* key, int len);
     void InvalidateRoot(uint8_t first_byte);
     void InvalidateAll();

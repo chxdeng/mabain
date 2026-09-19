@@ -274,6 +274,9 @@ namespace detail {
         key_cursor = kcur;
         len_remaining = lrem;
         consumed = cons;
+#ifdef MABAIN_PREFIX_CACHE_CONSISTENCY_TEST_HOOKS
+        Dict::RunAfterPrefixCacheHitHookForTest();
+#endif
         return true;
     }
 
