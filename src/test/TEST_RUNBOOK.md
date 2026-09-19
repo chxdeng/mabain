@@ -233,6 +233,54 @@ On affected code, the test exits nonzero and reports that the lookup for
 `abcdx` returned the unrelated `WXYZX` value after the cached node offset was
 reused by the `wxyz` prefix.
 
+### Exact-Find lock-free snapshot regression
+
+`lf_guard_snapshot_gap_test` deterministically pauses an exact lookup after its
+root edge has been validated. It then performs a structural `Add()` that
+relocates the child node and immediately reuses the released node for an
+unrelated subtree. The resumed lookup must detect the parent-edge update,
+retry, and return the original key's value.
+
+The synchronization hook is test-only. Build it in a separate directory; do
+not add `MABAIN_LF_GUARD_TEST_HOOKS` to the normal `build` directory or
+production compiler flags.
+
+From the repository root:
+
+```bash
+cd ~/mabain
+MABAIN_ROOT="$(pwd)"
+
+cmake -S . -B build-lf-guard-test \
+  -DMB_WERROR=ON \
+  -DCMAKE_CXX_FLAGS=-DMABAIN_LF_GUARD_TEST_HOOKS
+cmake --build build-lf-guard-test \
+  --target mabain --parallel "$(nproc)"
+
+g++ -DMABAIN_LF_GUARD_TEST_HOOKS \
+  -I./src -I./src/util \
+  -Wall -Werror -g -O2 -std=c++17 \
+  src/test/lf_guard_snapshot_gap_test.cpp \
+  -o src/test/lf_guard_snapshot_gap_test \
+  -L./build-lf-guard-test/lib \
+  -lmabain -lpthread -lcrypto -ljemalloc \
+  -Wl,-rpath,"$MABAIN_ROOT/build-lf-guard-test/lib"
+
+./src/test/lf_guard_snapshot_gap_test
+```
+
+Pass criteria: exit status 0 and output containing:
+
+```text
+PASS: exact Find retried after the parent-edge update
+```
+
+On affected code, the test exits with status 2 and reports:
+
+```text
+REPRODUCED: exact Find accepted its first attempt after the old child node was reused
+```
+
 ## 5. Jemalloc restart and rebuild tests
 
 The first eight modes are independent. Give each one a unique directory:
