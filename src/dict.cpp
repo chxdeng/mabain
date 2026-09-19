@@ -449,14 +449,17 @@ int Dict::Add(const uint8_t* key, int len, MBData& data, bool overwrite)
             }
             if (!next) {
                 ReserveData(data.buff, data.data_len, data.data_offset);
+                InvalidatePrefixCacheForMutation(key, orig_len);
                 rval = mm.UpdateNode(edge_ptrs, key_cursor, len, data.data_offset);
             } else if (match_len < static_cast<int>(edge_ptrs.len_ptr[0])) {
                 if (len > match_len) {
                     ReserveData(data.buff, data.data_len, data.data_offset);
+                    InvalidatePrefixCacheForMutation(key, orig_len);
                     rval = mm.AddLink(edge_ptrs, match_len, key_cursor + match_len, len - match_len,
                         data.data_offset, data);
                 } else if (len == match_len) {
                     ReserveData(data.buff, data.data_len, data.data_offset);
+                    InvalidatePrefixCacheForMutation(key, orig_len);
                     rval = mm.InsertNode(edge_ptrs, match_len, data.data_offset, data);
                 }
             } else if (len == 0) {
@@ -465,6 +468,7 @@ int Dict::Add(const uint8_t* key, int len, MBData& data, bool overwrite)
             }
         } else {
             ReserveData(data.buff, data.data_len, data.data_offset);
+            InvalidatePrefixCacheForMutation(key, orig_len);
             rval = mm.AddLink(edge_ptrs, i, key_cursor + i, len - i, data.data_offset, data);
         }
     } else {
@@ -474,10 +478,12 @@ int Dict::Add(const uint8_t* key, int len, MBData& data, bool overwrite)
         }
         if (i < len) {
             ReserveData(data.buff, data.data_len, data.data_offset);
+            InvalidatePrefixCacheForMutation(key, orig_len);
             rval = mm.AddLink(edge_ptrs, i, key_cursor + i, len - i, data.data_offset, data);
         } else {
             if (edge_ptrs.len_ptr[0] > len) {
                 ReserveData(data.buff, data.data_len, data.data_offset);
+                InvalidatePrefixCacheForMutation(key, orig_len);
                 rval = mm.InsertNode(edge_ptrs, i, data.data_offset, data);
             } else {
                 rval = UpdateDataBuffer(edge_ptrs, overwrite, data, inc_count,
@@ -961,7 +967,7 @@ void Dict::InvalidatePrefixCacheForRemove(const uint8_t* key, int len,
     }
 }
 
-void Dict::InvalidatePrefixCacheForValueUpdate(const uint8_t* key, int len) const
+void Dict::InvalidatePrefixCacheForMutation(const uint8_t* key, int len) const
 {
     if (!prefix_cache || key == nullptr || len < 2)
         return;
@@ -1251,7 +1257,7 @@ int Dict::UpdateDataBuffer(EdgePtrs& edge_ptrs, bool overwrite, MBData& mbd,
         // Keep the currently published value alive until its complete
         // replacement has been written and linked into the tree.
         ReserveData(mbd.buff, mbd.data_len, mbd.data_offset);
-        InvalidatePrefixCacheForValueUpdate(key, key_len);
+        InvalidatePrefixCacheForMutation(key, key_len);
         Write6BInteger(edge_ptrs.offset_ptr, mbd.data_offset);
 
         memcpy(header->excep_buff, edge_ptrs.offset_ptr, OFFSET_SIZE);
@@ -1292,7 +1298,7 @@ int Dict::UpdateDataBuffer(EdgePtrs& edge_ptrs, bool overwrite, MBData& mbd,
         }
 
         ReserveData(mbd.buff, mbd.data_len, mbd.data_offset);
-        InvalidatePrefixCacheForValueUpdate(key, key_len);
+        InvalidatePrefixCacheForMutation(key, key_len);
         Write6BInteger(node_buff + 2, mbd.data_offset);
 
         header->excep_offset = node_off;

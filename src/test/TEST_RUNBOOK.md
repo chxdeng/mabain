@@ -199,6 +199,40 @@ Pass criteria: exit status 0 and output containing:
 PASS: concurrent lookup returned a complete old or new value
 ```
 
+### Prefix-cache structural-add consistency regression
+
+`prefix_cache_structural_add_consistency_test` deterministically pauses a
+cache-enabled reader after it copies a cached radix node, performs a structural
+`Add()`, and forces the released node offset to be reused by an unrelated
+prefix. It verifies that the reader still returns the value for its requested
+key rather than data from the unrelated prefix.
+
+Reuse the test-only `build-prefix-cache-consistency` build and `MABAIN_ROOT`
+created in the preceding section. From the repository root:
+
+```bash
+g++ -DMABAIN_PREFIX_CACHE_CONSISTENCY_TEST_HOOKS \
+  -I./src -I./src/util \
+  -Wall -Werror -g -O2 -std=c++17 \
+  src/test/prefix_cache_structural_add_consistency_test.cpp \
+  -o src/test/prefix_cache_structural_add_consistency_test \
+  -L./build-prefix-cache-consistency/lib \
+  -lmabain -lpthread -lcrypto -ljemalloc \
+  -Wl,-rpath,"$MABAIN_ROOT/build-prefix-cache-consistency/lib"
+
+./src/test/prefix_cache_structural_add_consistency_test
+```
+
+Pass criteria: exit status 0 and output containing:
+
+```text
+PASS: structural Add returned the correct cached value
+```
+
+On affected code, the test exits nonzero and reports that the lookup for
+`abcdx` returned the unrelated `WXYZX` value after the cached node offset was
+reused by the `wxyz` prefix.
+
 ## 5. Jemalloc restart and rebuild tests
 
 The first eight modes are independent. Give each one a unique directory:
