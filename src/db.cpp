@@ -49,6 +49,7 @@ namespace {
 
 const int64_t kRebuildBarrierGuardToken = std::numeric_limits<int64_t>::max();
 const uint32_t kReaderEpochGuardMaxStabilizeRetries = 32;
+const int kFindOutOfBoundRetryLimit = 3;
 
 // MEMORY_ONLY_MODE owns the process-local writer marker without an OS lock fd.
 const int kMemoryOnlyWriterMarkerFd = -2;
@@ -98,6 +99,32 @@ uint64_t ReadSelfProcStartTime()
 #endif
 
 } // namespace
+
+class DB::ReaderEpochGuard {
+public:
+    explicit ReaderEpochGuard(const DB& db)
+        : db_(db)
+        , token_(db.BeginReaderEpochGuard())
+    {
+    }
+
+    ~ReaderEpochGuard()
+    {
+        db_.EndReaderEpochGuard(token_);
+    }
+
+    int Status() const
+    {
+        return token_ < 0 ? static_cast<int>(-token_) : MBError::SUCCESS;
+    }
+
+    ReaderEpochGuard(const ReaderEpochGuard&) = delete;
+    ReaderEpochGuard& operator=(const ReaderEpochGuard&) = delete;
+
+private:
+    const DB& db_;
+    int64_t token_;
+};
 
 // Current mabain version 1.7.2
 uint16_t version[4] = { 1, 7, 2, 0 };
@@ -963,18 +990,32 @@ int DB::Find(const char* key, int len, MBData& mdata) const
     if (options & CONSTS::ASYNC_WRITER_MODE)
         return MBError::NOT_ALLOWED;
 
-    int64_t reader_epoch = BeginReaderEpochGuard();
-    if (reader_epoch < 0)
-        return static_cast<int>(-reader_epoch);
-    detail::SearchEngine engine(*dict);
-    int rval = engine.find(reinterpret_cast<const uint8_t*>(key), len, mdata);
-    EndReaderEpochGuard(reader_epoch);
-    if (rval != MBError::SUCCESS
-        && (mdata.options & CONSTS::OPTION_RETURN_DATA_PTR)) {
-        mdata.data_ptr = NULL;
-        mdata.data_len = 0;
+    for (int attempt = 0; attempt < kFindOutOfBoundRetryLimit; ++attempt) {
+        ReaderEpochGuard reader_guard(*this);
+        const int guard_status = reader_guard.Status();
+        if (guard_status != MBError::SUCCESS)
+            return guard_status;
+
+        try {
+            detail::SearchEngine engine(*dict);
+            const int rval = engine.find(
+                reinterpret_cast<const uint8_t*>(key), len, mdata);
+            if (rval != MBError::SUCCESS
+                && (mdata.options & CONSTS::OPTION_RETURN_DATA_PTR)) {
+                mdata.data_ptr = NULL;
+                mdata.data_len = 0;
+            }
+            return rval;
+        } catch (int error) {
+            mdata.Clear();
+            if (error != MBError::OUT_OF_BOUND)
+                return error;
+            if (attempt + 1 == kFindOutOfBoundRetryLimit)
+                return MBError::READ_ERROR;
+        }
     }
-    return rval;
+
+    return MBError::READ_ERROR;
 }
 
 int DB::Find(const std::string& key, MBData& mdata) const
@@ -1115,7 +1156,17 @@ int DB::Add(const char* key, int len, MBData& mbdata, bool overwrite)
         return MBError::NOT_ALLOWED;
 
     if (async_writer == NULL && (options & CONSTS::ACCESS_MODE_WRITER)) {
-        rval = dict->Add(reinterpret_cast<const uint8_t*>(key), len, mbdata, overwrite);
+        try {
+            rval = dict->Add(
+                reinterpret_cast<const uint8_t*>(key), len, mbdata, overwrite);
+        } catch (int error) {
+            status = error;
+            Logger::Log(LOG_LEVEL_ERROR,
+                "synchronous Add failed after mutation publication began: %s; "
+                "close and reopen the DB before further operations",
+                MBError::get_error_str(error));
+            rval = error;
+        }
     } else {
         AsyncWriter* awr = AsyncWriter::GetInstance();
         if (awr) {
@@ -1185,7 +1236,16 @@ int DB::Remove(const char* key, int len)
         return MBError::NOT_INITIALIZED;
 
     if (async_writer == NULL && (options & CONSTS::ACCESS_MODE_WRITER)) {
-        rval = dict->Remove(reinterpret_cast<const uint8_t*>(key), len);
+        try {
+            rval = dict->Remove(reinterpret_cast<const uint8_t*>(key), len);
+        } catch (int error) {
+            status = error;
+            Logger::Log(LOG_LEVEL_ERROR,
+                "synchronous Remove failed during mutation: %s; close and "
+                "reopen the DB before further operations",
+                MBError::get_error_str(error));
+            rval = error;
+        }
     } else {
         rval = dict->SHMQ_Remove(reinterpret_cast<const char*>(key), len);
     }

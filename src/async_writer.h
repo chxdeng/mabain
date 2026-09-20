@@ -32,6 +32,14 @@
 
 namespace mabain {
 
+enum AsyncRCState : uint32_t {
+    ASYNC_RC_IDLE = 0,
+    ASYNC_RC_RUNNING = 1,
+    // RC replay failed. Keep the temporary RC tree authoritative and reject
+    // new queue reservations until the writer is reopened.
+    ASYNC_RC_FAILED = 2
+};
+
 class AsyncWriter {
 public:
     ~AsyncWriter();

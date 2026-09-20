@@ -144,6 +144,12 @@ public:
     static void RunAfterPrefixCacheHitHookForTest();
 #endif
 
+#ifdef MABAIN_LF_GUARD_TEST_HOOKS
+    using InternalNodeValueReadTestHook = void (*)();
+    static void SetBeforeInternalNodeValueReadHookForTest(
+        InternalNodeValueReadTestHook hook);
+#endif
+
 private:
     // Allow internal SearchEngine to orchestrate lookups without exposing members publicly
     friend class detail::SearchEngine;
@@ -201,6 +207,10 @@ private:
 
 #ifdef MABAIN_PREFIX_CACHE_CONSISTENCY_TEST_HOOKS
     static void RunBeforePrefixCacheSeedHookForTest();
+#endif
+
+#ifdef MABAIN_LF_GUARD_TEST_HOOKS
+    static void RunBeforeInternalNodeValueReadHookForTest();
 #endif
 
     // Initialize the embedded prefix cache layout in the data file header

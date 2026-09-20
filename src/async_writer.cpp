@@ -29,6 +29,47 @@
 #include "mb_rc.h"
 
 namespace mabain {
+namespace {
+
+// Reservation timestamps use monotonic milliseconds. Reserve the high bit for
+// a completed logical queue index so restart can distinguish writer
+// acknowledgement from an unpublished producer reservation.
+constexpr uint64_t ASYNC_QUEUE_ACK_FLAG = uint64_t { 1 } << 63;
+
+inline uint64_t AsyncQueueAckMarker(uint32_t index)
+{
+    return ASYNC_QUEUE_ACK_FLAG | static_cast<uint64_t>(index);
+}
+
+bool RecoverAcknowledgedHead(IndexHeader* header, AsyncNode* queue,
+    std::atomic<uint64_t>* reservation_time_ms)
+{
+    if (header == NULL || queue == NULL || reservation_time_ms == NULL)
+        return false;
+
+    const uint32_t writer_index =
+        header->writer_index.load(std::memory_order_acquire);
+    const uint32_t queue_index =
+        header->queue_index.load(std::memory_order_acquire);
+    if (writer_index == queue_index)
+        return false;
+
+    const uint32_t slot_index = writer_index % header->async_queue_size;
+    if (reservation_time_ms[slot_index].load(std::memory_order_acquire)
+        != AsyncQueueAckMarker(writer_index)) {
+        return false;
+    }
+
+    AsyncNode* node_ptr = &queue[slot_index];
+    node_ptr->num_reader.store(0, std::memory_order_release);
+    node_ptr->type = MABAIN_ASYNC_TYPE_NONE;
+    node_ptr->in_use.store(false, std::memory_order_release);
+    // Publish capacity only after this physical slot is fully free.
+    header->writer_index.store(writer_index + 1, std::memory_order_release);
+    return true;
+}
+
+} // namespace
 
 AsyncWriter* AsyncWriter::writer_instance = NULL;
 
@@ -68,11 +109,20 @@ AsyncWriter::AsyncWriter(DB* db_ptr)
         throw (int)MBError::NOT_INITIALIZED;
     queue = dict->GetAsyncQueuePtr();
     reservation_time_ms = dict->GetAsyncQueueReservationTimePtr();
+    if (RecoverAcknowledgedHead(header, queue, reservation_time_ms)) {
+        Logger::Log(LOG_LEVEL_INFO,
+            "recovered completed async queue acknowledgment");
+    }
     MBConfig config = { 0 };
     db->GetDBConfig(config);
     reservation_timeout_ms
         = static_cast<uint64_t>(config.async_queue_reservation_timeout_sec) * 1000;
-    header->rc_flag.store(0, std::memory_order_release);
+    // Preserve a failed RC replay across reopen so startup recovery can retry
+    // the retained RC tree before queued operations resume. A RUNNING marker
+    // only means the previous process stopped during RC and follows the
+    // existing crash-recovery behavior.
+    if (header->rc_flag.load(std::memory_order_acquire) != ASYNC_RC_FAILED)
+        header->rc_flag.store(ASYNC_RC_IDLE, std::memory_order_release);
 
     rc_backup_dir = NULL;
     // start the thread
@@ -177,7 +227,8 @@ int AsyncWriter::ProcessTask(int ntasks, bool rc_mode)
             }
 
             uint32_t slot_index = writer_index % header->async_queue_size;
-            reservation_time_ms[slot_index].store(0, std::memory_order_release);
+            reservation_time_ms[slot_index].store(
+                AsyncQueueAckMarker(writer_index), std::memory_order_release);
             node_ptr->num_reader.store(0, std::memory_order_release);
             node_ptr->type = MABAIN_ASYNC_TYPE_NONE;
             node_ptr->in_use.store(false, std::memory_order_release);
@@ -222,6 +273,15 @@ void* AsyncWriter::async_writer_thread()
     }
 
     while (!stop_processing.load(std::memory_order_relaxed)) {
+        if (header->rc_flag.load(std::memory_order_acquire)
+            == ASYNC_RC_FAILED) {
+            // Keep the FIFO read endpoint alive so shutdown can wake this
+            // thread immediately. Producers reject new reservations while the
+            // retained RC tree remains authoritative.
+            mbp.Wait(1000);
+            continue;
+        }
+
         uint32_t writer_index = header->writer_index.load(std::memory_order_relaxed);
         node_ptr = &queue[writer_index % header->async_queue_size];
 
@@ -323,7 +383,7 @@ void* AsyncWriter::async_writer_thread()
             break;
         case MABAIN_ASYNC_TYPE_RC:
             rval = MBError::SUCCESS;
-            header->rc_flag.store(1, std::memory_order_release);
+            header->rc_flag.store(ASYNC_RC_RUNNING, std::memory_order_release);
             {
                 int64_t* data_ptr = reinterpret_cast<int64_t*>(node_ptr->data);
                 min_index_size = data_ptr[0];
@@ -349,7 +409,8 @@ void* AsyncWriter::async_writer_thread()
         }
 
         uint32_t slot_index = writer_index % header->async_queue_size;
-        reservation_time_ms[slot_index].store(0, std::memory_order_release);
+        reservation_time_ms[slot_index].store(
+            AsyncQueueAckMarker(writer_index), std::memory_order_release);
         node_ptr->num_reader.store(0, std::memory_order_release);
         node_ptr->type = MABAIN_ASYNC_TYPE_NONE;
         node_ptr->in_use.store(false, std::memory_order_release);
@@ -363,7 +424,8 @@ void* AsyncWriter::async_writer_thread()
 
         mbd.Clear();
 
-        if (header->rc_flag.load(std::memory_order_consume) == 1) {
+        if (header->rc_flag.load(std::memory_order_consume)
+            == ASYNC_RC_RUNNING) {
             rval = MBError::SUCCESS;
             writer_lock.lock();
             try {
@@ -377,7 +439,16 @@ void* AsyncWriter::async_writer_thread()
             }
             writer_lock.unlock();
 
-            header->rc_flag.store(0, std::memory_order_release);
+            const bool replay_failed =
+                header->rc_flag.load(std::memory_order_acquire)
+                == ASYNC_RC_FAILED;
+            if (!replay_failed)
+                header->rc_flag.store(ASYNC_RC_IDLE, std::memory_order_release);
+            if (replay_failed) {
+                Logger::Log(LOG_LEVEL_ERROR,
+                    "async writer paused after rc replay failure; reopen the db: %s",
+                    MBError::get_error_str(rval));
+            }
             if (rc_backup_dir != NULL) {
                 if (rval == MBError::SUCCESS) {
                     dict->SHMQ_Backup(rc_backup_dir);

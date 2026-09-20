@@ -122,44 +122,37 @@ void RebuildBarrier::UnlockExclusive()
 
 ResourcePool::ResourcePool()
 {
-    pthread_mutex_init(&pool_mutex, NULL);
 }
 
 ResourcePool::~ResourcePool()
 {
-    pthread_mutex_destroy(&pool_mutex);
 }
 
 void ResourcePool::RemoveAll()
 {
-    pthread_mutex_lock(&pool_mutex);
+    std::lock_guard<std::mutex> lock(pool_mutex);
     rebuild_barrier_pool.clear();
     file_pool.clear();
-    pthread_mutex_unlock(&pool_mutex);
 }
 
 // check if a in-memory db already exists
 bool ResourcePool::CheckExistence(const std::string& header_path)
 {
-    pthread_mutex_lock(&pool_mutex);
-    bool exists = file_pool.find(header_path) != file_pool.end();
-    pthread_mutex_unlock(&pool_mutex);
-
-    return exists;
+    std::lock_guard<std::mutex> lock(pool_mutex);
+    return file_pool.find(header_path) != file_pool.end();
 }
 
 void ResourcePool::RemoveResourceByPath(const std::string& path)
 {
     Logger::Log(LOG_LEVEL_DEBUG, "remove resource %s", path.c_str());
-    pthread_mutex_lock(&pool_mutex);
+    std::lock_guard<std::mutex> lock(pool_mutex);
     rebuild_barrier_pool.erase(path);
     file_pool.erase(path);
-    pthread_mutex_unlock(&pool_mutex);
 }
 
 void ResourcePool::RemoveResourceByDB(const std::string& db_path)
 {
-    pthread_mutex_lock(&pool_mutex);
+    std::lock_guard<std::mutex> lock(pool_mutex);
 
     for (auto it = file_pool.begin(); it != file_pool.end();) {
         if (it->first.compare(0, db_path.size(), db_path) == 0)
@@ -175,7 +168,6 @@ void ResourcePool::RemoveResourceByDB(const std::string& db_path)
             it++;
     }
 
-    pthread_mutex_unlock(&pool_mutex);
 }
 
 std::shared_ptr<MmapFileIO> ResourcePool::OpenFileWithKey(
@@ -195,8 +187,9 @@ std::shared_ptr<MmapFileIO> ResourcePool::OpenFileWithKey(const std::string& poo
     mode_t create_mode)
 {
     std::shared_ptr<MmapFileIO> mmap_file;
+    const bool map_requested = map_file;
 
-    pthread_mutex_lock(&pool_mutex);
+    std::lock_guard<std::mutex> lock(pool_mutex);
 
     auto search = file_pool.find(pool_key);
     if (search == file_pool.end()) {
@@ -214,7 +207,6 @@ std::shared_ptr<MmapFileIO> ResourcePool::OpenFileWithKey(const std::string& poo
                 mode & CONSTS::SYNC_ON_WRITE,
                 create_mode));
         if (!(mode & CONSTS::MEMORY_ONLY_MODE) && !mmap_file->IsOpen()) {
-            pthread_mutex_unlock(&pool_mutex);
             return NULL;
         }
 
@@ -234,12 +226,18 @@ std::shared_ptr<MmapFileIO> ResourcePool::OpenFileWithKey(const std::string& poo
             }
         }
 
-        file_pool[pool_key] = mmap_file;
+        // Jemalloc and anonymous-memory users cannot operate without a valid
+        // mapping. Do not cache a failed mapping; a later access must be able
+        // to retry instead of receiving the same unusable object.
+        if (!(map_requested
+                && (mode & (CONSTS::OPTION_JEMALLOC | CONSTS::MEMORY_ONLY_MODE))
+                && !mmap_file->IsMapped())) {
+            file_pool[pool_key] = mmap_file;
+        }
     } else {
         mmap_file = search->second;
     }
 
-    pthread_mutex_unlock(&pool_mutex);
     return mmap_file;
 }
 
@@ -273,7 +271,7 @@ std::shared_ptr<RebuildBarrier> ResourcePool::OpenRebuildBarrier(
     if (file == nullptr || !file->IsOpen())
         return nullptr;
 
-    pthread_mutex_lock(&pool_mutex);
+    std::lock_guard<std::mutex> lock(pool_mutex);
     auto search = rebuild_barrier_pool.find(pool_key);
     std::shared_ptr<RebuildBarrier> barrier;
     if (search == rebuild_barrier_pool.end()) {
@@ -282,7 +280,6 @@ std::shared_ptr<RebuildBarrier> ResourcePool::OpenRebuildBarrier(
     } else {
         barrier = search->second;
     }
-    pthread_mutex_unlock(&pool_mutex);
     return barrier;
 }
 
@@ -290,14 +287,12 @@ int ResourcePool::AddResourceByPath(const std::string& path, std::shared_ptr<Mma
 {
     int rval = MBError::IN_DICT;
 
-    pthread_mutex_lock(&pool_mutex);
+    std::lock_guard<std::mutex> lock(pool_mutex);
     auto search = file_pool.find(path);
     if (search == file_pool.end()) {
         file_pool[path] = resource;
         rval = MBError::SUCCESS;
     }
-    pthread_mutex_unlock(&pool_mutex);
-
     return rval;
 }
 
@@ -305,13 +300,11 @@ MmapFileIO* ResourcePool::GetResourceByPath(const std::string& path)
 {
     MmapFileIO* resource = nullptr;
 
-    pthread_mutex_lock(&pool_mutex);
+    std::lock_guard<std::mutex> lock(pool_mutex);
     auto search = file_pool.find(path);
     if (search != file_pool.end()) {
         resource = search->second.get();
     }
-    pthread_mutex_unlock(&pool_mutex);
-
     return resource;
 }
 

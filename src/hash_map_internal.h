@@ -84,9 +84,13 @@ private:
         uint32_t bucket_size; // sizeof(Bucket)
         uint32_t stripes; // probe stride (kept for compatibility); now 1
         uint32_t reserved;
-        // Odd while a writer resets or compacts the map, even while readable.
+        // Odd while a writer resets the map, even while readable.
         std::atomic<uint64_t> generation;
-        uint8_t read_padding[8];
+        // Largest live linear-probe displacement. It bounds every lookup even
+        // when churn has consumed all empty buckets. The single writer
+        // publishes increases before the new bucket hash and decreases only
+        // after deleting the old bucket.
+        std::atomic<uint64_t> max_probe;
 
         // Writer-updated statistics live on a separate cache line so normal
         // inserts/removes do not invalidate the reader control cache line.
@@ -173,9 +177,10 @@ private:
         uint32_t len, uint64_t& stable_meta) const;
     bool write_full_body(BucketFull& bucket, const uint8_t* key,
         uint32_t len, size_t ref_offset);
-    bool validate_backward_shift(size_t erased_index) const;
-    void move_bucket(size_t source_index, size_t destination_index);
-    void backward_shift_erase(size_t erased_index);
+    uint64_t bucket_hash(size_t index) const;
+    void publish_max_probe(uint64_t probe);
+    void recompute_max_probe();
+    void collapse_trailing_tombstones(size_t erased_index);
 
     // Probe
     inline size_t index_of(uint64_t h) const { return static_cast<size_t>(h) & hdr_->mask; }

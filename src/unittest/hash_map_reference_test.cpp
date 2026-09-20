@@ -4,7 +4,6 @@
 
 #include <cstdint>
 #include <filesystem>
-#include <limits>
 #include <memory>
 #include <string>
 #include <unistd.h>
@@ -64,6 +63,11 @@ public:
         return map.hdr_->tombstones.load(std::memory_order_relaxed);
     }
 
+    static uint64_t MaxProbe(const HashMapImpl& map)
+    {
+        return map.hdr_->max_probe.load(std::memory_order_relaxed);
+    }
+
     static uint64_t Generation(const HashMapImpl& map)
     {
         return map.hdr_->generation.load(std::memory_order_relaxed);
@@ -74,16 +78,6 @@ public:
         map.hdr_->generation.store(generation, std::memory_order_release);
     }
 
-    static void SetFullBucketSequence(
-        HashMapImpl& map, size_t index, uint32_t sequence)
-    {
-        HashMapImpl::BucketFull* bucket = map.bucket_full_ptr(index);
-        const uint64_t old_meta
-            = bucket->key_meta.load(std::memory_order_relaxed);
-        const uint64_t new_meta = static_cast<uint32_t>(old_meta)
-            | (static_cast<uint64_t>(sequence) << 32);
-        bucket->key_meta.store(new_meta, std::memory_order_release);
-    }
 };
 
 } // namespace mabain
@@ -170,7 +164,7 @@ protected:
     std::string base_;
 };
 
-TEST_F(HashMapReferenceEraseTest, CompactsWrapAroundCollisionChain)
+TEST_F(HashMapReferenceEraseTest, PreservesWrapAroundCollisionChain)
 {
     for (bool compact : { true, false }) {
         std::unique_ptr<HashMapImpl> map = Open(compact);
@@ -185,9 +179,10 @@ TEST_F(HashMapReferenceEraseTest, CompactsWrapAroundCollisionChain)
             = HashMapReferenceTestAccess::Generation(*map);
         ASSERT_EQ(Erase(*map, keys[1]), MBError::SUCCESS);
         EXPECT_EQ(HashMapReferenceTestAccess::Generation(*map),
-            generation_before + 2);
+            generation_before);
         EXPECT_EQ(HashMapReferenceTestAccess::Used(*map), 5U);
-        EXPECT_EQ(HashMapReferenceTestAccess::Tombstones(*map), 0U);
+        EXPECT_EQ(HashMapReferenceTestAccess::Tombstones(*map), 1U);
+        EXPECT_EQ(HashMapReferenceTestAccess::MaxProbe(*map), 5U);
 
         size_t value = 0;
         EXPECT_FALSE(Get(*map, keys[1], value));
@@ -198,15 +193,16 @@ TEST_F(HashMapReferenceEraseTest, CompactsWrapAroundCollisionChain)
             EXPECT_EQ(value, index + 100);
         }
 
-        const std::vector<size_t> surviving { 0, 2, 3, 4, 5 };
-        for (size_t offset = 0; offset < surviving.size(); ++offset) {
+        EXPECT_EQ(HashMapReferenceTestAccess::BucketHash(
+                      *map, (home + 1) & (kCapacity - 1)),
+            1U);
+        for (size_t offset = 2; offset < keys.size(); ++offset) {
             const size_t bucket = (home + offset) & (kCapacity - 1);
             EXPECT_EQ(HashMapReferenceTestAccess::BucketHash(*map, bucket),
-                HashMapReferenceTestAccess::Hash(
-                    *map, keys[surviving[offset]]));
+                HashMapReferenceTestAccess::Hash(*map, keys[offset]));
         }
         EXPECT_EQ(HashMapReferenceTestAccess::BucketHash(
-                      *map, (home + surviving.size()) & (kCapacity - 1)),
+                      *map, (home + keys.size()) & (kCapacity - 1)),
             0U);
         Close(map);
     }
@@ -227,7 +223,7 @@ TEST_F(HashMapReferenceEraseTest, DeletesFromCompletelyFullTable)
         const size_t erased = kCapacity / 2;
         ASSERT_EQ(Erase(*map, keys[erased]), MBError::SUCCESS);
         EXPECT_EQ(HashMapReferenceTestAccess::Used(*map), kCapacity - 1);
-        EXPECT_EQ(HashMapReferenceTestAccess::Tombstones(*map), 0U);
+        EXPECT_EQ(HashMapReferenceTestAccess::Tombstones(*map), 1U);
 
         size_t value = 0;
         EXPECT_FALSE(Get(*map, keys[erased], value));
@@ -248,7 +244,7 @@ TEST_F(HashMapReferenceEraseTest, DeletesFromCompletelyFullTable)
     }
 }
 
-TEST_F(HashMapReferenceEraseTest, ChurnDoesNotAccumulateTombstones)
+TEST_F(HashMapReferenceEraseTest, ChurnPreservesAllLiveEntries)
 {
     constexpr size_t kLiveKeys = 700;
     constexpr size_t kRounds = 20000;
@@ -274,7 +270,9 @@ TEST_F(HashMapReferenceEraseTest, ChurnDoesNotAccumulateTombstones)
         }
 
         EXPECT_EQ(HashMapReferenceTestAccess::Used(*map), kLiveKeys);
-        EXPECT_EQ(HashMapReferenceTestAccess::Tombstones(*map), 0U);
+        EXPECT_LE(HashMapReferenceTestAccess::Tombstones(*map),
+            kCapacity - kLiveKeys);
+        EXPECT_LT(HashMapReferenceTestAccess::MaxProbe(*map), kCapacity);
         for (size_t slot = 0; slot < kLiveKeys; ++slot) {
             size_t value = 0;
             ASSERT_TRUE(Get(*map, live_keys[slot], value)) << slot;
@@ -296,6 +294,7 @@ TEST_F(HashMapReferenceEraseTest, WriterRestartResetsInterruptedGeneration)
         map = Open(compact);
         EXPECT_EQ(HashMapReferenceTestAccess::Used(*map), 0U);
         EXPECT_EQ(HashMapReferenceTestAccess::Tombstones(*map), 0U);
+        EXPECT_EQ(HashMapReferenceTestAccess::MaxProbe(*map), 0U);
         EXPECT_EQ(HashMapReferenceTestAccess::Generation(*map) & 1U, 0U);
         ASSERT_EQ(Put(*map, "after-restart", 22), MBError::SUCCESS);
         size_t value = 0;
@@ -305,37 +304,31 @@ TEST_F(HashMapReferenceEraseTest, WriterRestartResetsInterruptedGeneration)
     }
 }
 
-TEST_F(HashMapReferenceEraseTest, ValidationFailureLeavesTableUnchanged)
+TEST_F(HashMapReferenceEraseTest, CollapsesOnlyTrailingTombstones)
 {
-    std::unique_ptr<HashMapImpl> map = Open(false);
-    const size_t home = 17;
-    const std::vector<std::string> keys = KeysForHome(*map, home, 3);
-    for (size_t index = 0; index < keys.size(); ++index)
-        ASSERT_EQ(Put(*map, keys[index], index + 1), MBError::SUCCESS);
+    for (bool compact : { true, false }) {
+        std::unique_ptr<HashMapImpl> map = Open(compact);
+        const size_t home = 17;
+        const std::vector<std::string> keys = KeysForHome(*map, home, 3);
+        for (size_t index = 0; index < keys.size(); ++index)
+            ASSERT_EQ(Put(*map, keys[index], index + 1), MBError::SUCCESS);
 
-    const uint64_t generation_before
-        = HashMapReferenceTestAccess::Generation(*map);
-    HashMapReferenceTestAccess::SetFullBucketSequence(*map,
-        (home + 1) & (kCapacity - 1),
-        std::numeric_limits<uint32_t>::max() - 1);
-    EXPECT_EQ(Erase(*map, keys[0]), MBError::TRY_AGAIN);
-    EXPECT_EQ(HashMapReferenceTestAccess::Generation(*map),
-        generation_before);
-    EXPECT_EQ(HashMapReferenceTestAccess::Used(*map), keys.size());
-    EXPECT_EQ(HashMapReferenceTestAccess::Tombstones(*map), 0U);
+        EXPECT_EQ(HashMapReferenceTestAccess::MaxProbe(*map), 2U);
+        ASSERT_EQ(Erase(*map, keys[2]), MBError::SUCCESS);
+        EXPECT_EQ(HashMapReferenceTestAccess::Tombstones(*map), 0U);
+        EXPECT_EQ(HashMapReferenceTestAccess::MaxProbe(*map), 1U);
 
-    for (size_t index = 0; index < keys.size(); ++index) {
+        ASSERT_EQ(Erase(*map, keys[1]), MBError::SUCCESS);
+        EXPECT_EQ(HashMapReferenceTestAccess::Tombstones(*map), 0U);
+        EXPECT_EQ(HashMapReferenceTestAccess::MaxProbe(*map), 0U);
+
         size_t value = 0;
-        ASSERT_TRUE(Get(*map, keys[index], value)) << index;
-        EXPECT_EQ(value, index + 1) << index;
+        ASSERT_TRUE(Get(*map, keys[0], value));
+        EXPECT_EQ(value, 1U);
+        EXPECT_FALSE(Get(*map, keys[1], value));
+        EXPECT_FALSE(Get(*map, keys[2], value));
+        Close(map);
     }
-
-    HashMapReferenceTestAccess::SetGeneration(
-        *map, std::numeric_limits<uint64_t>::max() - 1);
-    EXPECT_EQ(Erase(*map, keys[0]), MBError::NO_RESOURCE);
-    EXPECT_EQ(HashMapReferenceTestAccess::Used(*map), keys.size());
-    EXPECT_EQ(HashMapReferenceTestAccess::Tombstones(*map), 0U);
-    Close(map);
 }
 
 } // namespace

@@ -23,7 +23,6 @@
 #include <condition_variable>
 #include <memory>
 #include <mutex>
-#include <pthread.h>
 #include <string>
 #include <unordered_map>
 
@@ -93,7 +92,7 @@ private:
 
     std::unordered_map<std::string, std::shared_ptr<MmapFileIO>> file_pool;
     std::unordered_map<std::string, std::shared_ptr<RebuildBarrier>> rebuild_barrier_pool;
-    pthread_mutex_t pool_mutex;
+    std::mutex pool_mutex;
 };
 
 }

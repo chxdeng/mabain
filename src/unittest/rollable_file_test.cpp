@@ -173,6 +173,26 @@ TEST_F(RollableFileTest, Reserve_test)
     EXPECT_EQ(ptr != NULL, true);
 }
 
+TEST_F(RollableFileTest, ReserveLimitRejectsCrossingBeforeChangingOffset)
+{
+    rfile = new RollableFile(std::string(ROLLABLE_FILE_TEST_DIR) + "/_mabain_limit_i",
+        4 * ONE_MEGA, 4 * ONE_MEGA,
+        CONSTS::ACCESS_MODE_WRITER, 4);
+    ASSERT_NE(rfile, nullptr);
+
+    uint8_t* ptr = nullptr;
+    size_t offset = 4090;
+    rfile->SetReserveLimit(4096);
+    EXPECT_EQ(rfile->Reserve(offset, 8, ptr), MBError::OUT_OF_BOUND);
+    EXPECT_EQ(offset, 4090u);
+    EXPECT_EQ(ptr, nullptr);
+
+    rfile->ClearReserveLimit();
+    EXPECT_EQ(rfile->Reserve(offset, 8, ptr), MBError::SUCCESS);
+    EXPECT_EQ(offset, 4090u);
+    EXPECT_NE(ptr, nullptr);
+}
+
 TEST_F(RollableFileTest, GetShmPtr_test)
 {
     rfile = new RollableFile(std::string(ROLLABLE_FILE_TEST_DIR) + "/_mabain_i",

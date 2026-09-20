@@ -25,6 +25,8 @@ using namespace mabain;
 
 namespace {
 
+constexpr uint64_t kAsyncQueueAckFlagForTest = uint64_t { 1 } << 63;
+
 class AsyncWriterDeadlineTest : public ::testing::Test {
 protected:
     void SetUp() override
@@ -239,6 +241,115 @@ TEST_F(AsyncWriterDeadlineTest, UnfinishedSlotIsSkippedAfterDeadline)
     EXPECT_TRUE(first->num_reader.compare_exchange_strong(expected, 1,
         std::memory_order_acq_rel, std::memory_order_acquire));
     first->num_reader.store(0, std::memory_order_release);
+}
+
+TEST(AsyncWriterDeadlineRestartTest, CompletedHeadSkipsReservationTimeout)
+{
+    const std::string db_dir =
+        "/var/tmp/mabain_async_ack_restart_test_" + std::to_string(getpid());
+    const std::string db_path = db_dir + "/";
+    const std::string key = "ack-restart-key";
+    const std::string value = "ack-restart-value";
+
+    std::error_code ec;
+    std::filesystem::remove_all(db_dir, ec);
+    ec.clear();
+    ASSERT_TRUE(std::filesystem::create_directories(db_dir, ec));
+    ASSERT_FALSE(ec);
+
+    MBConfig config = { 0 };
+    config.mbdir = db_path.c_str();
+    config.options = CONSTS::WriterOptions();
+    config.memcap_index = 64 * 1024 * 1024LL;
+    config.memcap_data = 64 * 1024 * 1024LL;
+    config.queue_size = 4;
+    config.queue_dir = db_dir.c_str();
+    config.async_queue_reservation_timeout_sec = 2;
+
+    uint32_t base = 0;
+    {
+        DB setup_db(config);
+        ASSERT_TRUE(setup_db.is_open()) << setup_db.StatusStr();
+        Dict* dict = setup_db.GetDictPtr();
+        ASSERT_NE(dict, nullptr);
+        IndexHeader* header = dict->GetHeaderPtr();
+        AsyncNode* queue = dict->GetAsyncQueuePtr();
+        std::atomic<uint64_t>* reservation_time_ms =
+            dict->GetAsyncQueueReservationTimePtr();
+        ASSERT_NE(header, nullptr);
+        ASSERT_NE(queue, nullptr);
+        ASSERT_NE(reservation_time_ms, nullptr);
+
+        base = header->writer_index.load(std::memory_order_acquire);
+        ASSERT_EQ(base,
+            header->queue_index.load(std::memory_order_acquire));
+
+        const uint32_t first_slot = base % header->async_queue_size;
+        const uint32_t second_slot = (base + 1) % header->async_queue_size;
+        AsyncNode& first = queue[first_slot];
+        AsyncNode& second = queue[second_slot];
+
+        first.num_reader.store(0, std::memory_order_release);
+        first.type = MABAIN_ASYNC_TYPE_NONE;
+        first.in_use.store(false, std::memory_order_release);
+        reservation_time_ms[first_slot].store(
+            kAsyncQueueAckFlagForTest | static_cast<uint64_t>(base),
+            std::memory_order_release);
+
+        std::copy(key.begin(), key.end(), second.key);
+        std::copy(value.begin(), value.end(), second.data);
+        second.key_len = static_cast<int>(key.size());
+        second.data_len = static_cast<int>(value.size());
+        second.overwrite = true;
+        second.type = MABAIN_ASYNC_TYPE_ADD;
+        second.num_reader.store(1, std::memory_order_release);
+        reservation_time_ms[second_slot].store(
+            SHMQ_GetMonotonicTimeMs(), std::memory_order_release);
+        second.in_use.store(true, std::memory_order_release);
+
+        header->queue_index.store(base + 2, std::memory_order_release);
+    }
+
+    // Drop process-local mappings so reopen exercises persisted queue state.
+    ResourcePool::getInstance().RemoveAll();
+
+    config.options = CONSTS::WriterOptions() | CONSTS::ASYNC_WRITER_MODE;
+    {
+        DB reopen_db(config);
+        ASSERT_TRUE(reopen_db.is_open()) << reopen_db.StatusStr();
+        Dict* dict = reopen_db.GetDictPtr();
+        ASSERT_NE(dict, nullptr);
+        IndexHeader* header = dict->GetHeaderPtr();
+        AsyncNode* queue = dict->GetAsyncQueuePtr();
+        ASSERT_NE(header, nullptr);
+        ASSERT_NE(queue, nullptr);
+
+        AsyncNode& second =
+            queue[(base + 1) % header->async_queue_size];
+        const auto deadline = std::chrono::steady_clock::now()
+            + std::chrono::seconds(1);
+        while (second.in_use.load(std::memory_order_acquire)
+            && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+
+        ASSERT_FALSE(second.in_use.load(std::memory_order_acquire));
+        EXPECT_EQ(header->writer_index.load(std::memory_order_acquire),
+            base + 2);
+
+        MBData data;
+        detail::SearchEngine engine(*dict);
+        ASSERT_EQ(engine.find(
+                      reinterpret_cast<const uint8_t*>(key.data()),
+                      static_cast<int>(key.size()), data),
+            MBError::SUCCESS);
+        EXPECT_EQ(std::string(
+                      reinterpret_cast<const char*>(data.buff), data.data_len),
+            value);
+    }
+
+    ResourcePool::getInstance().RemoveAll();
+    std::filesystem::remove_all(db_dir, ec);
 }
 
 } // namespace

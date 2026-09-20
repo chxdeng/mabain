@@ -381,6 +381,12 @@ int ResourceCollection::StartupEvacuate()
             startup_rebuild_.reusable_index_block_count)
         || HasPendingReusableBlocks(startup_rebuild_.reusable_data_block,
             startup_rebuild_.reusable_data_block_count);
+    // TODO(startup-rebuild): Close the inactive-to-active reader-registration
+    // gap. A reader that observed tracking disabled may already be using a
+    // source block when tracking is enabled here. Before evacuated blocks are
+    // made reusable, coordinate this transition with the rebuild barrier (or
+    // an equivalent lifetime mechanism); lock-free edge validation occurs
+    // after mapped-memory access and does not pin source blocks.
     header->reader_epoch_tracking_active.store(tracking_needed_before ? 1 : 0, MEMORY_ORDER_WRITER);
 
     const bool has_quarantined_blocks =
@@ -827,7 +833,9 @@ void ResourceCollection::Finish()
             index_free_lists->Empty();
         if (data_free_lists != NULL)
             data_free_lists->Empty();
-        ProcessRCTree();
+        int rval = ProcessRCTree();
+        if (rval != MBError::SUCCESS)
+            throw rval;
     }
 
     header->rc_m_index_off_pre = 0;
@@ -1087,35 +1095,61 @@ void ResourceCollection::ReorderBuffers()
     header->n_states = node_cnt;
 }
 
-void ResourceCollection::ProcessRCTree()
+int ResourceCollection::ProcessRCTree()
 {
     Logger::Log(LOG_LEVEL_INFO, "resource collection done, traversing the rc tree %llu entries", header->rc_count);
 
-    int count = 0;
-    int rval;
-    DB db_itr(db_ref);
-    for (DB::iterator iter = db_itr.begin(false, true); iter != db_itr.end(); ++iter) {
-        iter.value.options = 0;
-        rval = dict->Add((const uint8_t*)iter.key.data(), iter.key.size(), iter.value, true);
-        if (rval != MBError::SUCCESS)
-            Logger::Log(LOG_LEVEL_WARN, "failed to add: %s", MBError::get_error_str(rval));
-        if (count++ > RC_TASK_CHECK) {
-            count = 0;
-            async_writer_ptr->ProcessTask(NUM_ASYNC_TASK, false);
-        }
+    const int64_t expected_count = header->rc_count;
+    int64_t replayed_count = 0;
+    int rval = MBError::SUCCESS;
 
-        if (header->m_index_offset > rc_index_offset || header->m_data_offset > rc_data_offset) {
-            Logger::Log(LOG_LEVEL_ERROR, "not enough space for insertion: %llu, %llu",
-                header->m_index_offset, header->m_data_offset);
-            break;
+    // Do not let main-tree allocation reach the temporary RC tree. These
+    // limits are process-local and affect only this writer's reserve calls.
+    dmm->SetReserveLimit(rc_index_offset);
+    dict->SetReserveLimit(rc_data_offset);
+
+    try {
+        DB db_itr(db_ref);
+        for (DB::iterator iter = db_itr.begin(false, true);
+             iter != db_itr.end(); ++iter) {
+            iter.value.options = 0;
+            rval = dict->Add((const uint8_t*)iter.key.data(), iter.key.size(),
+                iter.value, true);
+            if (rval != MBError::SUCCESS)
+                break;
+            replayed_count++;
         }
+    } catch (int error) {
+        dmm->ClearReserveLimit();
+        dict->ClearReserveLimit();
+        rval = error;
+    } catch (...) {
+        dmm->ClearReserveLimit();
+        dict->ClearReserveLimit();
+        throw;
     }
 
+    dmm->ClearReserveLimit();
+    dict->ClearReserveLimit();
+
+    if (rval != MBError::SUCCESS || replayed_count != expected_count) {
+        if (rval == MBError::SUCCESS)
+            rval = MBError::READ_ERROR;
+        Logger::Log(LOG_LEVEL_ERROR,
+            "failed to replay rc tree: %s, replayed %lld of %lld",
+            MBError::get_error_str(rval), replayed_count, expected_count);
+        header->rc_flag.store(ASYNC_RC_FAILED, std::memory_order_release);
+        return rval;
+    }
+
+    // All RC entries are older than the queue operations accumulated during
+    // replay. Publish completion before the async writer resumes that queue.
     header->rc_count = 0;
     header->rc_root_offset.store(0, MEMORY_ORDER_WRITER);
 
     // Clear the rc tree
     dmm->ClearRootEdges_RC();
+    return MBError::SUCCESS;
 }
 
 int ResourceCollection::ExceptionRecovery()
@@ -1127,6 +1161,8 @@ int ResourceCollection::ExceptionRecovery()
     if (!db_ref.is_open())
         return db_ref.Status();
 
+    const bool retry_retained_rc =
+        header->rc_flag.load(std::memory_order_acquire) == ASYNC_RC_FAILED;
     int rval = MBError::SUCCESS;
     if (header->rc_m_index_off_pre != 0 && header->rc_m_data_off_pre != 0) {
         Logger::Log(LOG_LEVEL_WARN, "previous rc was not completed successfully, retrying...");
@@ -1138,10 +1174,36 @@ int ResourceCollection::ExceptionRecovery()
                 rval = err;
         }
 
-        if (rval != MBError::SUCCESS) {
+        if (rval != MBError::SUCCESS && !retry_retained_rc) {
             Logger::Log(LOG_LEVEL_ERROR, "failed to run rc recovery: %s, clear db!!!", MBError::get_error_str(rval));
             dict->RemoveAll();
         }
+    }
+
+    if (retry_retained_rc) {
+        if (rval != MBError::SUCCESS) {
+            Logger::Log(LOG_LEVEL_ERROR,
+                "failed to prepare retained rc tree replay: %s",
+                MBError::get_error_str(rval));
+            return rval;
+        }
+
+        if (header->rc_root_offset.load(MEMORY_ORDER_READER) == 0
+            || header->rc_count <= 0) {
+            Logger::Log(LOG_LEVEL_ERROR,
+                "failed rc replay state has no retained rc tree");
+            return MBError::READ_ERROR;
+        }
+
+        rc_index_offset = dmm->GetResourceCollectionOffset();
+        rc_data_offset = dict->GetResourceCollectionOffset();
+        rval = ProcessRCTree();
+        if (rval == MBError::SUCCESS) {
+            header->rc_m_index_off_pre = 0;
+            header->rc_m_data_off_pre = 0;
+            header->rc_flag.store(ASYNC_RC_IDLE, std::memory_order_release);
+        }
+        return rval;
     }
 
     header->rc_root_offset = 0;

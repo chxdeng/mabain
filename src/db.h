@@ -240,6 +240,8 @@ public:
     static bool PrefixCacheConfigured(int options) { return (options & CONSTS::OPTION_PREFIX_CACHE) != 0; }
 
 private:
+    class ReaderEpochGuard;
+
     // Positive values identify an acquired guard, zero means no guard is
     // needed, and negative values encode the MBError that prevented guarding.
     int64_t BeginReaderEpochGuard() const;
