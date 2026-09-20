@@ -1095,10 +1095,12 @@ int DictMem::ClearRootEdges_RC() const
     return MBError::SUCCESS;
 }
 
-void DictMem::ClearMem() const
+int DictMem::ClearMem() const
 {
     if (options & CONSTS::OPTION_JEMALLOC) {
-        kv_file->ResetJemalloc();
+        const int rval = kv_file->ResetJemalloc();
+        if (rval != MBError::SUCCESS)
+            return rval;
         header->n_states = 0;
     } else {
         int root_node_size = free_lists->GetAlignmentSize(node_size[NUM_ALPHABET - 1]);
@@ -1109,6 +1111,7 @@ void DictMem::ClearMem() const
     header->n_edges = 0;
     header->edge_str_size = 0;
     header->pending_index_buff_size = 0;
+    return MBError::SUCCESS;
 }
 
 int DictMem::ReadNode(size_t& node_off, EdgePtrs& edge_ptrs,

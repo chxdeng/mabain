@@ -735,6 +735,24 @@ void RollableFile::Purge() const
 // Reset jemalloc
 int RollableFile::ResetJemalloc()
 {
+    if (!(mode & CONSTS::OPTION_JEMALLOC))
+        return MBError::INVALID_ARG;
+    if (!(mode & CONSTS::ACCESS_MODE_WRITER))
+        return MBError::NOT_ALLOWED;
+
+    // A reopened writer may not have touched the value arena yet. Attach to
+    // an existing block zero so this RollableFile owns the arena before reset.
+    // An absent block means there is no allocator state to reset.
+    if (files.empty() || files[0] == nullptr) {
+        const std::string block_zero_path = path + "0";
+        if (access(block_zero_path.c_str(), F_OK) != 0)
+            return errno == ENOENT ? MBError::SUCCESS : MBError::OPEN_FAILURE;
+
+        const int rval = CheckAndOpenFile(0, false);
+        if (rval != MBError::SUCCESS)
+            return rval;
+    }
+
     if (!owns_jemalloc_arena)
         return MBError::NOT_ALLOWED;
     return DestroyJemallocArena(true);

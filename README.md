@@ -171,7 +171,7 @@ mkdir ./tmp_dir
   concurrently.  
 * Mabain DB handle is not thread-safe. Each thread must have open its own DB
   instance when Using in multi-thread context.
-* The longest key supported is 256 bytes.  
+* The longest key supported by the radix-tree database is 255 bytes.
 * The value/data size can not be bigger than 32767 bytes.  
 * Using Mabain on network storage (NAS, SAN, NFS, SMB, etc..) has not been
   tested. Your mileage may vary  

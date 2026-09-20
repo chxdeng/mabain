@@ -387,7 +387,8 @@ int Dict::Add(const uint8_t* key, int len, MBData& data, bool overwrite)
     if (!(options & CONSTS::ACCESS_MODE_WRITER)) {
         return MBError::NOT_ALLOWED;
     }
-    if (len > CONSTS::MAX_KEY_LENGHTH || data.data_len > CONSTS::MAX_DATA_SIZE || len <= 0 || data.data_len <= 0)
+    // A radix edge stores its length in one byte; zero marks an empty edge.
+    if (len >= CONSTS::MAX_KEY_LENGHTH || data.data_len > CONSTS::MAX_DATA_SIZE || len <= 0 || data.data_len <= 0)
         return MBError::OUT_OF_BOUND;
 
     EdgePtrs edge_ptrs;
@@ -1083,19 +1084,34 @@ int Dict::RemoveAll()
     if (prefix_cache)
         prefix_cache->InvalidateAll();
 
-    mm.ClearMem(); // clear memory will re-initialize jemalloc
+    rval = mm.ClearMem(); // clear memory will re-initialize jemalloc
+    if (rval != MBError::SUCCESS) {
+        Logger::Log(LOG_LEVEL_ERROR,
+            "RemoveAll failed to reset the index allocator: %s",
+            MBError::get_error_str(rval));
+        return rval;
+    }
     if (options & CONSTS::OPTION_JEMALLOC) {
         mm.InitRootNode();
         const int reset_rval = kv_file->ResetJemalloc();
-        if (reset_rval == MBError::SUCCESS && header->pfxcache_size > 0) {
+        if (reset_rval != MBError::SUCCESS) {
+            Logger::Log(LOG_LEVEL_ERROR,
+                "RemoveAll failed to reset the data allocator: %s",
+                MBError::get_error_str(reset_rval));
+            return reset_rval;
+        }
+        if (header->pfxcache_size > 0) {
             // The embedded cache occupies the beginning of data block 0. A
             // successful reset rewinds jemalloc's cursor, so restore the
             // user-data allocation floor before any post-RemoveAll Add can
-            // reuse cache storage. Preserve the existing behavior when this
-            // handle does not own the arena and ResetJemalloc is not allowed.
+            // reuse cache storage.
             rval = kv_file->ReseedJemalloc(GetStartDataOffset());
-            if (rval != MBError::SUCCESS)
+            if (rval != MBError::SUCCESS) {
+                Logger::Log(LOG_LEVEL_ERROR,
+                    "RemoveAll failed to reseed the data allocator: %s",
+                    MBError::get_error_str(rval));
                 return rval;
+            }
         }
         for (int c = 0; c < NUM_ALPHABET; c++) {
             rval = mm.ClearRootEdge(c);
@@ -1110,6 +1126,12 @@ int Dict::RemoveAll()
         }
         header->m_data_offset = GetStartDataOffset();
         free_lists->Empty();
+    }
+    if (rval != MBError::SUCCESS) {
+        Logger::Log(LOG_LEVEL_ERROR,
+            "RemoveAll failed to clear the radix root: %s",
+            MBError::get_error_str(rval));
+        return rval;
     }
     header->pending_data_buff_size = 0;
     header->count = 0;

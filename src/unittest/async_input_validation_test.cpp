@@ -87,6 +87,36 @@ TEST_F(AsyncInputValidationTest, PublicAddRejectsInvalidPointersAndLengths)
     EXPECT_EQ(header->queue_index.load(std::memory_order_acquire), queue_index);
 }
 
+TEST_F(AsyncInputValidationTest, RadixKeyLengthBoundary)
+{
+    const std::string max_key(
+        static_cast<size_t>(CONSTS::MAX_KEY_LENGHTH - 1), 'a');
+    const std::string rejected_key(
+        static_cast<size_t>(CONSTS::MAX_KEY_LENGHTH), 'b');
+    const std::string value("v");
+
+    ASSERT_EQ(db->Add(max_key, value), MBError::SUCCESS);
+    MBData found;
+    ASSERT_EQ(db->Find(max_key, found), MBError::SUCCESS);
+    ASSERT_EQ(found.data_len, 1);
+    EXPECT_EQ(found.buff[0], static_cast<uint8_t>('v'));
+    ASSERT_EQ(dict->Count(), 1);
+
+    EXPECT_EQ(db->Add(rejected_key, value), MBError::OUT_OF_BOUND);
+    EXPECT_EQ(dict->Count(), 1);
+
+    uint8_t value_byte = 'v';
+    MBData direct_data;
+    direct_data.buff = &value_byte;
+    direct_data.data_len = 1;
+    EXPECT_EQ(dict->Add(
+                  reinterpret_cast<const uint8_t*>(rejected_key.data()),
+                  static_cast<int>(rejected_key.size()), direct_data, false),
+        MBError::OUT_OF_BOUND);
+    direct_data.buff = nullptr;
+    EXPECT_EQ(dict->Count(), 1);
+}
+
 TEST_F(AsyncInputValidationTest, QueueBoundaryRejectsInvalidInputBeforeReservation)
 {
     const char key[] = "key";

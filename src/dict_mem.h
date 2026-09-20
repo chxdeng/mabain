@@ -89,7 +89,7 @@ public:
     inline void WriteEdge(const EdgePtrs& edge_ptrs) const;
     void WriteData(const uint8_t* buff, unsigned len, size_t offset) const;
     inline size_t GetRootOffset() const;
-    void ClearMem() const;
+    int ClearMem() const;
     const int* GetNodeSizePtr() const;
 
     void InitLockFreePtr(LockFree* lf);

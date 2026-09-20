@@ -161,6 +161,10 @@ public:
     int Remove(const char* key, int len);
     int RemoveAsync(const char* key, int len);
     int Remove(const std::string& key);
+    // A synchronous reset failure leaves this handle in an error state. Close
+    // and reopen the DB before issuing further operations. In async-writer
+    // mode, RemoveAll only reports queue submission; worker reset failures are
+    // logged and likewise require the client to close and reopen the DB.
     int RemoveAll();
     int RemoveAllSync();
     // DB Backup

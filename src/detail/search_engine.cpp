@@ -257,6 +257,7 @@ namespace {
                         bound_key->push_back(static_cast<char>(key[0]));
                         bound_key->append(reinterpret_cast<const char*>(edge_label_ptr), edge_label_len);
                     }
+                    return lf_guard.stopOrReturn(root_edge_offset, MBError::NOT_EXIST);
                 }
                 rval = readBoundFromRootEdge(edge_ptrs, data, root_key, bound_key, lf_guard);
                 return lf_guard.stopOrReturn(root_edge_offset, rval);
@@ -283,6 +284,15 @@ namespace {
                 rval = dict.ReadDataFromEdge(data, edge_ptrs);
                 if (rval == MBError::SUCCESS)
                     data.match_len += edge_len;
+            }
+        } else {
+            int label_cmp = len > 1 ? memcmp(edge_label_ptr, key + 1, len - 1) : 0;
+            if (label_cmp < 0) {
+                bound_state.use_curr_edge = true;
+                if (bound_key) {
+                    bound_key->push_back(static_cast<char>(key[0]));
+                    bound_key->append(reinterpret_cast<const char*>(edge_label_ptr), edge_label_len);
+                }
             }
         }
 

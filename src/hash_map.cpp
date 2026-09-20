@@ -331,7 +331,7 @@ bool HashMapImpl::Get(const uint8_t* key, int len, size_t& ref_offset) const
         const uint64_t generation_before
             = hdr_->generation.load(std::memory_order_acquire);
         if ((generation_before & 1U) != 0)
-            return false;
+            continue;
 
         bool retry = false;
         for (size_t probe = 0; probe < capacity; ++probe) {
@@ -345,8 +345,16 @@ bool HashMapImpl::Get(const uint8_t* key, int len, size_t& ref_offset) const
                 BucketCompact* bucket = bucket_compact_ptr(index);
                 const uint64_t hash_before
                     = bucket->hash.load(std::memory_order_acquire);
-                if (hash_before == kEmptyHash)
-                    return false;
+                if (hash_before == kEmptyHash) {
+                    const uint64_t generation_after
+                        = hdr_->generation.load(std::memory_order_acquire);
+                    if (generation_before == generation_after
+                        && (generation_after & 1U) == 0) {
+                        return false;
+                    }
+                    retry = true;
+                    break;
+                }
                 if (hash_before == kTombstoneHash || hash_before != hash)
                     continue;
 
@@ -369,8 +377,16 @@ bool HashMapImpl::Get(const uint8_t* key, int len, size_t& ref_offset) const
             BucketFull* bucket = bucket_full_ptr(index);
             const uint64_t hash_before
                 = bucket->hash.load(std::memory_order_acquire);
-            if (hash_before == kEmptyHash)
-                return false;
+            if (hash_before == kEmptyHash) {
+                const uint64_t generation_after
+                    = hdr_->generation.load(std::memory_order_acquire);
+                if (generation_before == generation_after
+                    && (generation_after & 1U) == 0) {
+                    return false;
+                }
+                retry = true;
+                break;
+            }
             if (hash_before == kTombstoneHash || hash_before != hash)
                 continue;
 
@@ -420,8 +436,14 @@ bool HashMapImpl::Get(const uint8_t* key, int len, size_t& ref_offset) const
             ref_offset = candidate;
             return true;
         }
-        if (!retry)
-            return false;
+        if (!retry) {
+            const uint64_t generation_after
+                = hdr_->generation.load(std::memory_order_acquire);
+            if (generation_before == generation_after
+                && (generation_after & 1U) == 0) {
+                return false;
+            }
+        }
     }
     return false;
 }
@@ -511,6 +533,129 @@ int HashMapImpl::Put(const uint8_t* key, int len, size_t ref_offset, bool overwr
     return MBError::SUCCESS;
 }
 
+bool HashMapImpl::validate_backward_shift(size_t erased_index) const
+{
+    const size_t capacity = hdr_->capacity;
+    size_t hole = erased_index;
+
+    for (size_t scanned = 1; scanned < capacity; ++scanned) {
+        const size_t index = (erased_index + scanned) & hdr_->mask;
+        const uint64_t hash = compact_
+            ? bucket_compact_ptr(index)->hash.load(std::memory_order_relaxed)
+            : bucket_full_ptr(index)->hash.load(std::memory_order_relaxed);
+        if (hash == kEmptyHash)
+            return true;
+        // Reference-mode writers start with an empty table and this erase
+        // protocol never leaves tombstones behind. Seeing one here means the
+        // invariant was already broken, so do not begin a partial shift.
+        if (hash == kTombstoneHash)
+            return false;
+
+        const size_t home = index_of(hash);
+        const size_t hole_distance = (hole - home) & hdr_->mask;
+        const size_t index_distance = (index - home) & hdr_->mask;
+        if (hole_distance >= index_distance)
+            continue;
+
+        if (!compact_) {
+            const BucketFull* source = bucket_full_ptr(index);
+            const uint64_t source_meta
+                = source->key_meta.load(std::memory_order_acquire);
+            if ((KeyMetaSequence(source_meta) & 1U) != 0)
+                return false;
+
+            const BucketFull* destination = bucket_full_ptr(hole);
+            const uint32_t destination_sequence = KeyMetaSequence(
+                destination->key_meta.load(std::memory_order_relaxed));
+            if (destination_sequence
+                >= std::numeric_limits<uint32_t>::max() - 2) {
+                return false;
+            }
+        }
+        hole = index;
+    }
+    return true;
+}
+
+void HashMapImpl::move_bucket(
+    size_t source_index, size_t destination_index)
+{
+    if (compact_) {
+        BucketCompact* source = bucket_compact_ptr(source_index);
+        BucketCompact* destination = bucket_compact_ptr(destination_index);
+        const uint64_t hash = source->hash.load(std::memory_order_relaxed);
+        const size_t ref_offset
+            = source->ref_offset.load(std::memory_order_relaxed);
+        destination->ref_offset.store(ref_offset, std::memory_order_relaxed);
+        destination->hash.store(hash, std::memory_order_release);
+        source->hash.store(kTombstoneHash, std::memory_order_release);
+        return;
+    }
+
+    BucketFull* source = bucket_full_ptr(source_index);
+    BucketFull* destination = bucket_full_ptr(destination_index);
+    const uint64_t hash = source->hash.load(std::memory_order_relaxed);
+    const uint64_t source_meta
+        = source->key_meta.load(std::memory_order_relaxed);
+    const uint32_t destination_sequence = KeyMetaSequence(
+        destination->key_meta.load(std::memory_order_relaxed));
+    const uint32_t updating_sequence = (destination_sequence & 1U) != 0
+        ? destination_sequence + 2
+        : destination_sequence + 1;
+    destination->key_meta.store(PackKeyMeta(0, updating_sequence),
+        std::memory_order_release);
+    for (size_t word = 0; word < 3; ++word) {
+        destination->key_inline[word].store(
+            source->key_inline[word].load(std::memory_order_relaxed),
+            std::memory_order_relaxed);
+    }
+    destination->ref_offset.store(
+        source->ref_offset.load(std::memory_order_relaxed),
+        std::memory_order_relaxed);
+    destination->key_meta.store(
+        PackKeyMeta(KeyMetaLength(source_meta), updating_sequence + 1),
+        std::memory_order_release);
+    destination->hash.store(hash, std::memory_order_release);
+    source->hash.store(kTombstoneHash, std::memory_order_release);
+}
+
+void HashMapImpl::backward_shift_erase(size_t erased_index)
+{
+    const size_t capacity = hdr_->capacity;
+    size_t hole = erased_index;
+    if (compact_)
+        bucket_compact_ptr(hole)->hash.store(
+            kTombstoneHash, std::memory_order_release);
+    else
+        bucket_full_ptr(hole)->hash.store(
+            kTombstoneHash, std::memory_order_release);
+
+    for (size_t scanned = 1; scanned < capacity; ++scanned) {
+        const size_t index = (erased_index + scanned) & hdr_->mask;
+        const uint64_t hash = compact_
+            ? bucket_compact_ptr(index)->hash.load(std::memory_order_relaxed)
+            : bucket_full_ptr(index)->hash.load(std::memory_order_relaxed);
+        if (hash == kEmptyHash)
+            break;
+
+        const size_t home = index_of(hash);
+        const size_t hole_distance = (hole - home) & hdr_->mask;
+        const size_t index_distance = (index - home) & hdr_->mask;
+        if (hole_distance >= index_distance)
+            continue;
+
+        move_bucket(index, hole);
+        hole = index;
+    }
+
+    if (compact_)
+        bucket_compact_ptr(hole)->hash.store(
+            kEmptyHash, std::memory_order_release);
+    else
+        bucket_full_ptr(hole)->hash.store(
+            kEmptyHash, std::memory_order_release);
+}
+
 int HashMapImpl::Erase(const uint8_t* key, int len)
 {
     if (storage_mode_ == StorageMode::VALUE)
@@ -533,7 +678,6 @@ int HashMapImpl::Erase(const uint8_t* key, int len)
                 break;
             if (bucket_hash != hash)
                 continue;
-            bucket->hash.store(kTombstoneHash, std::memory_order_release);
         } else {
             BucketFull* bucket = bucket_full_ptr(index);
             const uint64_t bucket_hash
@@ -547,11 +691,26 @@ int HashMapImpl::Erase(const uint8_t* key, int len)
                     stable_meta)) {
                 continue;
             }
-            bucket->hash.store(kTombstoneHash, std::memory_order_release);
         }
 
+        const uint64_t generation
+            = hdr_->generation.load(std::memory_order_relaxed);
+        if ((generation & 1U) != 0)
+            return MBError::TRY_AGAIN;
+        if (generation >= std::numeric_limits<uint64_t>::max() - 1)
+            return MBError::NO_RESOURCE;
+        if (hdr_->tombstones.load(std::memory_order_relaxed) != 0
+            || !validate_backward_shift(index)) {
+            return MBError::TRY_AGAIN;
+        }
+
+        // No allocation or fallible operation is permitted after publishing
+        // the odd generation. Readers either see the complete old table or
+        // retry until the complete compacted table is published.
+        hdr_->generation.store(generation + 1, std::memory_order_release);
+        backward_shift_erase(index);
         hdr_->used.fetch_sub(1, std::memory_order_relaxed);
-        hdr_->tombstones.fetch_add(1, std::memory_order_relaxed);
+        hdr_->generation.store(generation + 2, std::memory_order_release);
         return MBError::SUCCESS;
     }
     return MBError::NOT_EXIST;

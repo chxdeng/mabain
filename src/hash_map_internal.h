@@ -21,6 +21,7 @@ namespace mabain {
 
 class HashMapValueState;
 class HashMapCollisionTestAccess;
+class HashMapReferenceTestAccess;
 class HashMapValueTestAccess;
 
 class HashMapImpl {
@@ -64,6 +65,7 @@ public:
 private:
     friend class HashMapValueState;
     friend class HashMapCollisionTestAccess;
+    friend class HashMapReferenceTestAccess;
     friend class HashMapValueTestAccess;
 
     enum class StorageMode : uint8_t {
@@ -82,7 +84,7 @@ private:
         uint32_t bucket_size; // sizeof(Bucket)
         uint32_t stripes; // probe stride (kept for compatibility); now 1
         uint32_t reserved;
-        // Odd while a writer is resetting the map, even while readable.
+        // Odd while a writer resets or compacts the map, even while readable.
         std::atomic<uint64_t> generation;
         uint8_t read_padding[8];
 
@@ -171,6 +173,9 @@ private:
         uint32_t len, uint64_t& stable_meta) const;
     bool write_full_body(BucketFull& bucket, const uint8_t* key,
         uint32_t len, size_t ref_offset);
+    bool validate_backward_shift(size_t erased_index) const;
+    void move_bucket(size_t source_index, size_t destination_index);
+    void backward_shift_erase(size_t erased_index);
 
     // Probe
     inline size_t index_of(uint64_t h) const { return static_cast<size_t>(h) & hdr_->mask; }

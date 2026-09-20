@@ -1107,7 +1107,8 @@ int DB::Add(const char* key, int len, MBData& mbdata, bool overwrite)
         return MBError::NOT_INITIALIZED;
     if (mbdata.buff == NULL)
         return MBError::INVALID_ARG;
-    if (len <= 0 || len > CONSTS::MAX_KEY_LENGHTH
+    // A radix edge stores its length in one byte; zero marks an empty edge.
+    if (len <= 0 || len >= CONSTS::MAX_KEY_LENGHTH
         || mbdata.data_len <= 0 || mbdata.data_len > CONSTS::MAX_DATA_SIZE)
         return MBError::OUT_OF_BOUND;
     if (options & CONSTS::READ_ONLY_DB)
@@ -1224,6 +1225,8 @@ int DB::RemoveAll()
     int rval;
     if (async_writer == NULL && (options & CONSTS::ACCESS_MODE_WRITER)) {
         rval = dict->RemoveAll();
+        if (rval != MBError::SUCCESS)
+            status = rval;
     } else {
         rval = dict->SHMQ_RemoveAll();
     }
@@ -1237,6 +1240,8 @@ int DB::RemoveAllSync()
     if (!(options & CONSTS::ACCESS_MODE_WRITER))
         return MBError::NOT_ALLOWED;
     int rval = dict->RemoveAll();
+    if (rval != MBError::SUCCESS)
+        status = rval;
     return rval;
 }
 

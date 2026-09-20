@@ -8,6 +8,7 @@
 #include <iostream>
 #include <memory>
 #include <new>
+#include <sstream>
 #include <string>
 #include <sys/mman.h>
 #include <sys/wait.h>
@@ -78,6 +79,13 @@ bool Populate(HashMap& map, size_t epoch)
     return true;
 }
 
+bool HasNoTombstones(const HashMap& map)
+{
+    std::ostringstream stats;
+    map.PrintStats(stats);
+    return stats.str().find("\ttombstones: 0\n") != std::string::npos;
+}
+
 bool TestReaderDoesNotCreate()
 {
     const std::string base = "/var/tmp/mabain_hashmap_missing_"
@@ -128,6 +136,8 @@ bool TestProbeChain(bool compact)
             if (found == erased || (found && ref != key_id))
                 success = false;
         }
+        if (success && !HasNoTombstones(writer))
+            success = false;
     } catch (...) {
         success = false;
     }
@@ -258,6 +268,8 @@ bool TestConcurrentReaders(bool compact)
                 }
             }
         }
+        if (success && !HasNoTombstones(*writer))
+            success = false;
 
         writer.reset();
         if (success) {

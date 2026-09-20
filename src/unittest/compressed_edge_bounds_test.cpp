@@ -3,7 +3,9 @@
  */
 
 #include <filesystem>
+#include <initializer_list>
 #include <string>
+#include <utility>
 
 #include <sys/mman.h>
 #include <unistd.h>
@@ -50,6 +52,27 @@ protected:
         std::error_code error;
         std::filesystem::remove_all(kTestDir, error);
         EXPECT_FALSE(error) << error.message();
+    }
+
+    void RecreateWithKeys(
+        std::initializer_list<std::pair<std::string, std::string>> entries)
+    {
+        db->Close();
+        delete db;
+        db = nullptr;
+        ResourcePool::getInstance().RemoveAll();
+
+        std::error_code error;
+        std::filesystem::remove_all(kTestDir, error);
+        ASSERT_FALSE(error) << error.message();
+        ASSERT_TRUE(std::filesystem::create_directories(kTestDir, error));
+        ASSERT_FALSE(error) << error.message();
+
+        db = new DB(kTestDir, CONSTS::WriterOptions());
+        ASSERT_NE(db, nullptr);
+        ASSERT_TRUE(db->is_open()) << db->StatusStr();
+        for (const auto& entry : entries)
+            ASSERT_EQ(db->Add(entry.first, entry.second), MBError::SUCCESS);
     }
 
     DB* db = nullptr;
@@ -160,6 +183,66 @@ TEST_F(CompressedEdgeBoundsTest, LowerBoundUsesLongerEdgeThatDivergesLower)
     EXPECT_EQ(std::string(reinterpret_cast<const char*>(data.buff),
                   static_cast<size_t>(data.data_len)),
         "long");
+}
+
+TEST_F(CompressedEdgeBoundsTest, LowerBoundPrefersShorterCurrentRootSubtree)
+{
+    RecreateWithKeys({ { "0z", "early" }, { "aa", "current" } });
+
+    MBData data;
+    std::string bound_key;
+    ASSERT_EQ(db->FindLowerBound("abz", 3, data, &bound_key),
+        MBError::SUCCESS);
+    EXPECT_EQ(bound_key, "aa");
+    ASSERT_EQ(data.data_len, 7);
+    EXPECT_EQ(std::string(reinterpret_cast<const char*>(data.buff),
+                  static_cast<size_t>(data.data_len)),
+        "current");
+}
+
+TEST_F(CompressedEdgeBoundsTest, LowerBoundPrefersLongerRootThatDivergesLower)
+{
+    RecreateWithKeys({ { "0z", "early" }, { "abcd", "current" } });
+
+    MBData data;
+    std::string bound_key;
+    ASSERT_EQ(db->FindLowerBound("abz", 3, data, &bound_key),
+        MBError::SUCCESS);
+    EXPECT_EQ(bound_key, "abcd");
+    ASSERT_EQ(data.data_len, 7);
+    EXPECT_EQ(std::string(reinterpret_cast<const char*>(data.buff),
+                  static_cast<size_t>(data.data_len)),
+        "current");
+}
+
+TEST_F(CompressedEdgeBoundsTest, LowerBoundRejectsLongerRootForQueryPrefix)
+{
+    RecreateWithKeys({ { "0z", "early" }, { "abcd", "current" } });
+
+    MBData data;
+    std::string bound_key;
+    ASSERT_EQ(db->FindLowerBound("ab", 2, data, &bound_key),
+        MBError::SUCCESS);
+    EXPECT_EQ(bound_key, "0z");
+    ASSERT_EQ(data.data_len, 5);
+    EXPECT_EQ(std::string(reinterpret_cast<const char*>(data.buff),
+                  static_cast<size_t>(data.data_len)),
+        "early");
+}
+
+TEST_F(CompressedEdgeBoundsTest, LowerBoundRejectsGreaterCurrentRootSubtree)
+{
+    RecreateWithKeys({ { "0z", "early" }, { "ac", "current" } });
+
+    MBData data;
+    std::string bound_key;
+    ASSERT_EQ(db->FindLowerBound("abz", 3, data, &bound_key),
+        MBError::SUCCESS);
+    EXPECT_EQ(bound_key, "0z");
+    ASSERT_EQ(data.data_len, 5);
+    EXPECT_EQ(std::string(reinterpret_cast<const char*>(data.buff),
+                  static_cast<size_t>(data.data_len)),
+        "early");
 }
 
 TEST_F(CompressedEdgeBoundsTest, RcPrefixWinnerPreservesBufferMetadata)
