@@ -1138,7 +1138,7 @@ int ResourceCollection::ProcessRCTree()
         Logger::Log(LOG_LEVEL_ERROR,
             "failed to replay rc tree: %s, replayed %lld of %lld",
             MBError::get_error_str(rval), replayed_count, expected_count);
-        header->rc_flag.store(ASYNC_RC_FAILED, std::memory_order_release);
+        PublishAsyncRCState(header->rc_flag, ASYNC_RC_FAILED);
         return rval;
     }
 
@@ -1162,7 +1162,8 @@ int ResourceCollection::ExceptionRecovery()
         return db_ref.Status();
 
     const bool retry_retained_rc =
-        header->rc_flag.load(std::memory_order_acquire) == ASYNC_RC_FAILED;
+        DecodeAsyncRCState(header->rc_flag.load(std::memory_order_acquire))
+        == ASYNC_RC_FAILED;
     int rval = MBError::SUCCESS;
     if (header->rc_m_index_off_pre != 0 && header->rc_m_data_off_pre != 0) {
         Logger::Log(LOG_LEVEL_WARN, "previous rc was not completed successfully, retrying...");
@@ -1201,7 +1202,7 @@ int ResourceCollection::ExceptionRecovery()
         if (rval == MBError::SUCCESS) {
             header->rc_m_index_off_pre = 0;
             header->rc_m_data_off_pre = 0;
-            header->rc_flag.store(ASYNC_RC_IDLE, std::memory_order_release);
+            PublishAsyncRCState(header->rc_flag, ASYNC_RC_IDLE);
         }
         return rval;
     }

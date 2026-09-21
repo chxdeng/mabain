@@ -40,6 +40,36 @@ enum AsyncRCState : uint32_t {
     ASYNC_RC_FAILED = 2
 };
 
+// The low bits retain the existing async-RC state. The upper bits are a
+// generation used by jemalloc startup rebuild so a reader can detect a full
+// RUNNING -> IDLE transition that completed during one lookup.
+constexpr uint32_t ASYNC_RC_STATE_MASK = 0x3u;
+constexpr uint32_t ASYNC_RC_VERSION_INCREMENT = ASYNC_RC_STATE_MASK + 1u;
+
+inline AsyncRCState DecodeAsyncRCState(uint32_t token)
+{
+    return static_cast<AsyncRCState>(token & ASYNC_RC_STATE_MASK);
+}
+
+inline uint32_t EncodeAsyncRCState(uint32_t token, AsyncRCState state)
+{
+    return (token & ~ASYNC_RC_STATE_MASK) | static_cast<uint32_t>(state);
+}
+
+inline void PublishAsyncRCState(
+    std::atomic<uint32_t>& flag, AsyncRCState state)
+{
+    const uint32_t token = flag.load(std::memory_order_relaxed);
+    flag.store(EncodeAsyncRCState(token, state), std::memory_order_release);
+}
+
+inline uint32_t AdvanceAsyncRCToken(uint32_t token, AsyncRCState state)
+{
+    const uint32_t next_version =
+        (token & ~ASYNC_RC_STATE_MASK) + ASYNC_RC_VERSION_INCREMENT;
+    return next_version | static_cast<uint32_t>(state);
+}
+
 class AsyncWriter {
 public:
     ~AsyncWriter();

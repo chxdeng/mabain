@@ -123,7 +123,9 @@ AsyncNode* Dict::SHMQ_AcquireSlot(int& err) const
         err = MBError::NOT_ALLOWED;
         return nullptr;
     }
-    if (header->rc_flag.load(std::memory_order_acquire) == ASYNC_RC_FAILED) {
+    if (DecodeAsyncRCState(
+            header->rc_flag.load(std::memory_order_acquire))
+        == ASYNC_RC_FAILED) {
         err = MBError::NO_RESOURCE;
         return nullptr;
     }
@@ -172,7 +174,9 @@ bool Dict::SHMQ_Busy() const
 {
     if ((header->queue_index.load(std::memory_order_acquire)
             != header->writer_index.load(std::memory_order_acquire))
-        || header->rc_flag.load(std::memory_order_acquire) != ASYNC_RC_IDLE)
+        || DecodeAsyncRCState(
+               header->rc_flag.load(std::memory_order_acquire))
+            != ASYNC_RC_IDLE)
         return true;
 
     size_t rc_off = header->rc_root_offset.load(std::memory_order_consume);

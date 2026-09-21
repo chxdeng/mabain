@@ -232,6 +232,39 @@ TEST(JemallocRebuildHeaderHelperTest, ClearRebuildMetadataClearsMarker)
     EXPECT_FALSE(header.RebuildInProgress());
 }
 
+TEST(JemallocRebuildTokenTest, FullRebuildChangesIdleGeneration)
+{
+    const uint32_t idle_before = ASYNC_RC_IDLE;
+    const uint32_t running =
+        AdvanceAsyncRCToken(idle_before, ASYNC_RC_RUNNING);
+    const uint32_t idle_after =
+        AdvanceAsyncRCToken(running, ASYNC_RC_IDLE);
+
+    EXPECT_EQ(DecodeAsyncRCState(running), ASYNC_RC_RUNNING);
+    EXPECT_EQ(DecodeAsyncRCState(idle_after), ASYNC_RC_IDLE);
+    EXPECT_NE(idle_after, idle_before);
+}
+
+TEST(JemallocRebuildTokenTest, AsyncRCStateChangesPreserveGeneration)
+{
+    std::atomic<uint32_t> flag(
+        AdvanceAsyncRCToken(ASYNC_RC_IDLE, ASYNC_RC_IDLE));
+    const uint32_t generation =
+        flag.load(std::memory_order_relaxed) & ~ASYNC_RC_STATE_MASK;
+
+    PublishAsyncRCState(flag, ASYNC_RC_RUNNING);
+    EXPECT_EQ(DecodeAsyncRCState(flag.load(std::memory_order_acquire)),
+        ASYNC_RC_RUNNING);
+    EXPECT_EQ(flag.load(std::memory_order_relaxed) & ~ASYNC_RC_STATE_MASK,
+        generation);
+
+    PublishAsyncRCState(flag, ASYNC_RC_IDLE);
+    EXPECT_EQ(DecodeAsyncRCState(flag.load(std::memory_order_acquire)),
+        ASYNC_RC_IDLE);
+    EXPECT_EQ(flag.load(std::memory_order_relaxed) & ~ASYNC_RC_STATE_MASK,
+        generation);
+}
+
 TEST_F(JemallocRebuildMetadataTest, NewDbInitializesRebuildMetadataToZero)
 {
     MBConfig config = MakeJemallocRebuildConfig(CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, false);

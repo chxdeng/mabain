@@ -121,8 +121,10 @@ AsyncWriter::AsyncWriter(DB* db_ptr)
     // the retained RC tree before queued operations resume. A RUNNING marker
     // only means the previous process stopped during RC and follows the
     // existing crash-recovery behavior.
-    if (header->rc_flag.load(std::memory_order_acquire) != ASYNC_RC_FAILED)
-        header->rc_flag.store(ASYNC_RC_IDLE, std::memory_order_release);
+    const uint32_t rc_token =
+        header->rc_flag.load(std::memory_order_acquire);
+    if (DecodeAsyncRCState(rc_token) != ASYNC_RC_FAILED)
+        PublishAsyncRCState(header->rc_flag, ASYNC_RC_IDLE);
 
     rc_backup_dir = NULL;
     // start the thread
@@ -273,7 +275,8 @@ void* AsyncWriter::async_writer_thread()
     }
 
     while (!stop_processing.load(std::memory_order_relaxed)) {
-        if (header->rc_flag.load(std::memory_order_acquire)
+        if (DecodeAsyncRCState(
+                header->rc_flag.load(std::memory_order_acquire))
             == ASYNC_RC_FAILED) {
             // Keep the FIFO read endpoint alive so shutdown can wake this
             // thread immediately. Producers reject new reservations while the
@@ -383,7 +386,7 @@ void* AsyncWriter::async_writer_thread()
             break;
         case MABAIN_ASYNC_TYPE_RC:
             rval = MBError::SUCCESS;
-            header->rc_flag.store(ASYNC_RC_RUNNING, std::memory_order_release);
+            PublishAsyncRCState(header->rc_flag, ASYNC_RC_RUNNING);
             {
                 int64_t* data_ptr = reinterpret_cast<int64_t*>(node_ptr->data);
                 min_index_size = data_ptr[0];
@@ -424,7 +427,8 @@ void* AsyncWriter::async_writer_thread()
 
         mbd.Clear();
 
-        if (header->rc_flag.load(std::memory_order_consume)
+        if (DecodeAsyncRCState(
+                header->rc_flag.load(std::memory_order_consume))
             == ASYNC_RC_RUNNING) {
             rval = MBError::SUCCESS;
             writer_lock.lock();
@@ -439,11 +443,12 @@ void* AsyncWriter::async_writer_thread()
             }
             writer_lock.unlock();
 
+            const uint32_t rc_token =
+                header->rc_flag.load(std::memory_order_acquire);
             const bool replay_failed =
-                header->rc_flag.load(std::memory_order_acquire)
-                == ASYNC_RC_FAILED;
+                DecodeAsyncRCState(rc_token) == ASYNC_RC_FAILED;
             if (!replay_failed)
-                header->rc_flag.store(ASYNC_RC_IDLE, std::memory_order_release);
+                PublishAsyncRCState(header->rc_flag, ASYNC_RC_IDLE);
             if (replay_failed) {
                 Logger::Log(LOG_LEVEL_ERROR,
                     "async writer paused after rc replay failure; reopen the db: %s",
@@ -472,7 +477,9 @@ void* AsyncWriter::async_thread_wrapper(void* context)
 
 int AsyncWriter::AddWithLock(const char* key, int len, MBData& mbdata, bool overwrite)
 {
-    if (header->rc_flag.load(std::memory_order_relaxed))
+    if (DecodeAsyncRCState(
+            header->rc_flag.load(std::memory_order_relaxed))
+        != ASYNC_RC_IDLE)
         return MBError::TRY_AGAIN;
 
     using Ms = std::chrono::milliseconds;

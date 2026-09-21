@@ -147,7 +147,7 @@ static void load_test(std::string& list_file, MBConfig& mbconf, int64_t expected
 
     gettimeofday(&start, NULL);
     while (std::getline(in, line)) {
-        if (line.length() > (unsigned)CONSTS::MAX_KEY_LENGHTH) {
+        if (line.length() >= (unsigned)CONSTS::MAX_KEY_LENGHTH) {
             if (debug)
                 std::cout << line << "\n";
             continue;
@@ -197,7 +197,7 @@ static void update_test(std::string& list_file, MBConfig& mbconf, int64_t expect
     int rval;
     gettimeofday(&start, NULL);
     while (std::getline(in, line)) {
-        if (line.length() > (unsigned)CONSTS::MAX_KEY_LENGHTH) {
+        if (line.length() >= (unsigned)CONSTS::MAX_KEY_LENGHTH) {
             if (debug)
                 std::cout << line << "\n";
             continue;
@@ -234,7 +234,7 @@ static void lookup_test(std::string& list_file, MBConfig& mbconf, int64_t expect
     int found = 0;
     gettimeofday(&start, NULL);
     while (std::getline(in, line)) {
-        if (line.length() > (unsigned)CONSTS::MAX_KEY_LENGHTH) {
+        if (line.length() >= (unsigned)CONSTS::MAX_KEY_LENGHTH) {
             continue;
         }
         rval = db.Find(line.c_str(), line.length(), data);
@@ -271,7 +271,7 @@ static void prefix_lookup_test(std::string& list_file, MBConfig& mbconf, int64_t
     int nfound = 0;
     gettimeofday(&start, NULL);
     while (std::getline(in, line)) {
-        if (line.length() > (unsigned)CONSTS::MAX_KEY_LENGHTH) {
+        if (line.length() >= (unsigned)CONSTS::MAX_KEY_LENGHTH) {
             continue;
         }
 
@@ -306,7 +306,7 @@ static void longest_prefix_lookup_test(std::string& list_file, MBConfig& mbconf,
     int nfound = 0;
     gettimeofday(&start, NULL);
     while (std::getline(in, line)) {
-        if (line.length() > (unsigned)CONSTS::MAX_KEY_LENGHTH) {
+        if (line.length() >= (unsigned)CONSTS::MAX_KEY_LENGHTH) {
             continue;
         }
         data.Clear();
@@ -342,7 +342,7 @@ static void delete_odd_test(std::string& list_file, MBConfig& mbconf, int64_t ex
 
     gettimeofday(&start, NULL);
     while (std::getline(in, line)) {
-        if (line.length() > (unsigned)CONSTS::MAX_KEY_LENGHTH) {
+        if (line.length() >= (unsigned)CONSTS::MAX_KEY_LENGHTH) {
             continue;
         }
         count++;
@@ -382,7 +382,7 @@ static void delete_test(std::string& list_file, MBConfig& mbconf, int64_t expect
 
     gettimeofday(&start, NULL);
     while (std::getline(in, line)) {
-        if (line.length() > (unsigned)CONSTS::MAX_KEY_LENGHTH) {
+        if (line.length() >= (unsigned)CONSTS::MAX_KEY_LENGHTH) {
             continue;
         }
         rval = db.Remove(line);
@@ -506,7 +506,7 @@ static void async_eviction_test(std::string& list_file, MBConfig& mbconf, int64_
         check_eviction_count = 33333;
     }
     while (std::getline(in, line)) {
-        if (line.length() > (unsigned)CONSTS::MAX_KEY_LENGHTH) {
+        if (line.length() >= (unsigned)CONSTS::MAX_KEY_LENGHTH) {
             continue;
         }
 

@@ -154,6 +154,10 @@ private:
     // Allow internal SearchEngine to orchestrate lookups without exposing members publicly
     friend class detail::SearchEngine;
     friend class DictReleaseTestPeer;
+    bool UsesJemalloc() const
+    {
+        return (header->writer_options & CONSTS::OPTION_JEMALLOC) != 0;
+    }
     // Search internals moved to detail::SearchEngine
     // Prefix traversal helpers moved to SearchEngine.
     // Traversal helpers are owned by SearchEngine.

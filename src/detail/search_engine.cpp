@@ -52,23 +52,26 @@ namespace {
     int SearchEngine::find(const uint8_t* key, int len, MBData& data)
     {
         int rval;
-        size_t rc_root_offset = dict.GetHeaderPtr()->rc_root_offset.load(MEMORY_ORDER_READER);
+        if (!dict.UsesJemalloc()) {
+            size_t rc_root_offset =
+                dict.GetHeaderPtr()->rc_root_offset.load(MEMORY_ORDER_READER);
 
-        if (rc_root_offset != 0) {
-            dict.reader_rc_off = rc_root_offset;
-            rval = tryFindAtRoot(rc_root_offset, key, len, data);
-            if (rval == MBError::SUCCESS) {
-                data.match_len = len;
-                return rval;
-            } else if (rval != MBError::NOT_EXIST) {
-                return rval;
-            }
-            data.options &= ~(CONSTS::OPTION_RC_MODE | CONSTS::OPTION_READ_SAVED_EDGE);
-        } else {
-            if (dict.reader_rc_off != 0) {
-                dict.reader_rc_off = 0;
-                dict.RemoveUnused(0);
-                dict.mm.RemoveUnused(0);
+            if (rc_root_offset != 0) {
+                dict.reader_rc_off = rc_root_offset;
+                rval = tryFindAtRoot(rc_root_offset, key, len, data);
+                if (rval == MBError::SUCCESS) {
+                    data.match_len = len;
+                    return rval;
+                } else if (rval != MBError::NOT_EXIST) {
+                    return rval;
+                }
+                data.options &= ~(CONSTS::OPTION_RC_MODE | CONSTS::OPTION_READ_SAVED_EDGE);
+            } else {
+                if (dict.reader_rc_off != 0) {
+                    dict.reader_rc_off = 0;
+                    dict.RemoveUnused(0);
+                    dict.mm.RemoveUnused(0);
+                }
             }
         }
 

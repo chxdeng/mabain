@@ -51,6 +51,13 @@ const int64_t kRebuildBarrierGuardToken = std::numeric_limits<int64_t>::max();
 const uint32_t kReaderEpochGuardMaxStabilizeRetries = 32;
 const int kFindOutOfBoundRetryLimit = 3;
 
+void PublishNextAsyncRCState(IndexHeader* header, AsyncRCState state)
+{
+    const uint32_t token = header->rc_flag.load(std::memory_order_relaxed);
+    header->rc_flag.store(
+        AdvanceAsyncRCToken(token, state), std::memory_order_release);
+}
+
 // MEMORY_ONLY_MODE owns the process-local writer marker without an OS lock fd.
 const int kMemoryOnlyWriterMarkerFd = -2;
 
@@ -684,6 +691,8 @@ int DB::RunStartupRebuild()
         if (reset_header != NULL) {
             reset_header->ClearRebuildMetadata();
             reset_header->ResetReaderEpochState();
+            reset_header->reader_epoch_tracking_active.store(
+                1, MEMORY_ORDER_WRITER);
             reset_header->pending_index_buff_size = 0;
             reset_header->pending_data_buff_size = 0;
             reset_header->jemalloc_index_free_start = 0;
@@ -692,6 +701,9 @@ int DB::RunStartupRebuild()
             reset_header->excep_offset = 0;
             reset_header->excep_lf_offset = 0;
             memset(reset_header->excep_buff, 0, sizeof(reset_header->excep_buff));
+            PublishNextAsyncRCState(reset_header, ASYNC_RC_IDLE);
+            reset_header->reader_epoch_tracking_active.store(
+                0, MEMORY_ORDER_WRITER);
         }
         return MBError::SUCCESS;
     };
@@ -706,13 +718,18 @@ int DB::RunStartupRebuild()
         if (header == NULL)
             return MBError::NOT_INITIALIZED;
 
-        if (startup_rebuild_reset_only)
-            return reset_to_fresh_state();
-        if (!startup_rebuild_prepared)
+        if (!startup_rebuild_reset_only && !startup_rebuild_prepared)
             return MBError::SUCCESS;
 
         header->SetRebuildActive();
         header->ResetReaderEpochState();
+        // Tracking must be visible before RUNNING. A reader that still saw the
+        // previous IDLE token detects the generation change after its lookup.
+        header->reader_epoch_tracking_active.store(1, MEMORY_ORDER_WRITER);
+        PublishNextAsyncRCState(header, ASYNC_RC_RUNNING);
+
+        if (startup_rebuild_reset_only)
+            return reset_to_fresh_state();
 
         ResourceCollection rc(*this);
         rc.ResetStartupRebuildState(REBUILD_STATE_PREP);
@@ -763,12 +780,16 @@ int DB::RunStartupRebuild()
             }
         }
 
+        header->reader_epoch_tracking_active.store(1, MEMORY_ORDER_WRITER);
         header->pending_index_buff_size = 0;
         header->pending_data_buff_size = 0;
-        header->reader_epoch_tracking_active.store(0, MEMORY_ORDER_WRITER);
         header->jemalloc_index_free_start = rc.GetStartupRebuildState().rebuild_index_alloc_end;
         header->jemalloc_data_free_start = rc.GetStartupRebuildState().rebuild_data_alloc_end;
         header->ClearRebuildMetadata();
+        // Publish a new IDLE generation only after relocation and block reuse
+        // have stopped. Readers may stop registering after this publication.
+        PublishNextAsyncRCState(header, ASYNC_RC_IDLE);
+        header->reader_epoch_tracking_active.store(0, MEMORY_ORDER_WRITER);
         startup_rebuild_prepared = false;
         startup_rebuild_reset_only = false;
         Logger::Log(LOG_LEVEL_INFO, "jemalloc startup rebuild completed for %s", mb_dir.c_str());
@@ -962,14 +983,27 @@ bool DB::InDB(const char* key, int len, int& err)
         return false;
     }
     MBData data(0, CONSTS::OPTION_KEY_ONLY);
-    int64_t reader_epoch = BeginReaderEpochGuard();
-    if (reader_epoch < 0) {
-        err = static_cast<int>(-reader_epoch);
+    IndexHeader* header = dict->GetHeaderPtr();
+    const bool jemalloc =
+        (header->writer_options & CONSTS::OPTION_JEMALLOC) != 0;
+    const uint32_t rc_before = jemalloc
+        ? header->rc_flag.load(std::memory_order_acquire)
+        : ASYNC_RC_IDLE;
+    ReaderEpochGuard reader_guard(*this);
+    const int guard_status = reader_guard.Status();
+    if (guard_status != MBError::SUCCESS) {
+        err = guard_status;
         return false;
     }
     detail::SearchEngine engine(*dict);
     int rval = engine.find(reinterpret_cast<const uint8_t*>(key), len, data);
-    EndReaderEpochGuard(reader_epoch);
+    if (jemalloc && rval == MBError::NOT_EXIST
+        && (DecodeAsyncRCState(rc_before) != ASYNC_RC_IDLE
+            || header->rc_flag.load(std::memory_order_acquire)
+                != rc_before)) {
+        err = MBError::TRY_AGAIN;
+        return false;
+    }
     if (rval == MBError::SUCCESS) {
         return true; // found it
     } else if (rval != MBError::NOT_EXIST) {
@@ -990,7 +1024,14 @@ int DB::Find(const char* key, int len, MBData& mdata) const
     if (options & CONSTS::ASYNC_WRITER_MODE)
         return MBError::NOT_ALLOWED;
 
+    IndexHeader* header = dict->GetHeaderPtr();
+    const bool jemalloc =
+        (header->writer_options & CONSTS::OPTION_JEMALLOC) != 0;
+
     for (int attempt = 0; attempt < kFindOutOfBoundRetryLimit; ++attempt) {
+        const uint32_t rc_before = jemalloc
+            ? header->rc_flag.load(std::memory_order_acquire)
+            : ASYNC_RC_IDLE;
         ReaderEpochGuard reader_guard(*this);
         const int guard_status = reader_guard.Status();
         if (guard_status != MBError::SUCCESS)
@@ -1000,6 +1041,13 @@ int DB::Find(const char* key, int len, MBData& mdata) const
             detail::SearchEngine engine(*dict);
             const int rval = engine.find(
                 reinterpret_cast<const uint8_t*>(key), len, mdata);
+            if (jemalloc && rval == MBError::NOT_EXIST
+                && (DecodeAsyncRCState(rc_before) != ASYNC_RC_IDLE
+                    || header->rc_flag.load(std::memory_order_acquire)
+                        != rc_before)) {
+                mdata.Clear();
+                return MBError::TRY_AGAIN;
+            }
             if (rval != MBError::SUCCESS
                 && (mdata.options & CONSTS::OPTION_RETURN_DATA_PTR)) {
                 mdata.data_ptr = NULL;
