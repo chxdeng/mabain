@@ -325,6 +325,8 @@ public:
     inline int AddReusableBlock(size_t block_order) const;
     inline size_t GetReusableBlockCount() const;
     inline size_t GetResourceCollectionOffset() const;
+    inline void SetReserveLimit(size_t limit) const;
+    inline void ClearReserveLimit() const;
     inline void RemoveUnused(size_t max_size, bool writer_mode = false);
 
     FreeList* GetFreeList() const
@@ -468,6 +470,16 @@ inline size_t DRMBase::GetReusableBlockCount() const
 inline size_t DRMBase::GetResourceCollectionOffset() const
 {
     return kv_file->GetResourceCollectionOffset();
+}
+
+inline void DRMBase::SetReserveLimit(size_t limit) const
+{
+    kv_file->SetReserveLimit(limit);
+}
+
+inline void DRMBase::ClearReserveLimit() const
+{
+    kv_file->ClearReserveLimit();
 }
 
 inline void DRMBase::RemoveUnused(size_t max_size, bool writer_mode)

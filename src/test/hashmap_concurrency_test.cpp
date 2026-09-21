@@ -153,7 +153,10 @@ bool TestProbeChain(bool compact)
             random ^= random << 13;
             random ^= random >> 7;
             random ^= random << 17;
-            const size_t key_id = static_cast<size_t>(random) % kKeyCount;
+            // Readers use the stable half of the table. The writer churns the
+            // other half below, so any miss here is a concurrency failure.
+            const size_t key_id
+                = static_cast<size_t>(random) % (kKeyCount / 2);
             const std::string key = Key(key_id);
             size_t ref = 0;
             bool found = reader.Get(
@@ -237,11 +240,11 @@ bool TestConcurrentReaders(bool compact)
             }
         }
 
-        // Remove/reinsert and writer restart may overlap lookups. A miss is
-        // valid, but a returned offset must always belong to the queried key.
-        control->allow_miss.store(1, std::memory_order_release);
+        // Remove/reinsert only the disjoint half of the key set. Readers must
+        // continue finding every stable key while tombstones are published.
         for (size_t epoch = 301; success && epoch <= 450; ++epoch) {
-            for (size_t key_id = 0; key_id < kKeyCount; ++key_id) {
+            for (size_t key_id = kKeyCount / 2;
+                 key_id < kKeyCount; ++key_id) {
                 const std::string key = Key(key_id);
                 if ((key_id + epoch) % 17 == 0) {
                     if (writer->Erase(
@@ -259,6 +262,9 @@ bool TestConcurrentReaders(bool compact)
             }
         }
 
+        // A reference-mode writer restart resets the table. Misses are valid
+        // until the restarted writer has repopulated it.
+        control->allow_miss.store(1, std::memory_order_release);
         writer.reset();
         if (success) {
             writer.reset(new HashMap(base, kCapacity,

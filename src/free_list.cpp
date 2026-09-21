@@ -101,9 +101,11 @@ int FreeList::AddBuffer(size_t offset, size_t size)
         return rval;
     }
 
-    buffer_free_list[buf_index]->AddIntToTail(offset);
-    count++;
-    tot_size += (buf_index + 1) * alignment;
+    rval = buffer_free_list[buf_index]->AddIntToTail(offset);
+    if (rval == MBError::SUCCESS) {
+        count++;
+        tot_size += (buf_index + 1) * alignment;
+    }
     return rval;
 }
 
@@ -191,6 +193,7 @@ int FreeList::LoadListFromDisk()
     if (!freelist_f.is_open())
         return MBError::OPEN_FAILURE;
 
+    int load_result = MBError::SUCCESS;
     while (!freelist_f.eof()) {
         size_t buf_index;
         int64_t buf_count;
@@ -202,9 +205,13 @@ int FreeList::LoadListFromDisk()
         for (int64_t i = 0; i < buf_count; i++) {
             size_t offset;
             freelist_f.read((char*)&offset, sizeof(size_t));
-            buffer_free_list[buf_index]->AddIntToTail(offset);
-            count++;
-            tot_size += (buf_index + 1) * alignment;
+            int rval = buffer_free_list[buf_index]->AddIntToTail(offset);
+            if (rval == MBError::SUCCESS) {
+                count++;
+                tot_size += (buf_index + 1) * alignment;
+            } else {
+                load_result = rval;
+            }
         }
     }
 
@@ -220,7 +227,7 @@ int FreeList::LoadListFromDisk()
     Logger::Log(LOG_LEVEL_DEBUG, "%s read %lld buffers to free list: %llu",
         list_path.c_str(), count, tot_size);
 
-    return MBError::SUCCESS;
+    return load_result;
 }
 
 void FreeList::ReleaseAlignmentBuffer(size_t old_offset, size_t alignment_offset)

@@ -58,6 +58,20 @@ void LockFree::WriterLockFreeStop()
 }
 
 //////////////////////////////////////////////////
+// Publish a completed global retry event without changing the active writer
+// offset. The single writer stores the ring entry before advancing counter so
+// acquire readers that observe the counter also observe the retry marker.
+//////////////////////////////////////////////////
+void LockFree::PublishGlobalRetryBarrier() const
+{
+    uint32_t counter = shm_data_ptr->counter.load(MEMORY_ORDER_READER);
+    int index = counter % MAX_OFFSET_CACHE;
+    shm_data_ptr->offset_cache[index].store(
+        GLOBAL_RETRY_OFFSET, MEMORY_ORDER_WRITER);
+    shm_data_ptr->counter.fetch_add(1, MEMORY_ORDER_WRITER);
+}
+
+//////////////////////////////////////////////////
 // DO NOT CHANGE THE LOAD ORDER IN THIS FUNCTION.
 //////////////////////////////////////////////////
 //////////////////////////////////////////////////
@@ -126,7 +140,10 @@ int LockFree::ReaderLockFreeStop(const LockFreeData& snapshot, size_t reader_off
 
     for (unsigned i = 0; i < count_diff; i++) {
         int index = (snapshot.counter + i) % MAX_OFFSET_CACHE;
-        if (reader_offset == shm_data_ptr->offset_cache[index].load(MEMORY_ORDER_READER))
+        size_t changed_offset
+            = shm_data_ptr->offset_cache[index].load(MEMORY_ORDER_READER);
+        if (changed_offset == GLOBAL_RETRY_OFFSET
+            || reader_offset == changed_offset)
             return MBError::TRY_AGAIN;
     }
 

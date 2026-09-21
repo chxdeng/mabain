@@ -276,7 +276,7 @@ bool DictMem::IsValid() const
 
 // Add root edge
 void DictMem::AddRootEdge(EdgePtrs& edge_ptrs, const uint8_t* key,
-    int len, size_t data_offset)
+    int len, size_t data_offset, bool* publication_started)
 {
     edge_ptrs.len_ptr[0] = len;
     if (len > LOCAL_EDGE_LEN) {
@@ -290,6 +290,8 @@ void DictMem::AddRootEdge(EdgePtrs& edge_ptrs, const uint8_t* key,
     edge_ptrs.flag_ptr[0] = EDGE_FLAG_DATA_OFF;
     Write6BInteger(edge_ptrs.offset_ptr, data_offset);
 
+    if (publication_started != nullptr)
+        *publication_started = true;
 #ifdef __LOCK_FREE__
     header->excep_lf_offset = edge_ptrs.offset;
     header->excep_updating_status = EXCEP_STATUS_ADD_EDGE;
@@ -304,7 +306,7 @@ void DictMem::AddRootEdge(EdgePtrs& edge_ptrs, const uint8_t* key,
 
 void DictMem::UpdateTailEdge(EdgePtrs& edge_ptrs, int match_len, MBData& data,
     EdgePtrs& tail_edge, uint8_t& new_key_first,
-    bool& map_new_sliding)
+    bool& map_new_sliding, PendingIndexBuffer& allocation)
 {
     int edge_len = edge_ptrs.len_ptr[0] - match_len;
     tail_edge.len_ptr[0] = edge_len;
@@ -320,6 +322,8 @@ void DictMem::UpdateTailEdge(EdgePtrs& edge_ptrs, int match_len, MBData& data,
 
         // Reserve the key buffer
         ReserveData(data.node_buff + 1, edge_len - 1, new_key_off, map_new_sliding);
+        allocation.offset = new_key_off;
+        allocation.size = edge_len - 1;
         map_new_sliding = false;
         Write5BInteger(tail_edge.ptr, new_key_off);
     } else {
@@ -345,7 +349,8 @@ void DictMem::UpdateTailEdge(EdgePtrs& edge_ptrs, int match_len, MBData& data,
 // The old edge becomes head edge.
 void DictMem::UpdateHeadEdge(EdgePtrs& edge_ptrs, int match_len,
     MBData& data, int& release_buffer_size,
-    size_t& edge_str_off, bool& map_new_sliding)
+    size_t& edge_str_off, bool& map_new_sliding,
+    PendingIndexBuffer& allocation)
 {
     int match_len_m1 = match_len - 1;
     if (edge_ptrs.len_ptr[0] > LOCAL_EDGE_LEN) {
@@ -366,6 +371,8 @@ void DictMem::UpdateHeadEdge(EdgePtrs& edge_ptrs, int match_len,
             // Reserve the key buffer
             size_t new_key_off;
             ReserveData(data.node_buff, match_len_m1, new_key_off, map_new_sliding);
+            allocation.offset = new_key_off;
+            allocation.size = match_len_m1;
             map_new_sliding = false;
             Write5BInteger(edge_ptrs.ptr, new_key_off);
         }
@@ -373,6 +380,17 @@ void DictMem::UpdateHeadEdge(EdgePtrs& edge_ptrs, int match_len,
 
     edge_ptrs.len_ptr[0] = match_len;
     edge_ptrs.flag_ptr[0] = 0;
+}
+
+void DictMem::RollbackAddAllocations(size_t node_offset, int node_index,
+    const PendingIndexBuffer* buffers, size_t buffer_count)
+{
+    for (size_t i = buffer_count; i > 0; --i) {
+        const PendingIndexBuffer& buffer = buffers[i - 1];
+        if (buffer.size > 0)
+            ReleaseBuffer(buffer.offset, buffer.size);
+    }
+    ReleaseNode(node_offset, node_index);
 }
 
 // Insert a new node by splitting the current edge at match_len.
@@ -393,13 +411,14 @@ void DictMem::UpdateHeadEdge(EdgePtrs& edge_ptrs, int match_len,
 // - Handles local vs remote (buffered) edge strings and releases any obsolete buffers.
 // - Writes back the modified parent edge with lock-free writer guards if enabled.
 int DictMem::InsertNode(EdgePtrs& edge_ptrs, int match_len,
-    size_t data_offset, MBData& data)
+    size_t data_offset, MBData& data, bool* publication_started)
 {
     NodePtrs node_ptrs;
     EdgePtrs new_edge_ptrs;
     bool node_move;
     uint8_t* node;
     bool map_new_sliding = false;
+    PendingIndexBuffer allocations[2] {};
 
     // The new node has one edge. nt1 = nt - 1 = 0
     node_move = ReserveNode(0, node_ptrs.offset, node);
@@ -410,16 +429,19 @@ int DictMem::InsertNode(EdgePtrs& edge_ptrs, int match_len,
     node[1] = 0;
     InitEdgePtrs(node_ptrs, 0, new_edge_ptrs);
 
-    uint8_t new_key_first;
-    UpdateTailEdge(edge_ptrs, match_len, data, new_edge_ptrs, new_key_first,
-        map_new_sliding);
-
     int release_buffer_size = 0;
     size_t edge_str_off = 0;
-    UpdateHeadEdge(edge_ptrs, match_len, data, release_buffer_size, edge_str_off,
-        map_new_sliding);
-    Write6BInteger(edge_ptrs.offset_ptr, node_ptrs.offset);
-
+    uint8_t new_key_first;
+    try {
+        UpdateTailEdge(edge_ptrs, match_len, data, new_edge_ptrs,
+            new_key_first, map_new_sliding, allocations[0]);
+        UpdateHeadEdge(edge_ptrs, match_len, data, release_buffer_size,
+            edge_str_off, map_new_sliding, allocations[1]);
+    } catch (...) {
+        // No parent edge or old live buffer has been changed yet.
+        RollbackAddAllocations(node_ptrs.offset, 0, allocations, 2);
+        throw;
+    }
     // Update the new node
     // match found for the new node
     node[0] = FLAG_NODE_NONE | FLAG_NODE_MATCH | FLAG_NODE_SORTED;
@@ -430,7 +452,10 @@ int DictMem::InsertNode(EdgePtrs& edge_ptrs, int match_len,
 
     if (node_move)
         WriteData(node, node_size[0], node_ptrs.offset);
+    Write6BInteger(edge_ptrs.offset_ptr, node_ptrs.offset);
 
+    if (publication_started != nullptr)
+        *publication_started = true;
     if (release_buffer_size > 0)
         ReleaseBuffer(edge_str_off, release_buffer_size);
 #ifdef __LOCK_FREE__
@@ -466,13 +491,14 @@ int DictMem::InsertNode(EdgePtrs& edge_ptrs, int match_len,
 // - Handles local vs remote edge strings and releases any obsolete buffers.
 // - Writes back the modified parent edge with lock-free writer guards if enabled.
 int DictMem::AddLink(EdgePtrs& edge_ptrs, int match_len, const uint8_t* key,
-    int key_len, size_t data_off, MBData& data)
+    int key_len, size_t data_off, MBData& data, bool* publication_started)
 {
     NodePtrs node_ptrs;
     EdgePtrs new_edge_ptrs[2];
     bool node_move;
     uint8_t* node;
     bool map_new_sliding = false;
+    PendingIndexBuffer allocations[3] {};
 
     // The new node has two edge. nt1 = nt - 1 = 1
     node_move = ReserveNode(1, node_ptrs.offset, node);
@@ -493,14 +519,18 @@ int DictMem::AddLink(EdgePtrs& edge_ptrs, int match_len, const uint8_t* key,
     tail_edge_tmp_ptrs.len_ptr = tail_edge_tmp + EDGE_LEN_POS;
     tail_edge_tmp_ptrs.flag_ptr = tail_edge_tmp + EDGE_FLAG_POS;
     tail_edge_tmp_ptrs.offset_ptr = tail_edge_tmp_ptrs.flag_ptr + 1;
-    UpdateTailEdge(edge_ptrs, match_len, data, tail_edge_tmp_ptrs, new_key_first,
-        map_new_sliding);
-
     int release_buffer_size = 0;
     size_t edge_str_off;
-    UpdateHeadEdge(edge_ptrs, match_len, data, release_buffer_size, edge_str_off,
-        map_new_sliding);
-    Write6BInteger(edge_ptrs.offset_ptr, node_ptrs.offset);
+    try {
+        UpdateTailEdge(edge_ptrs, match_len, data, tail_edge_tmp_ptrs,
+            new_key_first, map_new_sliding, allocations[0]);
+        UpdateHeadEdge(edge_ptrs, match_len, data, release_buffer_size,
+            edge_str_off, map_new_sliding, allocations[1]);
+    } catch (...) {
+        // No parent edge or old live buffer has been changed yet.
+        RollbackAddAllocations(node_ptrs.offset, 1, allocations, 3);
+        throw;
+    }
 
     // Update the new node
     // match not found for the new node, should not set node[1] and data offset
@@ -521,7 +551,15 @@ int DictMem::AddLink(EdgePtrs& edge_ptrs, int match_len, const uint8_t* key,
     new_edge_ptrs[new_idx].len_ptr[0] = key_len;
     if (key_len > LOCAL_EDGE_LEN) {
         size_t new_key_off;
-        ReserveData(key + 1, key_len - 1, new_key_off, map_new_sliding);
+        try {
+            ReserveData(key + 1, key_len - 1, new_key_off, map_new_sliding);
+        } catch (...) {
+            // All tracked allocations are still unpublished.
+            RollbackAddAllocations(node_ptrs.offset, 1, allocations, 3);
+            throw;
+        }
+        allocations[2].offset = new_key_off;
+        allocations[2].size = key_len - 1;
         Write5BInteger(new_edge_ptrs[new_idx].ptr, new_key_off);
     } else {
         // edge key is local
@@ -534,8 +572,11 @@ int DictMem::AddLink(EdgePtrs& edge_ptrs, int match_len, const uint8_t* key,
 
     if (node_move)
         WriteData(node, node_size[1], node_ptrs.offset);
+    Write6BInteger(edge_ptrs.offset_ptr, node_ptrs.offset);
 
     // Update the parent edge
+    if (publication_started != nullptr)
+        *publication_started = true;
     if (release_buffer_size > 0)
         ReleaseBuffer(edge_str_off, release_buffer_size);
 #ifdef __LOCK_FREE__
@@ -573,13 +614,14 @@ int DictMem::AddLink(EdgePtrs& edge_ptrs, int match_len, const uint8_t* key,
 //   the node’s sorted flag, and releases the old node via free list when needed.
 // - Protects the parent edge write with lock-free writer guards when enabled.
 int DictMem::UpdateNode(EdgePtrs& edge_ptrs, const uint8_t* key, int key_len,
-    size_t data_off)
+    size_t data_off, bool* publication_started)
 {
     int nt = edge_ptrs.curr_nt + 1;
     bool node_move;
     NodePtrs node_ptrs;
     uint8_t* node;
     bool map_new_sliding = false;
+    PendingIndexBuffer allocation {};
 
     node_move = ReserveNode(nt, node_ptrs.offset, node);
     if (node_move)
@@ -604,10 +646,16 @@ int DictMem::UpdateNode(EdgePtrs& edge_ptrs, const uint8_t* key, int key_len,
 
         // Copy old node
         int copy_size = NODE_EDGE_KEY_FIRST + nt;
-        if (ReadData(node_ptrs.ptr, copy_size, old_node_off) != copy_size)
+        if (ReadData(node_ptrs.ptr, copy_size, old_node_off) != copy_size) {
+            RollbackAddAllocations(node_ptrs.offset, nt, &allocation, 1);
             return MBError::READ_ERROR;
-        if (ReadData(node_ptrs.ptr + copy_size + 1, EDGE_SIZE * nt, old_node_off + copy_size) != EDGE_SIZE * nt)
+        }
+        if (ReadData(node_ptrs.ptr + copy_size + 1, EDGE_SIZE * nt,
+                old_node_off + copy_size)
+            != EDGE_SIZE * nt) {
+            RollbackAddAllocations(node_ptrs.offset, nt, &allocation, 1);
             return MBError::READ_ERROR;
+        }
 
         release_node_index = nt - 1;
     }
@@ -639,15 +687,21 @@ int DictMem::UpdateNode(EdgePtrs& edge_ptrs, const uint8_t* key, int key_len,
     }
     node_ptrs.edge_key_ptr[ins] = fk;
 
-    Write6BInteger(edge_ptrs.offset_ptr, node_ptrs.offset);
-
     // Create the new edge
     EdgePtrs new_edge_ptrs;
     InitEdgePtrs(node_ptrs, ins, new_edge_ptrs);
     new_edge_ptrs.len_ptr[0] = key_len;
     if (key_len > LOCAL_EDGE_LEN) {
         size_t new_key_off;
-        ReserveData(key + 1, key_len - 1, new_key_off, map_new_sliding);
+        try {
+            ReserveData(key + 1, key_len - 1, new_key_off, map_new_sliding);
+        } catch (...) {
+            // The replacement node has not been written or published.
+            RollbackAddAllocations(node_ptrs.offset, nt, &allocation, 1);
+            throw;
+        }
+        allocation.offset = new_key_off;
+        allocation.size = key_len - 1;
         Write5BInteger(new_edge_ptrs.ptr, new_key_off);
     } else {
         // edge key is local
@@ -667,7 +721,10 @@ int DictMem::UpdateNode(EdgePtrs& edge_ptrs, const uint8_t* key, int key_len,
 
     if (node_move)
         WriteData(node, node_size[nt], node_ptrs.offset);
+    Write6BInteger(edge_ptrs.offset_ptr, node_ptrs.offset);
 
+    if (publication_started != nullptr)
+        *publication_started = true;
     if (release_node_index >= 0)
         ReleaseNode(old_node_off, release_node_index);
 #ifdef __LOCK_FREE__
@@ -1095,10 +1152,12 @@ int DictMem::ClearRootEdges_RC() const
     return MBError::SUCCESS;
 }
 
-void DictMem::ClearMem() const
+int DictMem::ClearMem() const
 {
     if (options & CONSTS::OPTION_JEMALLOC) {
-        kv_file->ResetJemalloc();
+        const int rval = kv_file->ResetJemalloc();
+        if (rval != MBError::SUCCESS)
+            return rval;
         header->n_states = 0;
     } else {
         int root_node_size = free_lists->GetAlignmentSize(node_size[NUM_ALPHABET - 1]);
@@ -1109,6 +1168,7 @@ void DictMem::ClearMem() const
     header->n_edges = 0;
     header->edge_str_size = 0;
     header->pending_index_buff_size = 0;
+    return MBError::SUCCESS;
 }
 
 int DictMem::ReadNode(size_t& node_off, EdgePtrs& edge_ptrs,

@@ -144,10 +144,20 @@ public:
     static void RunAfterPrefixCacheHitHookForTest();
 #endif
 
+#ifdef MABAIN_LF_GUARD_TEST_HOOKS
+    using InternalNodeValueReadTestHook = void (*)();
+    static void SetBeforeInternalNodeValueReadHookForTest(
+        InternalNodeValueReadTestHook hook);
+#endif
+
 private:
     // Allow internal SearchEngine to orchestrate lookups without exposing members publicly
     friend class detail::SearchEngine;
     friend class DictReleaseTestPeer;
+    bool UsesJemalloc() const
+    {
+        return (header->writer_options & CONSTS::OPTION_JEMALLOC) != 0;
+    }
     // Search internals moved to detail::SearchEngine
     // Prefix traversal helpers moved to SearchEngine.
     // Traversal helpers are owned by SearchEngine.
@@ -160,6 +170,8 @@ private:
     void InvalidatePrefixCacheForRemove(const uint8_t* key, int len,
         const EdgePtrs& edge_ptrs, bool structural_change) const;
     void InvalidatePrefixCacheForMutation(const uint8_t* key, int len) const;
+    void InvalidatePrefixCacheForStructuralAdd(const uint8_t* key, int len,
+        int common_prefix_len, bool rc_mode) const;
     bool RemovalChangesMultiplePrefix2(uint8_t first_byte,
         const EdgePtrs& edge_ptrs) const;
     int ReadNodeMatch(size_t node_off, int& match, MBData& data) const;
@@ -199,6 +211,10 @@ private:
 
 #ifdef MABAIN_PREFIX_CACHE_CONSISTENCY_TEST_HOOKS
     static void RunBeforePrefixCacheSeedHookForTest();
+#endif
+
+#ifdef MABAIN_LF_GUARD_TEST_HOOKS
+    static void RunBeforeInternalNodeValueReadHookForTest();
 #endif
 
     // Initialize the embedded prefix cache layout in the data file header

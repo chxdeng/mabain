@@ -52,23 +52,26 @@ namespace {
     int SearchEngine::find(const uint8_t* key, int len, MBData& data)
     {
         int rval;
-        size_t rc_root_offset = dict.GetHeaderPtr()->rc_root_offset.load(MEMORY_ORDER_READER);
+        if (!dict.UsesJemalloc()) {
+            size_t rc_root_offset =
+                dict.GetHeaderPtr()->rc_root_offset.load(MEMORY_ORDER_READER);
 
-        if (rc_root_offset != 0) {
-            dict.reader_rc_off = rc_root_offset;
-            rval = tryFindAtRoot(rc_root_offset, key, len, data);
-            if (rval == MBError::SUCCESS) {
-                data.match_len = len;
-                return rval;
-            } else if (rval != MBError::NOT_EXIST) {
-                return rval;
-            }
-            data.options &= ~(CONSTS::OPTION_RC_MODE | CONSTS::OPTION_READ_SAVED_EDGE);
-        } else {
-            if (dict.reader_rc_off != 0) {
-                dict.reader_rc_off = 0;
-                dict.RemoveUnused(0);
-                dict.mm.RemoveUnused(0);
+            if (rc_root_offset != 0) {
+                dict.reader_rc_off = rc_root_offset;
+                rval = tryFindAtRoot(rc_root_offset, key, len, data);
+                if (rval == MBError::SUCCESS) {
+                    data.match_len = len;
+                    return rval;
+                } else if (rval != MBError::NOT_EXIST) {
+                    return rval;
+                }
+                data.options &= ~(CONSTS::OPTION_RC_MODE | CONSTS::OPTION_READ_SAVED_EDGE);
+            } else {
+                if (dict.reader_rc_off != 0) {
+                    dict.reader_rc_off = 0;
+                    dict.RemoveUnused(0);
+                    dict.mm.RemoveUnused(0);
+                }
             }
         }
 
@@ -257,6 +260,7 @@ namespace {
                         bound_key->push_back(static_cast<char>(key[0]));
                         bound_key->append(reinterpret_cast<const char*>(edge_label_ptr), edge_label_len);
                     }
+                    return lf_guard.stopOrReturn(root_edge_offset, MBError::NOT_EXIST);
                 }
                 rval = readBoundFromRootEdge(edge_ptrs, data, root_key, bound_key, lf_guard);
                 return lf_guard.stopOrReturn(root_edge_offset, rval);
@@ -283,6 +287,15 @@ namespace {
                 rval = dict.ReadDataFromEdge(data, edge_ptrs);
                 if (rval == MBError::SUCCESS)
                     data.match_len += edge_len;
+            }
+        } else {
+            int label_cmp = len > 1 ? memcmp(edge_label_ptr, key + 1, len - 1) : 0;
+            if (label_cmp < 0) {
+                bound_state.use_curr_edge = true;
+                if (bound_key) {
+                    bound_key->push_back(static_cast<char>(key[0]));
+                    bound_key->append(reinterpret_cast<const char*>(edge_label_ptr), edge_label_len);
+                }
             }
         }
 
@@ -542,13 +555,13 @@ namespace {
             if (data.options & CONSTS::OPTION_FIND_AND_STORE_PARENT) {
                 rval = dict.mm.NextEdge(key_cursor, edge_ptrs, node_buff, data);
             } else {
-                // Try fast path first; on any non-success, fall back to the
-                // generic path which is more permissive and uses RandomRead.
+                // NOT_EXIST from the fast path is definitive. For other
+                // failures, fall back to the generic RandomRead path.
                 int rf = dict.mm.NextEdgeFast(key_cursor, edge_ptrs, data);
-                if (rf != MBError::SUCCESS) {
-                    rval = dict.mm.NextEdge(key_cursor, edge_ptrs, node_buff, data);
-                } else {
+                if (rf == MBError::SUCCESS || rf == MBError::NOT_EXIST) {
                     rval = rf;
+                } else {
+                    rval = dict.mm.NextEdge(key_cursor, edge_ptrs, node_buff, data);
                 }
             }
             if (rval != MBError::SUCCESS)

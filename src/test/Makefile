@@ -9,6 +9,7 @@ TESTSOURCES=$(wildcard *.cpp)
 all: mb_test mb_test1 mb_test2 mb_test_mp multi_writer_bug_test mb_bound_test mb_header_test \
 	mb_mm_test mb_mm_prune_test sigbus_disk_pressure_test errno95_db_writer_test jemalloc_test \
 	shared_prefix_cache_concurrency_test hashmap_lookup_bench jemalloc_restart_rebuild_test \
+	jemalloc_rebuild_batch_test \
 	find_lower_bound_concurrency_test shmq_reservation_timeout_test \
 	prefix_cache_snapshot_concurrency_test shmq_queue_full_stress_test \
 	hashmap_radix_lookup_bench hashmap_concurrency_test \
@@ -34,6 +35,10 @@ jemalloc_test: jemalloc_test.cpp
 jemalloc_restart_rebuild_test: jemalloc_restart_rebuild_test.cpp
 	$(CPP) $(CPPFLAGS) jemalloc_restart_rebuild_test.cpp
 	$(CPP) jemalloc_restart_rebuild_test.o -o jemalloc_restart_rebuild_test $(LDFLAGS)
+
+jemalloc_rebuild_batch_test: jemalloc_rebuild_batch_test.cpp
+	$(CPP) $(CPPFLAGS) jemalloc_rebuild_batch_test.cpp
+	$(CPP) jemalloc_rebuild_batch_test.o -o jemalloc_rebuild_batch_test $(LDFLAGS)
 
 mb_test1: mbtest1.cpp
 	$(CPP) $(CPPFLAGS) mbtest1.cpp 
@@ -115,4 +120,4 @@ value_overwrite_concurrency_test: value_overwrite_concurrency_test.cpp ../../bui
 
 
 clean:
-	-rm -rf *.o mb_test* multi_writer_bug_test mb_bound_test mb_header_test mb_mm_test mb_mm_prune_test sigbus_disk_pressure_test errno95_db_writer_test jemalloc_test jemalloc_restart_rebuild_test shared_prefix_cache_concurrency_test find_lower_bound_concurrency_test hashmap_lookup_bench hashmap_radix_lookup_bench hashmap_concurrency_test hashmap_value_concurrency_test hashmap_bucket_layout_bench shmq_reservation_timeout_test shmq_queue_full_stress_test prefix_cache_snapshot_concurrency_test value_overwrite_concurrency_test
+	-rm -rf *.o mb_test* multi_writer_bug_test mb_bound_test mb_header_test mb_mm_test mb_mm_prune_test sigbus_disk_pressure_test errno95_db_writer_test jemalloc_test jemalloc_restart_rebuild_test jemalloc_rebuild_batch_test shared_prefix_cache_concurrency_test find_lower_bound_concurrency_test hashmap_lookup_bench hashmap_radix_lookup_bench hashmap_concurrency_test hashmap_value_concurrency_test hashmap_bucket_layout_bench shmq_reservation_timeout_test shmq_queue_full_stress_test prefix_cache_snapshot_concurrency_test value_overwrite_concurrency_test

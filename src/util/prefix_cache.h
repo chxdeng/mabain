@@ -93,6 +93,8 @@ public:
     ~PrefixCache();
     // Shared cache backed by embedded region in _mabain_d.
     PrefixCache(const std::string& mbdir, const IndexHeader* hdr, size_t capacity = 65536);
+    PrefixCache(const PrefixCache&) = delete;
+    PrefixCache& operator=(const PrefixCache&) = delete;
 
     void Put(const uint8_t* key, int len, const PrefixCacheEntry& in);
     void PutAtDepth(const uint8_t* key, int depth, const PrefixCacheEntry& in);
@@ -142,9 +144,9 @@ private:
     bool PrepareInvalidation();
     bool CacheDisabled() const;
 
-    const size_t cap2;
-    const size_t cap3;
-    const size_t cap4;
+    size_t cap2;
+    size_t cap3;
+    size_t cap4;
     size_t mask3 = 0; // cap3-1 when cap3 is power-of-two
     size_t mask2 = 0; // cap2-1
     size_t mask4 = 0; // cap4-1

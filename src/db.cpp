@@ -49,6 +49,14 @@ namespace {
 
 const int64_t kRebuildBarrierGuardToken = std::numeric_limits<int64_t>::max();
 const uint32_t kReaderEpochGuardMaxStabilizeRetries = 32;
+const int kFindOutOfBoundRetryLimit = 3;
+
+void PublishNextAsyncRCState(IndexHeader* header, AsyncRCState state)
+{
+    const uint32_t token = header->rc_flag.load(std::memory_order_relaxed);
+    header->rc_flag.store(
+        AdvanceAsyncRCToken(token, state), std::memory_order_release);
+}
 
 // MEMORY_ONLY_MODE owns the process-local writer marker without an OS lock fd.
 const int kMemoryOnlyWriterMarkerFd = -2;
@@ -98,6 +106,32 @@ uint64_t ReadSelfProcStartTime()
 #endif
 
 } // namespace
+
+class DB::ReaderEpochGuard {
+public:
+    explicit ReaderEpochGuard(const DB& db)
+        : db_(db)
+        , token_(db.BeginReaderEpochGuard())
+    {
+    }
+
+    ~ReaderEpochGuard()
+    {
+        db_.EndReaderEpochGuard(token_);
+    }
+
+    int Status() const
+    {
+        return token_ < 0 ? static_cast<int>(-token_) : MBError::SUCCESS;
+    }
+
+    ReaderEpochGuard(const ReaderEpochGuard&) = delete;
+    ReaderEpochGuard& operator=(const ReaderEpochGuard&) = delete;
+
+private:
+    const DB& db_;
+    int64_t token_;
+};
 
 // Current mabain version 1.7.2
 uint16_t version[4] = { 1, 7, 2, 0 };
@@ -342,6 +376,10 @@ DB::DB(MBConfig& config)
 int DB::ValidateConfig(MBConfig& config)
 {
     if (config.mbdir == NULL || config.mbdir[0] == '\0')
+        return MBError::INVALID_ARG;
+
+    if ((config.options & CONSTS::ACCESS_MODE_WRITER)
+        && (config.options & CONSTS::READ_ONLY_DB))
         return MBError::INVALID_ARG;
 
     if (config.memcap_index == 0)
@@ -657,6 +695,8 @@ int DB::RunStartupRebuild()
         if (reset_header != NULL) {
             reset_header->ClearRebuildMetadata();
             reset_header->ResetReaderEpochState();
+            reset_header->reader_epoch_tracking_active.store(
+                1, MEMORY_ORDER_WRITER);
             reset_header->pending_index_buff_size = 0;
             reset_header->pending_data_buff_size = 0;
             reset_header->jemalloc_index_free_start = 0;
@@ -665,6 +705,9 @@ int DB::RunStartupRebuild()
             reset_header->excep_offset = 0;
             reset_header->excep_lf_offset = 0;
             memset(reset_header->excep_buff, 0, sizeof(reset_header->excep_buff));
+            PublishNextAsyncRCState(reset_header, ASYNC_RC_IDLE);
+            reset_header->reader_epoch_tracking_active.store(
+                0, MEMORY_ORDER_WRITER);
         }
         return MBError::SUCCESS;
     };
@@ -679,13 +722,18 @@ int DB::RunStartupRebuild()
         if (header == NULL)
             return MBError::NOT_INITIALIZED;
 
-        if (startup_rebuild_reset_only)
-            return reset_to_fresh_state();
-        if (!startup_rebuild_prepared)
+        if (!startup_rebuild_reset_only && !startup_rebuild_prepared)
             return MBError::SUCCESS;
 
         header->SetRebuildActive();
         header->ResetReaderEpochState();
+        // Tracking must be visible before RUNNING. A reader that still saw the
+        // previous IDLE token detects the generation change after its lookup.
+        header->reader_epoch_tracking_active.store(1, MEMORY_ORDER_WRITER);
+        PublishNextAsyncRCState(header, ASYNC_RC_RUNNING);
+
+        if (startup_rebuild_reset_only)
+            return reset_to_fresh_state();
 
         ResourceCollection rc(*this);
         rc.ResetStartupRebuildState(REBUILD_STATE_PREP);
@@ -736,12 +784,16 @@ int DB::RunStartupRebuild()
             }
         }
 
+        header->reader_epoch_tracking_active.store(1, MEMORY_ORDER_WRITER);
         header->pending_index_buff_size = 0;
         header->pending_data_buff_size = 0;
-        header->reader_epoch_tracking_active.store(0, MEMORY_ORDER_WRITER);
         header->jemalloc_index_free_start = rc.GetStartupRebuildState().rebuild_index_alloc_end;
         header->jemalloc_data_free_start = rc.GetStartupRebuildState().rebuild_data_alloc_end;
         header->ClearRebuildMetadata();
+        // Publish a new IDLE generation only after relocation and block reuse
+        // have stopped. Readers may stop registering after this publication.
+        PublishNextAsyncRCState(header, ASYNC_RC_IDLE);
+        header->reader_epoch_tracking_active.store(0, MEMORY_ORDER_WRITER);
         startup_rebuild_prepared = false;
         startup_rebuild_reset_only = false;
         Logger::Log(LOG_LEVEL_INFO, "jemalloc startup rebuild completed for %s", mb_dir.c_str());
@@ -935,14 +987,27 @@ bool DB::InDB(const char* key, int len, int& err)
         return false;
     }
     MBData data(0, CONSTS::OPTION_KEY_ONLY);
-    int64_t reader_epoch = BeginReaderEpochGuard();
-    if (reader_epoch < 0) {
-        err = static_cast<int>(-reader_epoch);
+    IndexHeader* header = dict->GetHeaderPtr();
+    const bool jemalloc =
+        (header->writer_options & CONSTS::OPTION_JEMALLOC) != 0;
+    const uint32_t rc_before = jemalloc
+        ? header->rc_flag.load(std::memory_order_acquire)
+        : ASYNC_RC_IDLE;
+    ReaderEpochGuard reader_guard(*this);
+    const int guard_status = reader_guard.Status();
+    if (guard_status != MBError::SUCCESS) {
+        err = guard_status;
         return false;
     }
     detail::SearchEngine engine(*dict);
     int rval = engine.find(reinterpret_cast<const uint8_t*>(key), len, data);
-    EndReaderEpochGuard(reader_epoch);
+    if (jemalloc && rval == MBError::NOT_EXIST
+        && (DecodeAsyncRCState(rc_before) != ASYNC_RC_IDLE
+            || header->rc_flag.load(std::memory_order_acquire)
+                != rc_before)) {
+        err = MBError::TRY_AGAIN;
+        return false;
+    }
     if (rval == MBError::SUCCESS) {
         return true; // found it
     } else if (rval != MBError::NOT_EXIST) {
@@ -954,6 +1019,8 @@ bool DB::InDB(const char* key, int len, int& err)
 // Find the exact key match (delegate to SearchEngine)
 int DB::Find(const char* key, int len, MBData& mdata) const
 {
+    mdata.data_ptr = NULL;
+    mdata.data_len = 0;
     if (key == NULL || len <= 0)
         return MBError::INVALID_ARG;
     if (status != MBError::SUCCESS)
@@ -961,13 +1028,46 @@ int DB::Find(const char* key, int len, MBData& mdata) const
     if (options & CONSTS::ASYNC_WRITER_MODE)
         return MBError::NOT_ALLOWED;
 
-    int64_t reader_epoch = BeginReaderEpochGuard();
-    if (reader_epoch < 0)
-        return static_cast<int>(-reader_epoch);
-    detail::SearchEngine engine(*dict);
-    int rval = engine.find(reinterpret_cast<const uint8_t*>(key), len, mdata);
-    EndReaderEpochGuard(reader_epoch);
-    return rval;
+    IndexHeader* header = dict->GetHeaderPtr();
+    const bool jemalloc =
+        (header->writer_options & CONSTS::OPTION_JEMALLOC) != 0;
+
+    for (int attempt = 0; attempt < kFindOutOfBoundRetryLimit; ++attempt) {
+        const uint32_t rc_before = jemalloc
+            ? header->rc_flag.load(std::memory_order_acquire)
+            : ASYNC_RC_IDLE;
+        ReaderEpochGuard reader_guard(*this);
+        const int guard_status = reader_guard.Status();
+        if (guard_status != MBError::SUCCESS)
+            return guard_status;
+
+        try {
+            detail::SearchEngine engine(*dict);
+            const int rval = engine.find(
+                reinterpret_cast<const uint8_t*>(key), len, mdata);
+            if (jemalloc && rval == MBError::NOT_EXIST
+                && (DecodeAsyncRCState(rc_before) != ASYNC_RC_IDLE
+                    || header->rc_flag.load(std::memory_order_acquire)
+                        != rc_before)) {
+                mdata.Clear();
+                return MBError::TRY_AGAIN;
+            }
+            if (rval != MBError::SUCCESS
+                && (mdata.options & CONSTS::OPTION_RETURN_DATA_PTR)) {
+                mdata.data_ptr = NULL;
+                mdata.data_len = 0;
+            }
+            return rval;
+        } catch (int error) {
+            mdata.Clear();
+            if (error != MBError::OUT_OF_BOUND)
+                return error;
+            if (attempt + 1 == kFindOutOfBoundRetryLimit)
+                return MBError::READ_ERROR;
+        }
+    }
+
+    return MBError::READ_ERROR;
 }
 
 int DB::Find(const std::string& key, MBData& mdata) const
@@ -982,6 +1082,10 @@ int DB::FindLowerBound(const std::string& key, MBData& data, std::string* bound_
 
 int DB::FindLowerBound(const char* key, int len, MBData& data, std::string* bound_key) const
 {
+    const bool return_data_ptr
+        = (data.options & CONSTS::OPTION_RETURN_DATA_PTR) != 0;
+    data.data_ptr = NULL;
+    data.data_len = 0;
     if (key == NULL || len <= 0)
         return MBError::INVALID_ARG;
     if (status != MBError::SUCCESS)
@@ -989,7 +1093,7 @@ int DB::FindLowerBound(const char* key, int len, MBData& data, std::string* boun
     if (options & CONSTS::ASYNC_WRITER_MODE)
         return MBError::NOT_ALLOWED;
 
-    data.options = 0;
+    data.options = return_data_ptr ? CONSTS::OPTION_RETURN_DATA_PTR : 0;
     if (bound_key != nullptr) {
         bound_key->clear();
         bound_key->reserve(CONSTS::MAX_KEY_LENGHTH);
@@ -1000,14 +1104,23 @@ int DB::FindLowerBound(const char* key, int len, MBData& data, std::string* boun
     detail::SearchEngine engine(*dict);
     int rval = engine.lowerBound(reinterpret_cast<const uint8_t*>(key), len, data, bound_key);
     EndReaderEpochGuard(reader_epoch);
+    if (rval != MBError::SUCCESS
+        && (data.options & CONSTS::OPTION_RETURN_DATA_PTR)) {
+        data.data_ptr = NULL;
+        data.data_len = 0;
+    }
     return rval;
 }
 
 // Find the longest prefix match
 int DB::FindLongestPrefix(const char* key, int len, MBData& data) const
 {
+    data.data_ptr = NULL;
+    data.data_len = 0;
     if (key == NULL || len <= 0)
         return MBError::INVALID_ARG;
+    if (data.options & CONSTS::OPTION_RETURN_DATA_PTR)
+        return MBError::NOT_ALLOWED;
     if (status != MBError::SUCCESS)
         return MBError::NOT_INITIALIZED;
     if (options & CONSTS::ASYNC_WRITER_MODE)
@@ -1030,6 +1143,8 @@ int DB::FindLongestPrefix(const std::string& key, MBData& data) const
 
 int DB::ReadDataByOffset(size_t offset, MBData& data) const
 {
+    data.data_ptr = NULL;
+    data.data_len = 0;
     if (status != MBError::SUCCESS)
         return MBError::NOT_INITIALIZED;
     if (offset > static_cast<size_t>(MAX_6B_OFFSET))
@@ -1085,14 +1200,25 @@ int DB::Add(const char* key, int len, MBData& mbdata, bool overwrite)
         return MBError::NOT_INITIALIZED;
     if (mbdata.buff == NULL)
         return MBError::INVALID_ARG;
-    if (len <= 0 || len > CONSTS::MAX_KEY_LENGHTH
+    // A radix edge stores its length in one byte; zero marks an empty edge.
+    if (len <= 0 || len >= CONSTS::MAX_KEY_LENGHTH
         || mbdata.data_len <= 0 || mbdata.data_len > CONSTS::MAX_DATA_SIZE)
         return MBError::OUT_OF_BOUND;
     if (options & CONSTS::READ_ONLY_DB)
         return MBError::NOT_ALLOWED;
 
     if (async_writer == NULL && (options & CONSTS::ACCESS_MODE_WRITER)) {
-        rval = dict->Add(reinterpret_cast<const uint8_t*>(key), len, mbdata, overwrite);
+        try {
+            rval = dict->Add(
+                reinterpret_cast<const uint8_t*>(key), len, mbdata, overwrite);
+        } catch (int error) {
+            status = error;
+            Logger::Log(LOG_LEVEL_ERROR,
+                "synchronous Add failed after mutation publication began: %s; "
+                "close and reopen the DB before further operations",
+                MBError::get_error_str(error));
+            rval = error;
+        }
     } else {
         AsyncWriter* awr = AsyncWriter::GetInstance();
         if (awr) {
@@ -1162,7 +1288,16 @@ int DB::Remove(const char* key, int len)
         return MBError::NOT_INITIALIZED;
 
     if (async_writer == NULL && (options & CONSTS::ACCESS_MODE_WRITER)) {
-        rval = dict->Remove(reinterpret_cast<const uint8_t*>(key), len);
+        try {
+            rval = dict->Remove(reinterpret_cast<const uint8_t*>(key), len);
+        } catch (int error) {
+            status = error;
+            Logger::Log(LOG_LEVEL_ERROR,
+                "synchronous Remove failed during mutation: %s; close and "
+                "reopen the DB before further operations",
+                MBError::get_error_str(error));
+            rval = error;
+        }
     } else {
         rval = dict->SHMQ_Remove(reinterpret_cast<const char*>(key), len);
     }
@@ -1202,6 +1337,8 @@ int DB::RemoveAll()
     int rval;
     if (async_writer == NULL && (options & CONSTS::ACCESS_MODE_WRITER)) {
         rval = dict->RemoveAll();
+        if (rval != MBError::SUCCESS)
+            status = rval;
     } else {
         rval = dict->SHMQ_RemoveAll();
     }
@@ -1215,6 +1352,8 @@ int DB::RemoveAllSync()
     if (!(options & CONSTS::ACCESS_MODE_WRITER))
         return MBError::NOT_ALLOWED;
     int rval = dict->RemoveAll();
+    if (rval != MBError::SUCCESS)
+        status = rval;
     return rval;
 }
 

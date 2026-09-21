@@ -281,7 +281,56 @@ On affected code, the test exits with status 2 and reports:
 REPRODUCED: exact Find accepted its first attempt after the old child node was reused
 ```
 
+### Internal-node Remove concurrency regression
+
+`internal_node_remove_concurrency_test` deterministically pauses an exact
+lookup immediately before reading the value attached to an internal node. It
+then removes that key and forces the released value offset to be reused by an
+unrelated key. The resumed lookup must retry and return `NOT_EXIST`, never the
+unrelated value.
+
+Reuse the test-only `build-lf-guard-test` build and `MABAIN_ROOT` created in
+the preceding section. From the repository root:
+
+```bash
+g++ -DMABAIN_LF_GUARD_TEST_HOOKS \
+  -I./src -I./src/util \
+  -Wall -Werror -g -O2 -std=c++17 \
+  src/test/internal_node_remove_concurrency_test.cpp \
+  -o src/test/internal_node_remove_concurrency_test \
+  -L./build-lf-guard-test/lib \
+  -lmabain -lpthread -lcrypto -ljemalloc \
+  -Wl,-rpath,"$MABAIN_ROOT/build-lf-guard-test/lib"
+
+./src/test/internal_node_remove_concurrency_test
+```
+
+Pass criteria: exit status 0 and output containing:
+
+```text
+PASS: overlapping internal-node Remove() did not expose a reused value buffer
+```
+
+On affected code, the test exits with status 2 and reports that `Find("abc")`
+returned the unrelated value from `"z"` after the internal-node removal.
+
 ## 5. Jemalloc restart and rebuild tests
+
+First run the bounded-batch regression. It creates a fragmented jemalloc
+database spanning multiple source blocks and verifies that one startup
+evacuation traversal advances across a bounded block batch, assigns one shared
+retirement epoch to the batch, and preserves all retained key/value pairs:
+
+```bash
+cd ~/mabain/src/test
+./jemalloc_rebuild_batch_test
+```
+
+Pass criteria: exit status 0 and output containing:
+
+```text
+jemalloc_rebuild_batch_test: passed
+```
 
 The first eight modes are independent. Give each one a unique directory:
 

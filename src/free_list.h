@@ -136,9 +136,12 @@ inline int FreeList::AddBufferByIndex(size_t buf_index, size_t offset)
         return MBError::SUCCESS;
     }
 
-    count++;
-    tot_size += (buf_index + 1) * alignment;
-    return buffer_free_list[buf_index]->AddIntToTail(offset);
+    int rval = buffer_free_list[buf_index]->AddIntToTail(offset);
+    if (rval == MBError::SUCCESS) {
+        count++;
+        tot_size += (buf_index + 1) * alignment;
+    }
+    return rval;
 }
 
 inline size_t FreeList::RemoveBufferByIndex(size_t buf_index)

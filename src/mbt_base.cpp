@@ -148,9 +148,9 @@ void DBTraverseBase::BufferCopy(size_t offset_dst, uint8_t* ptr_dst,
 
 void DBTraverseBase::ResizeRWBuffer(int size)
 {
-    if (rw_buffer != NULL)
-        delete[] rw_buffer;
-    rw_buffer = new uint8_t[size];
+    uint8_t* new_buffer = new uint8_t[size];
+    delete[] rw_buffer;
+    rw_buffer = new_buffer;
     rw_buffer_size = size;
 }
 

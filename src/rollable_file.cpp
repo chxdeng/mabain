@@ -73,6 +73,7 @@ RollableFile::RollableFile(const std::string& fpath, size_t blocksize, size_t me
     , rc_offset_percentage(in_rc_offset_percentage)
     , mem_used(0)
     , create_mode(in_create_mode)
+    , reserve_limit(static_cast<size_t>(-1))
 {
     sliding_addr = NULL;
     sliding_mem_size = SLIDING_MEM_SIZE;
@@ -160,20 +161,33 @@ int RollableFile::OpenAndMapBlockFile(size_t block_order, bool create_file)
     else
         map_file = false;
 
-    if (!map_file && (mode & CONSTS::MEMORY_ONLY_MODE))
-        return MBError::NO_MEMORY;
+    if (!map_file) {
+        if (mode & CONSTS::MEMORY_ONLY_MODE)
+            return MBError::NO_MEMORY;
+        if (mode & CONSTS::OPTION_JEMALLOC)
+            return MBError::MMAP_FAILED;
+    }
     bool configure_jemalloc = block_order == 0
         && (mode & CONSTS::OPTION_JEMALLOC)
         && (mode & CONSTS::ACCESS_MODE_WRITER);
-    files[block_order] = ResourcePool::getInstance().OpenFile(path + ss.str(),
+    std::shared_ptr<MmapFileIO> block_file =
+        ResourcePool::getInstance().OpenFile(path + ss.str(),
         mode,
         block_size,
         map_file,
         create_file,
         create_mode);
-    if (files[block_order] == nullptr)
+    if (block_file == nullptr)
         return MBError::OPEN_FAILURE;
-    if (map_file) {
+
+    const bool is_mapped = block_file->IsMapped();
+    if ((mode & (CONSTS::MEMORY_ONLY_MODE | CONSTS::OPTION_JEMALLOC))
+        && !is_mapped) {
+        return MBError::MMAP_FAILED;
+    }
+
+    files[block_order] = block_file;
+    if (is_mapped) {
         mem_used += block_size;
         if (configure_jemalloc) {
             if (files[0]->mm_meta == nullptr) {
@@ -185,8 +199,6 @@ int RollableFile::OpenAndMapBlockFile(size_t block_order, bool create_file)
             if (files[0]->mm_meta->arena_index == 0)
                 rval = ConfigureJemalloc(files[0]->mm_meta);
         }
-    } else if ((mode & CONSTS::MEMORY_ONLY_MODE) || (mode & CONSTS::OPTION_JEMALLOC)) {
-        rval = MBError::MMAP_FAILED;
     }
     return rval;
 }
@@ -253,7 +265,17 @@ int RollableFile::Reserve(size_t& offset, int size, uint8_t*& ptr, bool map_new_
 {
     int rval;
     ptr = NULL;
-    offset = CheckAlignment(offset, size);
+    if (size < 0)
+        return MBError::INVALID_SIZE;
+
+    const size_t aligned_offset = CheckAlignment(offset, size);
+    const size_t reserve_size = static_cast<size_t>(size);
+    if (reserve_limit != static_cast<size_t>(-1)
+        && (aligned_offset > reserve_limit
+            || reserve_size > reserve_limit - aligned_offset)) {
+        return MBError::OUT_OF_BOUND;
+    }
+    offset = aligned_offset;
 
     size_t order = offset / block_size;
     rval = CheckAndOpenFile(order, true);
@@ -709,6 +731,17 @@ void RollableFile::Free(size_t offset) const
         throw (int)MBError::OUT_OF_BOUND;
     }
 
+    if (files.empty()
+        || files[0] == nullptr
+        || files[0]->mm_meta == nullptr
+        || files[block_order] == nullptr
+        || !files[block_order]->IsMapped()) {
+        Logger::Log(LOG_LEVEL_WARN,
+            "cannot free offset %zu because its jemalloc block is not mapped",
+            offset);
+        return;
+    }
+
     void* ptr = files[block_order]->GetMapAddr() + relative_offset;
     unsigned arena_index = files[0]->mm_meta->arena_index;
     dallocx(ptr, MALLOCX_ARENA(arena_index) | MALLOCX_TCACHE_NONE);
@@ -735,6 +768,24 @@ void RollableFile::Purge() const
 // Reset jemalloc
 int RollableFile::ResetJemalloc()
 {
+    if (!(mode & CONSTS::OPTION_JEMALLOC))
+        return MBError::INVALID_ARG;
+    if (!(mode & CONSTS::ACCESS_MODE_WRITER))
+        return MBError::NOT_ALLOWED;
+
+    // A reopened writer may not have touched the value arena yet. Attach to
+    // an existing block zero so this RollableFile owns the arena before reset.
+    // An absent block means there is no allocator state to reset.
+    if (files.empty() || files[0] == nullptr) {
+        const std::string block_zero_path = path + "0";
+        if (access(block_zero_path.c_str(), F_OK) != 0)
+            return errno == ENOENT ? MBError::SUCCESS : MBError::OPEN_FAILURE;
+
+        const int rval = CheckAndOpenFile(0, false);
+        if (rval != MBError::SUCCESS)
+            return rval;
+    }
+
     if (!owns_jemalloc_arena)
         return MBError::NOT_ALLOWED;
     return DestroyJemallocArena(true);

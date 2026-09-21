@@ -106,12 +106,11 @@ int Dict::SHMQ_CollectResource(int64_t m_index_rc_size,
     if (node_ptr == nullptr)
         return err;
 
-    int64_t* data_ptr = reinterpret_cast<int64_t*>(node_ptr->data);
-    node_ptr->data_len = sizeof(int64_t) * 4;
-    data_ptr[0] = m_index_rc_size;
-    data_ptr[1] = m_data_rc_size;
-    data_ptr[2] = max_dbsz;
-    data_ptr[3] = max_dbcnt;
+    const int64_t params[] = {
+        m_index_rc_size, m_data_rc_size, max_dbsz, max_dbcnt
+    };
+    node_ptr->data_len = sizeof(params);
+    memcpy(node_ptr->data, params, sizeof(params));
     node_ptr->type = MABAIN_ASYNC_TYPE_RC;
 
     return SHMQ_PrepareSlot(node_ptr);
@@ -121,6 +120,12 @@ AsyncNode* Dict::SHMQ_AcquireSlot(int& err) const
 {
     if (slaq == nullptr || queue == nullptr) {
         err = MBError::NOT_ALLOWED;
+        return nullptr;
+    }
+    if (DecodeAsyncRCState(
+            header->rc_flag.load(std::memory_order_acquire))
+        == ASYNC_RC_FAILED) {
+        err = MBError::NO_RESOURCE;
         return nullptr;
     }
 
@@ -168,7 +173,9 @@ bool Dict::SHMQ_Busy() const
 {
     if ((header->queue_index.load(std::memory_order_acquire)
             != header->writer_index.load(std::memory_order_acquire))
-        || header->rc_flag == 1)
+        || DecodeAsyncRCState(
+               header->rc_flag.load(std::memory_order_acquire))
+            != ASYNC_RC_IDLE)
         return true;
 
     size_t rc_off = header->rc_root_offset.load(std::memory_order_consume);

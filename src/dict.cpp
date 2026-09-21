@@ -70,6 +70,28 @@ void Dict::RunAfterPrefixCacheHitHookForTest()
 }
 #endif
 
+#ifdef MABAIN_LF_GUARD_TEST_HOOKS
+namespace {
+std::atomic<Dict::InternalNodeValueReadTestHook>
+    before_internal_node_value_read_hook { nullptr };
+}
+
+void Dict::SetBeforeInternalNodeValueReadHookForTest(
+    InternalNodeValueReadTestHook hook)
+{
+    before_internal_node_value_read_hook.store(
+        hook, std::memory_order_release);
+}
+
+void Dict::RunBeforeInternalNodeValueReadHookForTest()
+{
+    InternalNodeValueReadTestHook hook =
+        before_internal_node_value_read_hook.load(std::memory_order_acquire);
+    if (hook != nullptr)
+        hook();
+}
+#endif
+
 Dict::Dict(const std::string& mbdir, bool init_header, int datasize,
     int db_options, size_t memsize_index, size_t memsize_data,
     uint32_t block_sz_idx, uint32_t block_sz_data,
@@ -387,7 +409,8 @@ int Dict::Add(const uint8_t* key, int len, MBData& data, bool overwrite)
     if (!(options & CONSTS::ACCESS_MODE_WRITER)) {
         return MBError::NOT_ALLOWED;
     }
-    if (len > CONSTS::MAX_KEY_LENGHTH || data.data_len > CONSTS::MAX_DATA_SIZE || len <= 0 || data.data_len <= 0)
+    // A radix edge stores its length in one byte; zero marks an empty edge.
+    if (len >= CONSTS::MAX_KEY_LENGHTH || data.data_len > CONSTS::MAX_DATA_SIZE || len <= 0 || data.data_len <= 0)
         return MBError::OUT_OF_BOUND;
 
     EdgePtrs edge_ptrs;
@@ -397,10 +420,38 @@ int Dict::Add(const uint8_t* key, int len, MBData& data, bool overwrite)
     if (rval != MBError::SUCCESS)
         return rval;
 
+    auto add_with_reserved_value = [&](auto&& add_operation) -> int {
+        bool value_reserved = false;
+        bool publication_started = false;
+        try {
+            ReserveData(data.buff, data.data_len, data.data_offset);
+            value_reserved = true;
+            const int add_result = add_operation(publication_started);
+            if (add_result != MBError::SUCCESS && !publication_started)
+                ReleaseBuffer(data.data_offset);
+            return add_result;
+        } catch (int error) {
+            if (value_reserved && !publication_started)
+                ReleaseBuffer(data.data_offset);
+            if (!publication_started)
+                return error;
+            throw;
+        } catch (...) {
+            if (value_reserved && !publication_started)
+                ReleaseBuffer(data.data_offset);
+            throw;
+        }
+    };
+
     if (edge_ptrs.len_ptr[0] == 0) {
-        ReserveData(data.buff, data.data_len, data.data_offset);
         // Add the first edge along this edge
-        mm.AddRootEdge(edge_ptrs, key, len, data.data_offset);
+        rval = add_with_reserved_value([&](bool& publication_started) {
+            mm.AddRootEdge(edge_ptrs, key, len, data.data_offset,
+                &publication_started);
+            return MBError::SUCCESS;
+        });
+        if (rval != MBError::SUCCESS)
+            return rval;
         if (data.options & CONSTS::OPTION_RC_MODE) {
             header->rc_count++;
         } else {
@@ -448,28 +499,42 @@ int Dict::Add(const uint8_t* key, int len, MBData& data, bool overwrite)
                     break;
             }
             if (!next) {
-                ReserveData(data.buff, data.data_len, data.data_offset);
-                InvalidatePrefixCacheForMutation(key, orig_len);
-                rval = mm.UpdateNode(edge_ptrs, key_cursor, len, data.data_offset);
+                rval = add_with_reserved_value([&](bool& publication_started) {
+                    InvalidatePrefixCacheForStructuralAdd(key, orig_len,
+                        orig_len - len, data.options & CONSTS::OPTION_RC_MODE);
+                    return mm.UpdateNode(edge_ptrs, key_cursor, len,
+                        data.data_offset, &publication_started);
+                });
             } else if (match_len < static_cast<int>(edge_ptrs.len_ptr[0])) {
                 if (len > match_len) {
-                    ReserveData(data.buff, data.data_len, data.data_offset);
-                    InvalidatePrefixCacheForMutation(key, orig_len);
-                    rval = mm.AddLink(edge_ptrs, match_len, key_cursor + match_len, len - match_len,
-                        data.data_offset, data);
+                    rval = add_with_reserved_value([&](bool& publication_started) {
+                        InvalidatePrefixCacheForStructuralAdd(key, orig_len,
+                            orig_len - len + match_len,
+                            data.options & CONSTS::OPTION_RC_MODE);
+                        return mm.AddLink(edge_ptrs, match_len,
+                            key_cursor + match_len, len - match_len,
+                            data.data_offset, data, &publication_started);
+                    });
                 } else if (len == match_len) {
-                    ReserveData(data.buff, data.data_len, data.data_offset);
-                    InvalidatePrefixCacheForMutation(key, orig_len);
-                    rval = mm.InsertNode(edge_ptrs, match_len, data.data_offset, data);
+                    rval = add_with_reserved_value([&](bool& publication_started) {
+                        InvalidatePrefixCacheForStructuralAdd(key, orig_len,
+                            orig_len - len + match_len,
+                            data.options & CONSTS::OPTION_RC_MODE);
+                        return mm.InsertNode(edge_ptrs, match_len,
+                            data.data_offset, data, &publication_started);
+                    });
                 }
             } else if (len == 0) {
                 rval = UpdateDataBuffer(edge_ptrs, overwrite, data, inc_count,
                     key, orig_len);
             }
         } else {
-            ReserveData(data.buff, data.data_len, data.data_offset);
-            InvalidatePrefixCacheForMutation(key, orig_len);
-            rval = mm.AddLink(edge_ptrs, i, key_cursor + i, len - i, data.data_offset, data);
+            rval = add_with_reserved_value([&](bool& publication_started) {
+                InvalidatePrefixCacheForStructuralAdd(key, orig_len, i,
+                    data.options & CONSTS::OPTION_RC_MODE);
+                return mm.AddLink(edge_ptrs, i, key_cursor + i, len - i,
+                    data.data_offset, data, &publication_started);
+            });
         }
     } else {
         for (i = 1; i < len; i++) {
@@ -477,14 +542,20 @@ int Dict::Add(const uint8_t* key, int len, MBData& data, bool overwrite)
                 break;
         }
         if (i < len) {
-            ReserveData(data.buff, data.data_len, data.data_offset);
-            InvalidatePrefixCacheForMutation(key, orig_len);
-            rval = mm.AddLink(edge_ptrs, i, key_cursor + i, len - i, data.data_offset, data);
+            rval = add_with_reserved_value([&](bool& publication_started) {
+                InvalidatePrefixCacheForStructuralAdd(key, orig_len, i,
+                    data.options & CONSTS::OPTION_RC_MODE);
+                return mm.AddLink(edge_ptrs, i, key_cursor + i, len - i,
+                    data.data_offset, data, &publication_started);
+            });
         } else {
             if (edge_ptrs.len_ptr[0] > len) {
-                ReserveData(data.buff, data.data_len, data.data_offset);
-                InvalidatePrefixCacheForMutation(key, orig_len);
-                rval = mm.InsertNode(edge_ptrs, i, data.data_offset, data);
+                rval = add_with_reserved_value([&](bool& publication_started) {
+                    InvalidatePrefixCacheForStructuralAdd(key, orig_len, i,
+                        data.options & CONSTS::OPTION_RC_MODE);
+                    return mm.InsertNode(edge_ptrs, i, data.data_offset, data,
+                        &publication_started);
+                });
             } else {
                 rval = UpdateDataBuffer(edge_ptrs, overwrite, data, inc_count,
                     key, orig_len);
@@ -496,10 +567,11 @@ int Dict::Add(const uint8_t* key, int len, MBData& data, bool overwrite)
         if (rval == MBError::SUCCESS)
             header->rc_count++;
     } else {
-        if (rval == MBError::SUCCESS)
+        if (rval == MBError::SUCCESS) {
             header->num_update++;
-        if (inc_count)
-            header->count++;
+            if (inc_count)
+                header->count++;
+        }
     }
     // After a successful add, seed prefix cache at canonical 2/3-byte boundaries.
     if (rval == MBError::SUCCESS
@@ -643,6 +715,9 @@ int Dict::ReadDataFromEdge(MBData& data, const EdgePtrs& edge_ptrs) const
         if (!(node_buff[0] & FLAG_NODE_MATCH))
             return MBError::NOT_EXIST;
         data_off = Get6BInteger(node_buff + 2);
+#ifdef MABAIN_LF_GUARD_TEST_HOOKS
+        RunBeforeInternalNodeValueReadHookForTest();
+#endif
     }
     data.data_offset = data_off;
 
@@ -652,13 +727,22 @@ int Dict::ReadDataFromEdge(MBData& data, const EdgePtrs& edge_ptrs) const
         != DATA_HDR_BYTE)
         return MBError::READ_ERROR;
     data_off += DATA_HDR_BYTE;
-    if (data.buff_len < data_len[0] + 1) {
-        if (data.Resize(data_len[0]) != MBError::SUCCESS)
-            return MBError::NO_MEMORY;
-    }
+    data.data_ptr = NULL;
+    if (data.options & CONSTS::OPTION_RETURN_DATA_PTR) {
+        // USE_SLIDING_WINDOW is deprecated. The caller must guarantee that
+        // the mapped value remains valid while this borrowed pointer is used.
+        data.data_ptr = GetShmPtr(data_off, data_len[0]);
+        if (data.data_ptr == NULL)
+            return MBError::NOT_ALLOWED;
+    } else {
+        if (data.buff_len < data_len[0] + 1) {
+            if (data.Resize(data_len[0]) != MBError::SUCCESS)
+                return MBError::NO_MEMORY;
+        }
 
-    if (ReadData(data.buff, data_len[0], data_off) != data_len[0])
-        return MBError::READ_ERROR;
+        if (ReadData(data.buff, data_len[0], data_off) != data_len[0])
+            return MBError::READ_ERROR;
+    }
 
     data.data_len = data_len[0];
     data.bucket_index = data_len[1];
@@ -686,8 +770,9 @@ int Dict::DeleteDataFromEdge(MBData& data, EdgePtrs& edge_ptrs)
         } else {
             rel_size = free_lists->GetAlignmentSize(data_len + DATA_HDR_BYTE);
         }
-        ReleaseBuffer(data_off, rel_size);
         rval = mm.RemoveEdgeByIndex(edge_ptrs, data);
+        if (rval == MBError::SUCCESS || rval == MBError::TRY_AGAIN)
+            ReleaseBuffer(data_off, rel_size);
     } else {
         // No exception handling in this case
         header->excep_lf_offset = 0;
@@ -716,6 +801,11 @@ int Dict::DeleteDataFromEdge(MBData& data, EdgePtrs& edge_ptrs)
             } else {
                 rel_size = free_lists->GetAlignmentSize(data_len + DATA_HDR_BYTE);
             }
+#ifdef __LOCK_FREE__
+            // Readers that captured this internal-node value offset must retry
+            // before the released buffer can be reused for unrelated data.
+            lfree.PublishGlobalRetryBarrier();
+#endif
             ReleaseBuffer(data_off, rel_size);
         } else {
             rval = MBError::NOT_EXIST;
@@ -740,12 +830,21 @@ int Dict::ReadDataFromNode(MBData& data, const uint8_t* node_ptr) const
         return MBError::READ_ERROR;
     data_off += DATA_HDR_BYTE;
 
-    if (data.buff_len < data_len[0] + 1) {
-        if (data.Resize(data_len[0]) != MBError::SUCCESS)
-            return MBError::NO_MEMORY;
+    data.data_ptr = NULL;
+    if (data.options & CONSTS::OPTION_RETURN_DATA_PTR) {
+        // USE_SLIDING_WINDOW is deprecated. The caller must guarantee that
+        // the mapped value remains valid while this borrowed pointer is used.
+        data.data_ptr = GetShmPtr(data_off, data_len[0]);
+        if (data.data_ptr == NULL)
+            return MBError::NOT_ALLOWED;
+    } else {
+        if (data.buff_len < data_len[0] + 1) {
+            if (data.Resize(data_len[0]) != MBError::SUCCESS)
+                return MBError::NO_MEMORY;
+        }
+        if (ReadData(data.buff, data_len[0], data_off) != data_len[0])
+            return MBError::READ_ERROR;
     }
-    if (ReadData(data.buff, data_len[0], data_off) != data_len[0])
-        return MBError::READ_ERROR;
 
     data.data_len = data_len[0];
     data.bucket_index = data_len[1];
@@ -975,6 +1074,32 @@ void Dict::InvalidatePrefixCacheForMutation(const uint8_t* key, int len) const
     prefix_cache->InvalidateKey(key, len);
 }
 
+void Dict::InvalidatePrefixCacheForStructuralAdd(const uint8_t* key, int len,
+    int common_prefix_len, bool rc_mode) const
+{
+    if (!prefix_cache || key == nullptr || len < 2)
+        return;
+
+    // Resource collection invalidates the complete cache before rebuilding
+    // its private tree. Preserve the existing exact invalidation here without
+    // publishing a retry barrier for every RC insertion.
+    if (rc_mode) {
+        prefix_cache->InvalidateKey(key, len);
+        return;
+    }
+
+    if (common_prefix_len >= 2)
+        prefix_cache->InvalidatePrefix2(key, len);
+    else
+        prefix_cache->InvalidateRoot(key[0]);
+
+#ifdef __LOCK_FREE__
+    // A reader may already hold a sibling cache entry with the old physical
+    // edge offset. Force it to retry before structural storage can be reused.
+    lfree.PublishGlobalRetryBarrier();
+#endif
+}
+
 int Dict::Remove(const uint8_t* key, int len, MBData& data)
 {
     if (!(options & CONSTS::ACCESS_MODE_WRITER)) {
@@ -1031,19 +1156,39 @@ int Dict::RemoveAll()
     if (prefix_cache)
         prefix_cache->InvalidateAll();
 
-    mm.ClearMem(); // clear memory will re-initialize jemalloc
+    // TODO: RemoveAll is currently test-only. In regular allocator mode, a
+    // writer crash after ClearMem() rewinds the allocator but before every
+    // root edge is cleared can leave stale roots that startup recovery cannot
+    // complete. Before exposing this operation in production, persist a
+    // REMOVE_ALL exception status and rerun RemoveAll() during recovery.
+    rval = mm.ClearMem(); // clear memory will re-initialize jemalloc
+    if (rval != MBError::SUCCESS) {
+        Logger::Log(LOG_LEVEL_ERROR,
+            "RemoveAll failed to reset the index allocator: %s",
+            MBError::get_error_str(rval));
+        return rval;
+    }
     if (options & CONSTS::OPTION_JEMALLOC) {
         mm.InitRootNode();
         const int reset_rval = kv_file->ResetJemalloc();
-        if (reset_rval == MBError::SUCCESS && header->pfxcache_size > 0) {
+        if (reset_rval != MBError::SUCCESS) {
+            Logger::Log(LOG_LEVEL_ERROR,
+                "RemoveAll failed to reset the data allocator: %s",
+                MBError::get_error_str(reset_rval));
+            return reset_rval;
+        }
+        if (header->pfxcache_size > 0) {
             // The embedded cache occupies the beginning of data block 0. A
             // successful reset rewinds jemalloc's cursor, so restore the
             // user-data allocation floor before any post-RemoveAll Add can
-            // reuse cache storage. Preserve the existing behavior when this
-            // handle does not own the arena and ResetJemalloc is not allowed.
+            // reuse cache storage.
             rval = kv_file->ReseedJemalloc(GetStartDataOffset());
-            if (rval != MBError::SUCCESS)
+            if (rval != MBError::SUCCESS) {
+                Logger::Log(LOG_LEVEL_ERROR,
+                    "RemoveAll failed to reseed the data allocator: %s",
+                    MBError::get_error_str(rval));
                 return rval;
+            }
         }
         for (int c = 0; c < NUM_ALPHABET; c++) {
             rval = mm.ClearRootEdge(c);
@@ -1058,6 +1203,12 @@ int Dict::RemoveAll()
         }
         header->m_data_offset = GetStartDataOffset();
         free_lists->Empty();
+    }
+    if (rval != MBError::SUCCESS) {
+        Logger::Log(LOG_LEVEL_ERROR,
+            "RemoveAll failed to clear the radix root: %s",
+            MBError::get_error_str(rval));
+        return rval;
     }
     header->pending_data_buff_size = 0;
     header->count = 0;
@@ -1256,7 +1407,11 @@ int Dict::UpdateDataBuffer(EdgePtrs& edge_ptrs, bool overwrite, MBData& mbd,
 
         // Keep the currently published value alive until its complete
         // replacement has been written and linked into the tree.
-        ReserveData(mbd.buff, mbd.data_len, mbd.data_offset);
+        try {
+            ReserveData(mbd.buff, mbd.data_len, mbd.data_offset);
+        } catch (int error) {
+            return error;
+        }
         InvalidatePrefixCacheForMutation(key, key_len);
         Write6BInteger(edge_ptrs.offset_ptr, mbd.data_offset);
 
@@ -1297,7 +1452,11 @@ int Dict::UpdateDataBuffer(EdgePtrs& edge_ptrs, bool overwrite, MBData& mbd,
             node_buff[NODE_EDGE_KEY_FIRST] = 1;
         }
 
-        ReserveData(mbd.buff, mbd.data_len, mbd.data_offset);
+        try {
+            ReserveData(mbd.buff, mbd.data_len, mbd.data_offset);
+        } catch (int error) {
+            return error;
+        }
         InvalidatePrefixCacheForMutation(key, key_len);
         Write6BInteger(node_buff + 2, mbd.data_offset);
 
@@ -1527,13 +1686,13 @@ int Dict::ExceptionRecovery()
     case EXCEP_STATUS_RC_NODE:
     case EXCEP_STATUS_RC_DATA:
 #ifdef __LOCK_FREE__
-        lfree.WriterLockFreeStart(header->excep_lf_offset);
+        lfree.WriterLockFreeValueUpdateStart(header->excep_lf_offset);
 #endif
         mm.WriteData(header->excep_buff, OFFSET_SIZE, header->excep_offset);
         break;
     case EXCEP_STATUS_RC_EDGE_STR:
 #ifdef __LOCK_FREE__
-        lfree.WriterLockFreeStart(header->excep_lf_offset);
+        lfree.WriterLockFreeValueUpdateStart(header->excep_lf_offset);
 #endif
         mm.WriteData(header->excep_buff, OFFSET_SIZE - 1, header->excep_offset);
         break;

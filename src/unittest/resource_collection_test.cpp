@@ -40,6 +40,25 @@
 
 using namespace mabain;
 
+namespace mabain {
+
+class RCReplayTestPeer {
+public:
+    static void SetReplayBoundaries(ResourceCollection& rc,
+        size_t index_offset, size_t data_offset)
+    {
+        rc.rc_index_offset = index_offset;
+        rc.rc_data_offset = data_offset;
+    }
+
+    static int ProcessRCTree(ResourceCollection& rc)
+    {
+        return rc.ProcessRCTree();
+    }
+};
+
+} // namespace mabain
+
 namespace {
 
 class ResourceCollectionTest : public ::testing::Test {
@@ -302,6 +321,204 @@ TEST_F(ResourceCollectionTest, RC_delete_random_collect_index_data_add_test)
     }
 
     delete[] exist;
+}
+
+TEST_F(ResourceCollectionTest, RCReplayClearsTreeOnlyAfterCompleteSuccess)
+{
+    Dict* dict = db->GetDictPtr();
+    ASSERT_NE(dict, nullptr);
+    DictMem* dmm = dict->GetMM();
+    ASSERT_NE(dmm, nullptr);
+    IndexHeader* header = dict->GetHeaderPtr();
+    ASSERT_NE(header, nullptr);
+
+    const size_t main_index_offset = header->m_index_offset;
+    const size_t main_data_offset = header->m_data_offset;
+    const size_t rc_index_offset = dmm->GetResourceCollectionOffset();
+    const size_t rc_data_offset = dict->GetResourceCollectionOffset();
+
+    header->m_index_offset = rc_index_offset;
+    header->m_data_offset = rc_data_offset;
+    const size_t rc_root = dmm->InitRootNode_RC();
+    ASSERT_NE(rc_root, 0u);
+    header->rc_root_offset.store(rc_root, MEMORY_ORDER_WRITER);
+
+    const std::string key = "rc-replay-key";
+    const std::string value = "rc-replay-value";
+    MBData rc_data;
+    rc_data.options = CONSTS::OPTION_RC_MODE;
+    rc_data.buff = reinterpret_cast<uint8_t*>(const_cast<char*>(value.data()));
+    rc_data.data_len = value.size();
+    ASSERT_EQ(dict->Add(reinterpret_cast<const uint8_t*>(key.data()),
+                  key.size(), rc_data, true),
+        MBError::SUCCESS);
+    rc_data.buff = nullptr;
+    ASSERT_EQ(header->rc_count, 1);
+
+    header->m_index_offset = main_index_offset;
+    header->m_data_offset = main_data_offset;
+    ResourceCollection rc(*db);
+    RCReplayTestPeer::SetReplayBoundaries(
+        rc, rc_index_offset, rc_data_offset);
+    EXPECT_EQ(RCReplayTestPeer::ProcessRCTree(rc), MBError::SUCCESS);
+    EXPECT_EQ(header->rc_root_offset.load(MEMORY_ORDER_READER), 0u);
+    EXPECT_EQ(header->rc_count, 0);
+
+    MBData found;
+    ASSERT_EQ(db->Find(key, found), MBError::SUCCESS);
+    EXPECT_EQ(std::string(reinterpret_cast<char*>(found.buff), found.data_len),
+        value);
+}
+
+TEST_F(ResourceCollectionTest, RCReplayFailureRetainsAuthoritativeTree)
+{
+    Dict* dict = db->GetDictPtr();
+    ASSERT_NE(dict, nullptr);
+    DictMem* dmm = dict->GetMM();
+    ASSERT_NE(dmm, nullptr);
+    IndexHeader* header = dict->GetHeaderPtr();
+    ASSERT_NE(header, nullptr);
+
+    const size_t main_index_offset = header->m_index_offset;
+    const size_t main_data_offset = header->m_data_offset;
+    const size_t rc_index_offset = dmm->GetResourceCollectionOffset();
+    const size_t rc_data_offset = dict->GetResourceCollectionOffset();
+
+    header->m_index_offset = rc_index_offset;
+    header->m_data_offset = rc_data_offset;
+    const size_t rc_root = dmm->InitRootNode_RC();
+    ASSERT_NE(rc_root, 0u);
+    header->rc_root_offset.store(rc_root, MEMORY_ORDER_WRITER);
+
+    const std::string key = "retained-rc-key";
+    const std::string value = "retained-rc-value";
+    MBData rc_data;
+    rc_data.options = CONSTS::OPTION_RC_MODE;
+    rc_data.buff = reinterpret_cast<uint8_t*>(const_cast<char*>(value.data()));
+    rc_data.data_len = value.size();
+    ASSERT_EQ(dict->Add(reinterpret_cast<const uint8_t*>(key.data()),
+                  key.size(), rc_data, true),
+        MBError::SUCCESS);
+    rc_data.buff = nullptr;
+    ASSERT_EQ(header->rc_count, 1);
+
+    header->m_index_offset = main_index_offset;
+    header->m_data_offset = main_data_offset;
+    ResourceCollection rc(*db);
+    RCReplayTestPeer::SetReplayBoundaries(
+        rc, rc_index_offset, main_data_offset);
+    EXPECT_EQ(RCReplayTestPeer::ProcessRCTree(rc), MBError::OUT_OF_BOUND);
+    EXPECT_EQ(header->rc_root_offset.load(MEMORY_ORDER_READER), rc_root);
+    EXPECT_EQ(header->rc_count, 1);
+
+    MBData found;
+    ASSERT_EQ(db->Find(key, found), MBError::SUCCESS);
+    EXPECT_EQ(std::string(reinterpret_cast<char*>(found.buff), found.data_len),
+        value);
+
+    // The replay guard must be removed on failure so ordinary allocations are
+    // not constrained after the caller handles the RC error.
+    EXPECT_EQ(db->Add("main-key", "main-value"), MBError::SUCCESS);
+
+    header->rc_root_offset.store(0, MEMORY_ORDER_WRITER);
+    header->rc_count = 0;
+    header->rc_flag.store(ASYNC_RC_IDLE, std::memory_order_release);
+    dmm->ClearRootEdges_RC();
+}
+
+TEST_F(ResourceCollectionTest, FailedRCRejectsNewQueueReservations)
+{
+    Dict* dict = db->GetDictPtr();
+    ASSERT_NE(dict, nullptr);
+    IndexHeader* header = dict->GetHeaderPtr();
+    ASSERT_NE(header, nullptr);
+
+    header->rc_flag.store(ASYNC_RC_FAILED, std::memory_order_release);
+    EXPECT_EQ(dict->SHMQ_Add("key", 3, "value", 5, true),
+        MBError::NO_RESOURCE);
+    header->rc_flag.store(ASYNC_RC_IDLE, std::memory_order_release);
+}
+
+TEST_F(ResourceCollectionTest, FailedRCReplayCompletesAfterReopen)
+{
+    Dict* dict = db->GetDictPtr();
+    ASSERT_NE(dict, nullptr);
+    DictMem* dmm = dict->GetMM();
+    ASSERT_NE(dmm, nullptr);
+    IndexHeader* header = dict->GetHeaderPtr();
+    ASSERT_NE(header, nullptr);
+
+    const size_t main_index_offset = header->m_index_offset;
+    const size_t main_data_offset = header->m_data_offset;
+    const size_t rc_index_offset = dmm->GetResourceCollectionOffset();
+    const size_t rc_data_offset = dict->GetResourceCollectionOffset();
+
+    header->m_index_offset = rc_index_offset;
+    header->m_data_offset = rc_data_offset;
+    const size_t rc_root = dmm->InitRootNode_RC();
+    ASSERT_NE(rc_root, 0u);
+    header->rc_root_offset.store(rc_root, MEMORY_ORDER_WRITER);
+
+    const std::string key = "retained-across-reopen";
+    const std::string value = "replayed-after-reopen";
+    MBData rc_data;
+    rc_data.options = CONSTS::OPTION_RC_MODE;
+    rc_data.buff = reinterpret_cast<uint8_t*>(const_cast<char*>(value.data()));
+    rc_data.data_len = value.size();
+    ASSERT_EQ(dict->Add(reinterpret_cast<const uint8_t*>(key.data()),
+                  key.size(), rc_data, true),
+        MBError::SUCCESS);
+    rc_data.buff = nullptr;
+    ASSERT_EQ(header->rc_count, 1);
+
+    header->m_index_offset = main_index_offset;
+    header->m_data_offset = main_data_offset;
+    ResourceCollection rc(*db);
+    RCReplayTestPeer::SetReplayBoundaries(
+        rc, rc_index_offset, main_data_offset);
+    ASSERT_EQ(RCReplayTestPeer::ProcessRCTree(rc), MBError::OUT_OF_BOUND);
+    ASSERT_EQ(header->rc_flag.load(std::memory_order_acquire),
+        ASYNC_RC_FAILED);
+    header->rc_m_index_off_pre = main_index_offset;
+    header->rc_m_data_off_pre = main_data_offset;
+
+    ASSERT_EQ(db->Close(), MBError::SUCCESS);
+    delete db;
+    db = nullptr;
+    ResourcePool::getInstance().RemoveAll();
+
+    db = new DB(DB_DIR,
+        CONSTS::ACCESS_MODE_WRITER | CONSTS::ASYNC_WRITER_MODE,
+        128ULL * 1024 * 1024, 128ULL * 1024 * 1024);
+    ASSERT_TRUE(db->is_open()) << db->StatusStr();
+
+    dict = db->GetDictPtr();
+    ASSERT_NE(dict, nullptr);
+    header = dict->GetHeaderPtr();
+    ASSERT_NE(header, nullptr);
+
+    for (int retry = 0;
+         retry < 5000
+         && header->rc_flag.load(std::memory_order_acquire)
+             != ASYNC_RC_IDLE;
+         ++retry) {
+        usleep(1000);
+    }
+
+    EXPECT_EQ(header->rc_flag.load(std::memory_order_acquire),
+        ASYNC_RC_IDLE);
+    EXPECT_EQ(header->rc_root_offset.load(MEMORY_ORDER_READER), 0u);
+    EXPECT_EQ(header->rc_count, 0);
+    EXPECT_EQ(header->rc_m_index_off_pre, 0u);
+    EXPECT_EQ(header->rc_m_data_off_pre, 0u);
+
+    DB reader(DB_DIR, CONSTS::ACCESS_MODE_READER,
+        128ULL * 1024 * 1024, 128ULL * 1024 * 1024);
+    ASSERT_TRUE(reader.is_open()) << reader.StatusStr();
+    MBData found;
+    ASSERT_EQ(reader.Find(key, found), MBError::SUCCESS);
+    EXPECT_EQ(std::string(reinterpret_cast<char*>(found.buff), found.data_len),
+        value);
 }
 
 }

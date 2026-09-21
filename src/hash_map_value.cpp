@@ -348,6 +348,37 @@ uint64_t HighestValueGeneration(const std::string& map_path)
     return highest;
 }
 
+void RemoveValueGenerationFiles(
+    const std::string& map_path, uint64_t generation)
+{
+    struct DirCloser {
+        void operator()(DIR* handle) const
+        {
+            if (handle != nullptr)
+                closedir(handle);
+        }
+    };
+
+    std::string directory;
+    std::string map_name;
+    SplitPath(map_path, directory, map_name);
+    const std::string prefix = map_name + "_values_g";
+    std::unique_ptr<DIR, DirCloser> dir(opendir(directory.c_str()));
+    if (dir == nullptr)
+        return;
+
+    while (dirent* entry = readdir(dir.get())) {
+        uint64_t entry_generation = 0;
+        if (!ParseValueFileName(entry->d_name, prefix, entry_generation)
+            || entry_generation != generation) {
+            continue;
+        }
+        const std::string path = directory + "/" + entry->d_name;
+        ResourcePool::getInstance().RemoveResourceByPath(path);
+        unlink(path.c_str());
+    }
+}
+
 void RemoveOldValueFiles(const std::string& map_path, uint64_t keep_generation)
 {
     std::string directory;
@@ -574,22 +605,33 @@ public:
             throw static_cast<int>(MBError::NO_RESOURCE);
         writer_generation_ = std::max(kFirstValueGeneration, highest + 1);
         const std::string value_path = ValuePath(writer_generation_);
-        const int create_result = CreateExclusiveSizedFile(
-            value_path + "0", config_.value_block_size);
+        const int create_result
+            = CreateExclusiveSizedFile(value_path + "0",
+                config_.value_block_size);
         if (create_result != MBError::SUCCESS)
             throw static_cast<int>(create_result);
 
-        int value_options
-            = CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC;
-        if ((map_.options_ & CONSTS::SYNC_ON_WRITE) != 0)
-            value_options |= CONSTS::SYNC_ON_WRITE;
-        const uint32_t max_blocks = static_cast<uint32_t>(
-            config_.value_memcap / config_.value_block_size);
-        writer_file_.reset(new RollableFile(value_path,
-            config_.value_block_size, config_.value_memcap, value_options,
-            max_blocks, 75, kOwnerFileMode));
-        if (writer_file_->PreAlloc(kValueReservedOffset) == nullptr)
-            throw static_cast<int>(MBError::MMAP_FAILED);
+        try {
+            int value_options
+                = CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC;
+            if ((map_.options_ & CONSTS::SYNC_ON_WRITE) != 0)
+                value_options |= CONSTS::SYNC_ON_WRITE;
+            const uint32_t max_blocks = static_cast<uint32_t>(
+                config_.value_memcap / config_.value_block_size);
+            writer_file_.reset(new RollableFile(value_path,
+                config_.value_block_size, config_.value_memcap, value_options,
+                max_blocks, 75, kOwnerFileMode));
+            if (writer_file_->PreAlloc(kValueReservedOffset) == nullptr)
+                throw static_cast<int>(MBError::MMAP_FAILED);
+        } catch (...) {
+            writer_file_.reset();
+            try {
+                RemoveValueGenerationFiles(map_.path_, writer_generation_);
+            } catch (...) {
+                // Preserve the original startup failure.
+            }
+            throw;
+        }
         return writer_generation_;
     }
 
@@ -1018,9 +1060,11 @@ public:
 
     void Flush()
     {
-        map_.file_.Flush();
         if (writer_file_ != nullptr)
             writer_file_->Flush();
+
+        // Persist value records before the index offsets referencing them.
+        map_.file_.Flush();
     }
 
     void ReleaseSlot(size_t slot_index, uint64_t owner_id)
@@ -1931,13 +1975,13 @@ HashMapImpl::HashMapImpl(const std::string& mbdir, size_t requested_capacity,
         const uint64_t stored_generation = initialize
             ? 0
             : value_hdr_->value_generation.load(std::memory_order_acquire);
-        const uint64_t new_generation
-            = value_state_->PrepareWriterGeneration(stored_generation);
-
         uint64_t generation
             = value_hdr_->map_generation.load(std::memory_order_relaxed);
         if (generation >= std::numeric_limits<uint64_t>::max() - 1)
             throw static_cast<int>(MBError::NO_RESOURCE);
+        const uint64_t new_generation
+            = value_state_->PrepareWriterGeneration(stored_generation);
+
         const uint64_t resetting
             = (generation & 1U) != 0 ? generation : generation + 1;
         value_hdr_->map_generation.store(resetting,
@@ -1979,6 +2023,7 @@ int HashMapImpl::PutValue(const uint8_t* key, int key_length,
 
 int HashMapImpl::GetValue(const uint8_t* key, int key_length, MBData& value) const
 {
+    value.data_ptr = nullptr;
     value.data_len = 0;
     if (storage_mode_ != StorageMode::VALUE || value_state_ == nullptr)
         return MBError::NOT_ALLOWED;

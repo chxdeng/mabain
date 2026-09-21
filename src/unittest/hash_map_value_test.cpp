@@ -128,17 +128,21 @@ TEST_F(HashMapValueLookupTest, ReadsBinaryMaximumSizedRecord)
 
     std::string missing = key;
     missing[0] ^= 0x01;
+    output.data_ptr = output.buff;
     EXPECT_EQ(map.GetValue(reinterpret_cast<const uint8_t*>(missing.data()),
                   static_cast<int>(missing.size()), output),
         MBError::NOT_EXIST);
     EXPECT_EQ(output.data_len, 0);
+    EXPECT_EQ(output.data_ptr, nullptr);
 
     const std::string oversized_key = key + "x";
+    output.data_ptr = output.buff;
     EXPECT_EQ(map.GetValue(
                   reinterpret_cast<const uint8_t*>(oversized_key.data()),
                   static_cast<int>(oversized_key.size()), output),
         MBError::INVALID_ARG);
     EXPECT_EQ(output.data_len, 0);
+    EXPECT_EQ(output.data_ptr, nullptr);
 }
 
 TEST_F(HashMapValueLookupTest, ReadsRecordsAcrossValueBlockBoundary)

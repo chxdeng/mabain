@@ -35,6 +35,7 @@
 namespace mabain {
 
 class ResourceCollectionTestPeer;
+class RCReplayTestPeer;
 
 typedef struct _StartupRebuildRuntimeState {
     int rebuild_state;
@@ -100,6 +101,7 @@ public:
     int ExceptionRecovery();
 
     friend class ResourceCollectionTestPeer;
+    friend class RCReplayTestPeer;
 
 private:
     void DoTask(int phase, DBTraverseNode& dbt_node);
@@ -120,7 +122,7 @@ private:
     int EvacuateOneDataBlock();
     bool MoveDataBuffer(int phase, size_t& offset_src, int size);
     int LRUEviction(int64_t max_dbsz, int64_t max_dbcnt);
-    void ProcessRCTree();
+    int ProcessRCTree();
 
     int rc_type;
     int index_rc_status;

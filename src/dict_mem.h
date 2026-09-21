@@ -61,13 +61,14 @@ public:
     void InitEdgePtrs(const NodePtrs& node_ptrs, int index,
         EdgePtrs& edge_ptrs);
     void AddRootEdge(EdgePtrs& edge_ptrs, const uint8_t* key, int len,
-        size_t data_offset);
+        size_t data_offset, bool* publication_started = nullptr);
     int InsertNode(EdgePtrs& edge_ptrs, int match_len, size_t data_offset,
-        MBData& data);
+        MBData& data, bool* publication_started = nullptr);
     int AddLink(EdgePtrs& edge_ptrs, int match_len, const uint8_t* key,
-        int key_len, size_t data_off, MBData& data);
+        int key_len, size_t data_off, MBData& data,
+        bool* publication_started = nullptr);
     int UpdateNode(EdgePtrs& edge_ptrs, const uint8_t* key, int key_len,
-        size_t data_off);
+        size_t data_off, bool* publication_started = nullptr);
     bool FindNext(const unsigned char* key, int keylen, int& match_len,
         EdgePtrs& edge_ptr, uint8_t* key_tmp) const;
     int GetRootEdge(size_t rc_off, int nt, EdgePtrs& edge_ptrs) const;
@@ -89,7 +90,7 @@ public:
     inline void WriteEdge(const EdgePtrs& edge_ptrs) const;
     void WriteData(const uint8_t* buff, unsigned len, size_t offset) const;
     inline size_t GetRootOffset() const;
-    void ClearMem() const;
+    int ClearMem() const;
     const int* GetNodeSizePtr() const;
 
     void InitLockFreePtr(LockFree* lf);
@@ -105,16 +106,24 @@ public:
     static const uint8_t empty_edge[EDGE_SIZE];
 
 private:
+    struct PendingIndexBuffer {
+        size_t offset = 0;
+        int size = 0;
+    };
+
     friend class DictMemReleaseTestPeer;
     bool ReserveNode(int nt, size_t& offset, uint8_t*& ptr);
     void ReleaseNode(size_t offset, int nt);
     void ReleaseBuffer(size_t offset, int size);
+    void RollbackAddAllocations(size_t node_offset, int node_index,
+        const PendingIndexBuffer* buffers, size_t buffer_count);
     void UpdateTailEdge(EdgePtrs& edge_ptrs, int match_len, MBData& data,
         EdgePtrs& tail_edge, uint8_t& new_key_first,
-        bool& map_new_sliding);
+        bool& map_new_sliding, PendingIndexBuffer& allocation);
     void UpdateHeadEdge(EdgePtrs& edge_ptrs, int match_len,
         MBData& data, int& release_buffer_size,
-        size_t& edge_str_off, bool& map_new_sliding);
+        size_t& edge_str_off, bool& map_new_sliding,
+        PendingIndexBuffer& allocation);
     void RemoveRootEdge(const EdgePtrs& edge_ptrs);
     int RemoveEdgeSizeN(const EdgePtrs& edge_ptrs, int nt, size_t node_offset,
         uint8_t* old_node_buffer, size_t& str_off_rel,

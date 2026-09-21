@@ -24,6 +24,7 @@
 #include "../db.h"
 #include "../dict.h"
 #include "../drm_base.h"
+#include "../integer_4b_5b.h"
 #include "../mb_rc.h"
 #include "../resource_pool.h"
 #include "../rollable_file.h"
@@ -231,6 +232,39 @@ TEST(JemallocRebuildHeaderHelperTest, ClearRebuildMetadataClearsMarker)
     EXPECT_FALSE(header.RebuildInProgress());
 }
 
+TEST(JemallocRebuildTokenTest, FullRebuildChangesIdleGeneration)
+{
+    const uint32_t idle_before = ASYNC_RC_IDLE;
+    const uint32_t running =
+        AdvanceAsyncRCToken(idle_before, ASYNC_RC_RUNNING);
+    const uint32_t idle_after =
+        AdvanceAsyncRCToken(running, ASYNC_RC_IDLE);
+
+    EXPECT_EQ(DecodeAsyncRCState(running), ASYNC_RC_RUNNING);
+    EXPECT_EQ(DecodeAsyncRCState(idle_after), ASYNC_RC_IDLE);
+    EXPECT_NE(idle_after, idle_before);
+}
+
+TEST(JemallocRebuildTokenTest, AsyncRCStateChangesPreserveGeneration)
+{
+    std::atomic<uint32_t> flag(
+        AdvanceAsyncRCToken(ASYNC_RC_IDLE, ASYNC_RC_IDLE));
+    const uint32_t generation =
+        flag.load(std::memory_order_relaxed) & ~ASYNC_RC_STATE_MASK;
+
+    PublishAsyncRCState(flag, ASYNC_RC_RUNNING);
+    EXPECT_EQ(DecodeAsyncRCState(flag.load(std::memory_order_acquire)),
+        ASYNC_RC_RUNNING);
+    EXPECT_EQ(flag.load(std::memory_order_relaxed) & ~ASYNC_RC_STATE_MASK,
+        generation);
+
+    PublishAsyncRCState(flag, ASYNC_RC_IDLE);
+    EXPECT_EQ(DecodeAsyncRCState(flag.load(std::memory_order_acquire)),
+        ASYNC_RC_IDLE);
+    EXPECT_EQ(flag.load(std::memory_order_relaxed) & ~ASYNC_RC_STATE_MASK,
+        generation);
+}
+
 TEST_F(JemallocRebuildMetadataTest, NewDbInitializesRebuildMetadataToZero)
 {
     MBConfig config = MakeJemallocRebuildConfig(CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, false);
@@ -390,6 +424,56 @@ TEST_F(JemallocRebuildMetadataTest, ReaderEpochGuardEndClearsClaimedSlot)
     EXPECT_EQ(header->reader_epoch_slot[token - 1].pid.load(MEMORY_ORDER_READER), 0u);
     EXPECT_EQ(header->reader_epoch_slot[token - 1].proc_start_time.load(MEMORY_ORDER_READER), 0u);
     EXPECT_EQ(header->reader_epoch_slot[token - 1].epoch.load(MEMORY_ORDER_READER), 0u);
+}
+
+TEST_F(JemallocRebuildMetadataTest, FindRetriesOutOfBoundAndReleasesEpochGuard)
+{
+    MBConfig writer_config = MakeJemallocRebuildConfig(
+        CONSTS::ACCESS_MODE_WRITER | CONSTS::OPTION_JEMALLOC, false);
+    DB writer_db(writer_config);
+    ASSERT_TRUE(writer_db.is_open());
+
+    const std::string key = "abcdefgh";
+    ASSERT_EQ(writer_db.Add(key, "value"), MBError::SUCCESS);
+
+    Dict* dict = writer_db.GetDictPtr();
+    ASSERT_NE(dict, nullptr);
+    DictMem* mm = dict->GetMM();
+    ASSERT_NE(mm, nullptr);
+    IndexHeader* header = dict->GetHeaderPtr();
+    ASSERT_NE(header, nullptr);
+
+    EdgePtrs root_edge = {};
+    ASSERT_EQ(mm->GetRootEdge(0, static_cast<uint8_t>(key[0]), root_edge),
+        MBError::SUCCESS);
+    ASSERT_GT(root_edge.len_ptr[0], LOCAL_EDGE_LEN);
+
+    // Point the matched value at the final byte of a block. Reading its header
+    // must throw OUT_OF_BOUND from MemRead().
+    Write6BInteger(root_edge.offset_ptr, writer_config.block_size_data - 1);
+    mm->WriteData(root_edge.ptr, EDGE_SIZE, root_edge.offset);
+
+    MBConfig reader_config = MakeJemallocRebuildConfig(
+        CONSTS::ACCESS_MODE_READER | CONSTS::OPTION_JEMALLOC, false);
+    reader_config.connect_id = 124;
+    DB reader_db(reader_config);
+    ASSERT_TRUE(reader_db.is_open());
+    header->reader_epoch_tracking_active.store(1, MEMORY_ORDER_WRITER);
+
+    const uint64_t fast_before = reader_db.GetReaderGuardFastSlotCount();
+    MBData data;
+    data.data_len = 99;
+    data.match_len = 99;
+
+    EXPECT_EQ(reader_db.Find(key, data), MBError::READ_ERROR);
+    EXPECT_EQ(reader_db.GetReaderGuardFastSlotCount(),
+        fast_before + 3u);
+    EXPECT_EQ(data.data_len, 0);
+    EXPECT_EQ(data.match_len, 0);
+    EXPECT_EQ(data.data_ptr, nullptr);
+    for (uint32_t i = 0; i < header->reader_epoch_slot_count; ++i) {
+        EXPECT_EQ(header->reader_epoch_slot[i].connect_id.load(MEMORY_ORDER_READER), 0u);
+    }
 }
 
 TEST_F(JemallocRebuildMetadataTest, LookupFailsWhenReaderGuardCannotBeAcquired)

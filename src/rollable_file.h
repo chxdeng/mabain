@@ -66,6 +66,8 @@ public:
     size_t RandomRead(void* buff, size_t size, off_t offset);
     void InitShmSlidingAddr(std::atomic<size_t>* shm_sliding_addr);
     int Reserve(size_t& offset, int size, uint8_t*& ptr, bool map_new_sliding = true);
+    void SetReserveLimit(size_t limit) { reserve_limit = limit; }
+    void ClearReserveLimit() { reserve_limit = static_cast<size_t>(-1); }
     uint8_t* GetShmPtr(size_t offset, int size);
     size_t CheckAlignment(size_t offset, int size);
     void PrintStats(std::ostream& out_stream = std::cout) const;
@@ -134,6 +136,9 @@ private:
     int rc_offset_percentage;
     size_t mem_used;
     mode_t create_mode;
+    // Process-local writer guard used while replaying the temporary RC tree.
+    // The default permits the complete configured file range.
+    size_t reserve_limit;
 
     // jemalloc only
     static std::unordered_map<unsigned, RollableFile*> arena_manager_map;

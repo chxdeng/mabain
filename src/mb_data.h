@@ -86,6 +86,12 @@ public:
     uint8_t* buff;
     // buffer length
     int buff_len;
+    // Borrowed, read-only value pointer populated by OPTION_RETURN_DATA_PTR.
+    // The caller must prevent updates, removal, resource collection, remapping,
+    // and DB close from before lookup until it finishes using this pointer.
+    // The pointer is valid only in the process that performed the lookup and
+    // must not be freed or retained after the caller's protection ends.
+    const uint8_t* data_ptr;
 
     // data offset
     size_t data_offset;

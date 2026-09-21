@@ -57,6 +57,7 @@ public:
     inline void WriterLockFreeStart(size_t offset);
     inline void WriterLockFreeValueUpdateStart(size_t offset);
     void WriterLockFreeStop();
+    void PublishGlobalRetryBarrier() const;
     inline void ReaderLockFreeStart(LockFreeData& snapshot);
     // If there was race condition, this function returns MBError::TRY_AGAIN.
     int ReaderLockFreeStop(const LockFreeData& snapshot, size_t reader_offset,
@@ -67,6 +68,9 @@ private:
     // buffer rewrite for which the saved-edge shortcut is unsafe.
     static constexpr size_t VALUE_UPDATE_FLAG =
         static_cast<size_t>(MAX_6B_OFFSET) + 1;
+    // This value cannot be a persisted six-byte offset. Its presence in the
+    // completed-update ring requires every overlapping reader to retry.
+    static constexpr size_t GLOBAL_RETRY_OFFSET = VALUE_UPDATE_FLAG + 1;
 
     LockFreeShmData* shm_data_ptr;
     const IndexHeader* header;
