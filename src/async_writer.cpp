@@ -388,11 +388,12 @@ void* AsyncWriter::async_writer_thread()
             rval = MBError::SUCCESS;
             PublishAsyncRCState(header->rc_flag, ASYNC_RC_RUNNING);
             {
-                int64_t* data_ptr = reinterpret_cast<int64_t*>(node_ptr->data);
-                min_index_size = data_ptr[0];
-                min_data_size = data_ptr[1];
-                max_dbsize = data_ptr[2];
-                max_dbcount = data_ptr[3];
+                int64_t params[4];
+                memcpy(params, node_ptr->data, sizeof(params));
+                min_index_size = params[0];
+                min_data_size = params[1];
+                max_dbsize = params[2];
+                max_dbcount = params[3];
             }
             break;
         case MABAIN_ASYNC_TYPE_NONE:

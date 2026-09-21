@@ -555,13 +555,13 @@ namespace {
             if (data.options & CONSTS::OPTION_FIND_AND_STORE_PARENT) {
                 rval = dict.mm.NextEdge(key_cursor, edge_ptrs, node_buff, data);
             } else {
-                // Try fast path first; on any non-success, fall back to the
-                // generic path which is more permissive and uses RandomRead.
+                // NOT_EXIST from the fast path is definitive. For other
+                // failures, fall back to the generic RandomRead path.
                 int rf = dict.mm.NextEdgeFast(key_cursor, edge_ptrs, data);
-                if (rf != MBError::SUCCESS) {
-                    rval = dict.mm.NextEdge(key_cursor, edge_ptrs, node_buff, data);
-                } else {
+                if (rf == MBError::SUCCESS || rf == MBError::NOT_EXIST) {
                     rval = rf;
+                } else {
+                    rval = dict.mm.NextEdge(key_cursor, edge_ptrs, node_buff, data);
                 }
             }
             if (rval != MBError::SUCCESS)

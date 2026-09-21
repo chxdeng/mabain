@@ -68,12 +68,12 @@ PrefixCache::PrefixCache(const std::string& mbdir, const IndexHeader* hdr, size_
         c2 = 16384;
     // Require embedded region; readers will not map external files anymore.
     if (hdr_ && hdr_->pfxcache_size > 0 && hdr_->pfx_cap2) {
-        const_cast<size_t&>(cap2) = hdr_->pfx_cap2;
+        cap2 = hdr_->pfx_cap2;
     } else {
         // No embedded cache: disable completely.
-        const_cast<size_t&>(cap2) = 0;
-        const_cast<size_t&>(cap3) = 0;
-        const_cast<size_t&>(cap4) = 0;
+        cap2 = 0;
+        cap3 = 0;
+        cap4 = 0;
         return; // leave uninitialized; ActivePrefixCache() will stay null
     }
     // Split remainder between 3-byte and 4-byte sparse tables
@@ -102,8 +102,8 @@ PrefixCache::PrefixCache(const std::string& mbdir, const IndexHeader* hdr, size_
         else
             c4 = 0;
     }
-    const_cast<size_t&>(cap3) = c3;
-    const_cast<size_t&>(cap4) = c4;
+    cap3 = c3;
+    cap4 = c4;
 
     mask2 = (cap2 ? cap2 - 1 : 0);
     mask3 = (cap3 ? cap3 - 1 : 0);

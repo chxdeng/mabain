@@ -378,6 +378,10 @@ int DB::ValidateConfig(MBConfig& config)
     if (config.mbdir == NULL || config.mbdir[0] == '\0')
         return MBError::INVALID_ARG;
 
+    if ((config.options & CONSTS::ACCESS_MODE_WRITER)
+        && (config.options & CONSTS::READ_ONLY_DB))
+        return MBError::INVALID_ARG;
+
     if (config.memcap_index == 0)
         config.memcap_index = 2 * config.block_size_index;
     if (config.memcap_data == 0)

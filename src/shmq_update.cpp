@@ -106,12 +106,11 @@ int Dict::SHMQ_CollectResource(int64_t m_index_rc_size,
     if (node_ptr == nullptr)
         return err;
 
-    int64_t* data_ptr = reinterpret_cast<int64_t*>(node_ptr->data);
-    node_ptr->data_len = sizeof(int64_t) * 4;
-    data_ptr[0] = m_index_rc_size;
-    data_ptr[1] = m_data_rc_size;
-    data_ptr[2] = max_dbsz;
-    data_ptr[3] = max_dbcnt;
+    const int64_t params[] = {
+        m_index_rc_size, m_data_rc_size, max_dbsz, max_dbcnt
+    };
+    node_ptr->data_len = sizeof(params);
+    memcpy(node_ptr->data, params, sizeof(params));
     node_ptr->type = MABAIN_ASYNC_TYPE_RC;
 
     return SHMQ_PrepareSlot(node_ptr);
