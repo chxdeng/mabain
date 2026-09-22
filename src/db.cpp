@@ -1098,12 +1098,12 @@ int DB::FindLowerBound(const char* key, int len, MBData& data, std::string* boun
         bound_key->clear();
         bound_key->reserve(CONSTS::MAX_KEY_LENGHTH);
     }
-    int64_t reader_epoch = BeginReaderEpochGuard();
-    if (reader_epoch < 0)
-        return static_cast<int>(-reader_epoch);
+    ReaderEpochGuard reader_guard(*this);
+    const int guard_status = reader_guard.Status();
+    if (guard_status != MBError::SUCCESS)
+        return guard_status;
     detail::SearchEngine engine(*dict);
     int rval = engine.lowerBound(reinterpret_cast<const uint8_t*>(key), len, data, bound_key);
-    EndReaderEpochGuard(reader_epoch);
     if (rval != MBError::SUCCESS
         && (data.options & CONSTS::OPTION_RETURN_DATA_PTR)) {
         data.data_ptr = NULL;
@@ -1127,12 +1127,12 @@ int DB::FindLongestPrefix(const char* key, int len, MBData& data) const
         return MBError::NOT_ALLOWED;
 
     data.match_len = 0;
-    int64_t reader_epoch = BeginReaderEpochGuard();
-    if (reader_epoch < 0)
-        return static_cast<int>(-reader_epoch);
+    ReaderEpochGuard reader_guard(*this);
+    const int guard_status = reader_guard.Status();
+    if (guard_status != MBError::SUCCESS)
+        return guard_status;
     detail::SearchEngine engine(*dict);
     int rval = engine.findPrefix(reinterpret_cast<const uint8_t*>(key), len, data);
-    EndReaderEpochGuard(reader_epoch);
     return rval;
 }
 
