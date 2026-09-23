@@ -59,6 +59,7 @@ add_custom_target(index
 
 # Custom target for unit tests
 add_custom_target(unit-test
-    COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target build
-    COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target unit-test
+    COMMAND make -C ${CMAKE_SOURCE_DIR}/src/unittest BUILD_DIR=${CMAKE_BINARY_DIR} unit-test
+    DEPENDS mabain
+    USES_TERMINAL
 )

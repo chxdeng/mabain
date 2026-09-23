@@ -34,7 +34,10 @@ install: true
 
 # Build steps
 script:
-  - make clean build
+  - mkdir -p build
+  - cd build
+  - cmake ..
+  - make
   - sudo make install
   - make unit-test
 
