@@ -1,5 +1,6 @@
 TEST_BIN_NAME=test_mabain
 TEST_COVRAGE_DIR=coverage
+BUILD_DIR ?= ../../build
 
 CPP=g++
 
@@ -11,12 +12,12 @@ TESTSOURCES=$(wildcard *.cpp)
 
 all: unit-test
 
-build: $(TESTSOURCES) ../../build/lib/libmabain.so
-	$(CPP) $(CPPFLAGS) -o $(TEST_BIN_NAME) $(TESTSOURCES) -L../../build/lib -lmabain $(LDFLAGS)
+build: $(TESTSOURCES) $(BUILD_DIR)/lib/libmabain.so
+	$(CPP) $(CPPFLAGS) -o $(TEST_BIN_NAME) $(TESTSOURCES) -L$(BUILD_DIR)/lib -lmabain $(LDFLAGS)
 
 unit-test: clean build
 	mkdir -p $(TEST_COVRAGE_DIR)
-	- LD_LIBRARY_PATH=$$LD_LIBRARY_PATH:../../build/lib ./$(TEST_BIN_NAME)
+	LD_LIBRARY_PATH=$$LD_LIBRARY_PATH:$(BUILD_DIR)/lib ./$(TEST_BIN_NAME)
 	- gcovr -r . --xml > $(TEST_COVRAGE_DIR)/coverage.xml
 	- gcovr -r . --html --html-details -o $(TEST_COVRAGE_DIR)/coverage.html
 

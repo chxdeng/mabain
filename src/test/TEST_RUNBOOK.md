@@ -66,9 +66,9 @@ reset_mabain_test_db() {
 The reset helper is used by later sections. Keep the same shell session or
 define it again before running those sections.
 
-The `src/unittest/Makefile` prefixes the test and coverage commands with `-`, so
-`make unit-test` can return success after a failed test. Run the binary directly
-and check its exit status as shown below.
+The CMake `unit-test` target builds the Mabain library and invokes the test
+Makefile using the active CMake build directory. Test-binary failures propagate
+through both Make invocations.
 
 ## 3. GoogleTest unit suite
 
@@ -190,7 +190,8 @@ g++ -DMABAIN_PREFIX_CACHE_CONSISTENCY_TEST_HOOKS \
   -lmabain -lpthread -lcrypto -ljemalloc \
   -Wl,-rpath,"$MABAIN_ROOT/build-prefix-cache-consistency/lib"
 
-./src/test/prefix_cache_add_consistency_test
+LD_LIBRARY_PATH="$MABAIN_ROOT/build-prefix-cache-consistency/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+  ./src/test/prefix_cache_add_consistency_test
 ```
 
 Pass criteria: exit status 0 and output containing:
@@ -220,7 +221,8 @@ g++ -DMABAIN_PREFIX_CACHE_CONSISTENCY_TEST_HOOKS \
   -lmabain -lpthread -lcrypto -ljemalloc \
   -Wl,-rpath,"$MABAIN_ROOT/build-prefix-cache-consistency/lib"
 
-./src/test/prefix_cache_structural_add_consistency_test
+LD_LIBRARY_PATH="$MABAIN_ROOT/build-prefix-cache-consistency/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+  ./src/test/prefix_cache_structural_add_consistency_test
 ```
 
 Pass criteria: exit status 0 and output containing:
@@ -266,7 +268,8 @@ g++ -DMABAIN_LF_GUARD_TEST_HOOKS \
   -lmabain -lpthread -lcrypto -ljemalloc \
   -Wl,-rpath,"$MABAIN_ROOT/build-lf-guard-test/lib"
 
-./src/test/lf_guard_snapshot_gap_test
+LD_LIBRARY_PATH="$MABAIN_ROOT/build-lf-guard-test/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+  ./src/test/lf_guard_snapshot_gap_test
 ```
 
 Pass criteria: exit status 0 and output containing:
@@ -302,7 +305,8 @@ g++ -DMABAIN_LF_GUARD_TEST_HOOKS \
   -lmabain -lpthread -lcrypto -ljemalloc \
   -Wl,-rpath,"$MABAIN_ROOT/build-lf-guard-test/lib"
 
-./src/test/internal_node_remove_concurrency_test
+LD_LIBRARY_PATH="$MABAIN_ROOT/build-lf-guard-test/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+  ./src/test/internal_node_remove_concurrency_test
 ```
 
 Pass criteria: exit status 0 and output containing:

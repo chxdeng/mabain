@@ -43,9 +43,7 @@ FileIO::~FileIO()
 
 int FileIO::Open()
 {
-    mode_t prev_mask = umask(0);
     fd = open(path.c_str(), options, mode);
-    umask(prev_mask);
 
     return fd;
 }
