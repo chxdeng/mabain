@@ -133,8 +133,8 @@ private:
     int64_t token_;
 };
 
-// Current mabain version 1.7.2
-uint16_t version[4] = { 1, 7, 2, 0 };
+// Current mabain version 1.7.1
+uint16_t version[4] = { 1, 7, 1, 0 };
 
 DB::~DB()
 {
